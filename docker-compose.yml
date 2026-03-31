@@ -1,0 +1,110 @@
+services:
+  # ── Infrastructure ──────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: beast
+      POSTGRES_USER: beast
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-beast_dev_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init-databases.sql:/docker-entrypoint-initdb.d/10-init-databases.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U beast -d beast"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── BEAST ───────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://beast:${DB_PASSWORD:-beast_dev_password}@postgres:5432/beast
+      NODE_ENV: ${NODE_ENV:-development}
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+      API_SELF_URL: http://api:3000
+      DB_PASSWORD: ${DB_PASSWORD:-beast_dev_password}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    volumes:
+      - ./api/src:/app/src
+      - ./keys:/app/keys:ro
+      - claude_workspaces:/workspace
+      - scan_artifacts:/data/scan-artifacts
+
+  worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    command: ["node", "dist/worker-main.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://beast:${DB_PASSWORD:-beast_dev_password}@postgres:5432/beast
+      NODE_ENV: ${NODE_ENV:-development}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    volumes:
+      - ./keys:/app/keys:ro
+      - claude_workspaces:/workspace
+      - scan_artifacts:/data/scan-artifacts
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    depends_on:
+      - api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+
+  claude-runner:
+    build:
+      context: ./claude-container
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    ports:
+      - "2222:22"
+    environment:
+      SCANNER_SSH_PUBKEY: ${SCANNER_SSH_PUBKEY:-}
+    volumes:
+      - claude_workspaces:/workspace
+      - claude_auth:/home/scanner/.claude
+      - /mnt/hgfs/shared:/local-repos:ro
+
+  security-tools:
+    build:
+      context: ./security-tools
+      dockerfile: Dockerfile
+      network: host
+    restart: unless-stopped
+    ports:
+      - "2223:22"
+    environment:
+      SCANNER_SSH_PUBKEY: ${SCANNER_SSH_PUBKEY:-}
+    volumes:
+      - claude_workspaces:/workspace
+      - /mnt/hgfs/shared:/local-repos:ro
+
+volumes:
+  pgdata:
+  claude_workspaces:
+  claude_auth:
+  scan_artifacts:

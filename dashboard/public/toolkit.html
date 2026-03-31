@@ -1,0 +1,1717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BEAST Design Toolkit</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   BEAST Design System — Full Token Reference
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --th-bg: #191716;
+  --th-surface: #1f1d1b;
+  --th-card: #262321;
+  --th-card-hover: #2d2a27;
+  --th-border: #342f2c;
+  --th-border-subtle: #2a2724;
+  --th-text: #e8e5e2;
+  --th-text-secondary: #a39e98;
+  --th-text-muted: #66615c;
+  --th-input-bg: #151312;
+  --th-input-border: #342f2c;
+  --th-input-text: #e8e5e2;
+  --th-input-placeholder: #66615c;
+  --th-hover: rgba(255, 255, 255, 0.04);
+  --beast-red: #dc2626;
+  --beast-red-hover: #b91c1c;
+  --beast-red-light: #ef4444;
+  --beast-red-glow: rgba(220, 38, 38, 0.25);
+  --font-display: "Oswald", "Arial Black", sans-serif;
+  --font-body: "Inter", "Helvetica Neue", Arial, sans-serif;
+}
+
+:root.light {
+  --th-bg: #f3f4f6;
+  --th-surface: #ffffff;
+  --th-card: #ffffff;
+  --th-card-hover: #f7f8fa;
+  --th-border: #c6c6c6;
+  --th-border-subtle: #d6d6d6;
+  --th-text: #111827;
+  --th-text-secondary: #4b5563;
+  --th-text-muted: #6b7280;
+  --th-input-bg: #ffffff;
+  --th-input-border: #c6c6c6;
+  --th-input-text: #111827;
+  --th-input-placeholder: #6b7280;
+  --th-hover: rgba(0, 0, 0, 0.04);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--th-bg);
+  color: var(--th-text);
+  -webkit-font-smoothing: antialiased;
+  padding: 40px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+::selection { background: rgba(220, 38, 38, 0.3); color: #fff; }
+
+h1.toolkit-title {
+  font-family: var(--font-display);
+  font-size: 48px;
+  color: var(--beast-red);
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.toolkit-subtitle {
+  font-size: 15px;
+  color: var(--th-text-muted);
+  margin-bottom: 48px;
+}
+
+/* Section */
+.section {
+  margin-bottom: 56px;
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-size: 28px;
+  color: var(--beast-red);
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.section-desc {
+  font-size: 13px;
+  color: var(--th-text-muted);
+  margin-bottom: 24px;
+}
+
+.subsection {
+  margin-bottom: 28px;
+}
+
+.subsection-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--th-text-muted);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--th-border-subtle);
+}
+
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.col { display: flex; flex-direction: column; gap: 12px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; }
+
+.class-ref {
+  display: inline-block;
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  color: var(--beast-red-light);
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.15);
+  padding: 1px 6px;
+  margin-top: 6px;
+}
+:root.light .class-ref {
+  background: rgba(220, 38, 38, 0.06);
+  border-color: rgba(220, 38, 38, 0.12);
+  color: #dc2626;
+}
+
+.note {
+  font-size: 11px;
+  color: var(--th-text-muted);
+  margin-top: 4px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--th-border);
+  margin: 48px 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BEAST Component Classes (exact copy from globals.css)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Page titles */
+.beast-page-title { font-family: var(--font-display); font-size: 28px; letter-spacing: 0.05em; color: var(--beast-red); }
+.beast-page-subtitle { font-size: 13px; color: var(--th-text-muted); }
+
+/* Cards */
+.beast-card { background: var(--th-surface); border: 1px solid var(--th-border); padding: 28px; }
+.beast-card-title { font-size: 15px; font-weight: 600; color: var(--th-text); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+.beast-card-subtitle { font-size: 13px; color: var(--th-text-muted); margin-bottom: 20px; }
+
+/* Labels */
+.beast-label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.15em; color: var(--th-text-secondary); margin-bottom: 8px; }
+
+/* Form layout */
+.beast-form-stack { display: flex; flex-direction: column; gap: 24px; }
+.beast-form-group { display: flex; flex-direction: column; }
+.beast-form-hint { font-size: 11px; color: var(--th-text-muted); margin-bottom: 8px; }
+
+/* Inputs */
+.beast-input { width: 100%; border: 1px solid var(--th-input-border); background: var(--th-input-bg); color: var(--th-input-text); padding: 12px 16px; font-size: 14px; font-family: var(--font-body); transition: border-color 0.15s; outline: none; }
+.beast-input::placeholder { color: var(--th-input-placeholder); }
+.beast-input:focus { border-color: var(--beast-red); }
+.beast-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.beast-input-sm { padding: 8px 14px; font-size: 13px; }
+
+/* Select (NEW — to be added) */
+.beast-select { width: 100%; border: 1px solid var(--th-input-border); background: var(--th-input-bg); color: var(--th-input-text); padding: 10px 16px; font-size: 14px; font-family: var(--font-body); transition: border-color 0.15s; outline: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2366615c' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
+.beast-select:focus { border-color: var(--beast-red); }
+.beast-select-sm { padding: 6px 12px; font-size: 13px; padding-right: 30px; }
+
+/* Buttons */
+.beast-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 24px; font-size: 13px; font-weight: 700; font-family: var(--font-body); text-transform: uppercase; letter-spacing: 0.12em; cursor: pointer; transition: all 0.15s; border: none; color: var(--th-text); }
+.beast-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.beast-btn-primary { background: var(--beast-red); color: #fff; }
+.beast-btn-primary:hover:not(:disabled) { background: var(--beast-red-hover); }
+
+.beast-btn-outline { background: transparent; border: 1px solid var(--th-border); color: var(--th-text-secondary); }
+.beast-btn-outline:hover:not(:disabled) { border-color: var(--th-text-muted); color: var(--th-text); }
+
+.beast-btn-danger { background: transparent; border: 1px solid rgba(220, 38, 38, 0.3); color: #ef4444; }
+.beast-btn-danger:hover:not(:disabled) { background: rgba(220, 38, 38, 0.1); border-color: rgba(220, 38, 38, 0.5); }
+
+.beast-btn-ghost { background: transparent; color: var(--th-text-muted); border: none; padding: 6px 12px; font-size: 12px; }
+.beast-btn-ghost:hover:not(:disabled) { color: var(--th-text); background: var(--th-hover); }
+
+.beast-btn-sm { padding: 8px 16px; font-size: 12px; }
+
+/* Toggle */
+.beast-toggle { appearance: none; width: 36px; height: 22px; background: var(--th-border); cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0; border: none; vertical-align: middle; display: inline-block; margin: 0; padding: 0; }
+.beast-toggle::after { content: ''; position: absolute; top: 0; bottom: 0; margin: auto 0; left: 4px; width: 16px; height: 16px; background: var(--th-text-muted); transition: all 0.2s; }
+.beast-toggle:checked { background: var(--beast-red); }
+.beast-toggle:checked::after { left: 16px; background: #fff; }
+.beast-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Badges */
+.beast-badge { display: inline-flex; align-items: center; padding: 4px 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.beast-badge-green { background: rgba(5, 150, 105, 0.08); color: #4ade80; border: 1px solid rgba(5, 150, 105, 0.3); }
+.beast-badge-amber { background: rgba(217, 119, 6, 0.08); color: #fbbf24; border: 1px solid rgba(217, 119, 6, 0.3); }
+.beast-badge-blue { background: rgba(37, 99, 235, 0.08); color: #60a5fa; border: 1px solid rgba(37, 99, 235, 0.3); }
+.beast-badge-red { background: rgba(220, 38, 38, 0.08); color: #f87171; border: 1px solid rgba(220, 38, 38, 0.3); }
+.beast-badge-gray { background: rgba(113, 113, 122, 0.08); color: #a1a1aa; border: 1px solid rgba(113, 113, 122, 0.25); }
+.beast-badge-purple { background: rgba(124, 58, 237, 0.08); color: #a78bfa; border: 1px solid rgba(124, 58, 237, 0.3); }
+.beast-badge-cyan { background: rgba(8, 145, 178, 0.08); color: #22d3ee; border: 1px solid rgba(8, 145, 178, 0.3); }
+
+/* Severity badges (NEW — to be added) */
+.beast-severity { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600; border: 1px solid; }
+.beast-severity-critical { background: rgba(220, 38, 38, 0.1); color: #f87171; border-color: rgba(220, 38, 38, 0.3); }
+.beast-severity-high { background: rgba(234, 88, 12, 0.1); color: #fb923c; border-color: rgba(234, 88, 12, 0.3); }
+.beast-severity-medium { background: rgba(202, 138, 4, 0.1); color: #facc15; border-color: rgba(202, 138, 4, 0.3); }
+.beast-severity-low { background: rgba(37, 99, 235, 0.1); color: #60a5fa; border-color: rgba(37, 99, 235, 0.3); }
+.beast-severity-info { background: rgba(113, 113, 122, 0.1); color: #a1a1aa; border-color: rgba(113, 113, 122, 0.3); }
+
+/* Status badges */
+.beast-status { display: inline-flex; align-items: center; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+.beast-status-open { background: rgba(37, 99, 235, 0.1); color: #60a5fa; }
+.beast-status-accepted { background: rgba(113, 113, 122, 0.1); color: #a1a1aa; }
+.beast-status-false-positive { background: rgba(113, 113, 122, 0.1); color: #a1a1aa; }
+.beast-status-fixed { background: rgba(113, 113, 122, 0.1); color: #a1a1aa; }
+.beast-status-duplicate { background: rgba(113, 113, 122, 0.1); color: #a1a1aa; }
+
+/* Tables */
+.beast-table { width: 100%; border-collapse: collapse; }
+.beast-table th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--th-text-muted); padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--th-border); }
+.beast-table td { font-size: 13px; font-weight: 300; color: var(--th-text-secondary); padding: 12px 16px; border-bottom: 1px solid var(--th-border-subtle); }
+.beast-table tr:hover td { background: var(--th-hover); }
+
+/* Table wrapper (NEW — to be added) */
+.beast-table-wrap { border: 1px solid var(--th-border); background: var(--th-surface); overflow: hidden; }
+.beast-table-wrap .beast-table th { background: var(--th-card); padding: 12px 16px; }
+.beast-table-wrap .beast-table td { padding: 12px 16px; }
+
+/* Tabs */
+.beast-tab { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--th-text-muted); padding: 10px 20px; cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; transition: all 0.15s; }
+.beast-tab:hover { color: var(--th-text-secondary); }
+.beast-tab-active { color: var(--beast-red); border-bottom-color: var(--beast-red); }
+
+/* Tab bar (NEW — to be added) */
+.beast-tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--th-border); }
+
+/* Stats */
+.beast-metric { background: var(--th-surface); border: 1px solid var(--th-border); padding: 20px 24px; }
+.beast-metric-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.15em; color: var(--th-text-muted); }
+.beast-metric-value { font-family: var(--font-display); font-size: 32px; line-height: 1; color: var(--th-text); margin-top: 4px; }
+
+/* Modals */
+.beast-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7); z-index: 50; display: flex; align-items: center; justify-content: center; }
+.beast-modal { background: var(--th-surface); border: 1px solid var(--th-border); padding: 32px; width: 100%; max-width: 480px; }
+.beast-modal-title { font-family: var(--font-display); font-size: 22px; letter-spacing: 0.05em; color: var(--th-text); margin-bottom: 16px; }
+
+/* Error / Success */
+.beast-error { border: 1px solid rgba(220, 38, 38, 0.4); background: rgba(220, 38, 38, 0.1); color: #f87171; padding: 12px 18px; font-size: 13px; }
+.beast-success { border: 1px solid rgba(5, 150, 105, 0.4); background: rgba(5, 150, 105, 0.1); color: #34d399; padding: 12px 18px; font-size: 13px; }
+
+/* Empty state */
+.beast-empty { text-align: center; padding: 56px 32px; color: var(--th-text-muted); font-size: 14px; border: 1px dashed var(--th-border); background: var(--th-surface); }
+
+/* Filter input (Cloudflare-style chip bar) */
+.beast-filter-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 8px 12px;
+  border: 1px solid var(--th-input-border);
+  background: var(--th-input-bg);
+  cursor: text;
+  transition: border-color 0.15s;
+}
+.beast-filter-input:focus-within { border-color: var(--beast-red); }
+
+/* Filter chip */
+.beast-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  background: var(--th-card);
+  border: 1px solid var(--th-border);
+  color: var(--th-text-secondary);
+  white-space: nowrap;
+  transition: border-color 0.15s;
+}
+.beast-chip:hover { border-color: var(--th-text-muted); }
+.beast-chip-key { color: var(--th-text-muted); font-size: 13px; font-weight: 500; }
+.beast-chip-value { color: var(--th-text); font-weight: 600; }
+.beast-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--th-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  transition: color 0.15s;
+}
+.beast-chip-remove:hover { color: var(--beast-red-light); }
+
+/* Filter add button (inside the input) */
+.beast-filter-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px dashed var(--th-border);
+  background: transparent;
+  color: var(--th-text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.beast-filter-add:hover { border-color: var(--beast-red); color: var(--beast-red-light); }
+
+/* Filter dropdown */
+.beast-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 220px;
+  border: 1px solid var(--th-border);
+  background: var(--th-surface);
+  z-index: 20;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.beast-filter-dropdown-header {
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--th-text-muted);
+  border-bottom: 1px solid var(--th-border-subtle);
+}
+.beast-filter-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: var(--font-body);
+  color: var(--th-text-secondary);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.beast-filter-dropdown-item:hover { background: var(--th-hover); color: var(--th-text); }
+
+
+/* Pagination (NEW — to be added) */
+.beast-pagination { display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 12px; }
+.beast-pagination-info { font-size: 12px; color: var(--th-text-muted); margin: 0 8px; }
+.beast-pagination-btn {
+  border: 1px solid var(--th-border);
+  background: transparent;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--th-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 36px;
+  text-align: center;
+}
+.beast-pagination-btn:hover:not(:disabled):not(.beast-pagination-active) { border-color: var(--th-text-muted); color: var(--th-text); }
+.beast-pagination-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.beast-pagination-active {
+  background: var(--beast-red);
+  border-color: var(--beast-red);
+  color: #fff;
+  cursor: default;
+}
+.beast-pagination-ellipsis {
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--th-text-muted);
+  user-select: none;
+}
+
+/* Sortable table headers (NEW — to be added) */
+.beast-th-sort { cursor: pointer; user-select: none; transition: color 0.15s; }
+.beast-th-sort:hover { color: var(--th-text-secondary); }
+.beast-th-sort-active { color: var(--th-text); }
+.beast-sort-icon { display: inline-flex; flex-direction: column; gap: 1px; margin-left: 4px; vertical-align: middle; }
+.beast-sort-icon-up, .beast-sort-icon-down { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; }
+.beast-sort-icon-up { border-bottom: 4px solid var(--th-border); }
+.beast-sort-icon-down { border-top: 4px solid var(--th-border); }
+.beast-th-sort-active .beast-sort-icon-up { border-bottom-color: var(--th-text-muted); }
+.beast-th-sort-active.sort-asc .beast-sort-icon-up { border-bottom-color: var(--beast-red); }
+.beast-th-sort-active.sort-desc .beast-sort-icon-down { border-top-color: var(--beast-red); }
+
+/* Category header */
+.beast-category-header { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: var(--th-text-secondary); padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--th-border-subtle); }
+
+/* Divider */
+.beast-divider { height: 1px; background: var(--th-border); margin: 16px 0; }
+.beast-divider-v { width: 1px; height: 24px; background: var(--th-border); margin: 0 8px; flex-shrink: 0; }
+
+/* Bulk action bar */
+.beast-bulk-bar { display: flex; align-items: center; gap: 8px; padding: 12px 20px; }
+.beast-bulk-bar-count { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--th-text); white-space: nowrap; }
+.beast-bulk-bar-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Additional element classes (extracted from inline styles)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Toggle label (wraps toggle + text) */
+.beast-toggle-label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.beast-toggle-label-disabled { cursor: default; }
+.beast-toggle-text { font-size: 13px; color: var(--th-text-secondary); }
+.beast-toggle-text-disabled { color: var(--th-text-muted); }
+
+/* Severity dot (standalone use, e.g. tool icon fallback) */
+.beast-severity-dot { display: inline-block; width: 6px; height: 6px; flex-shrink: 0; }
+
+/* Table cell modifiers */
+.beast-td-primary { color: var(--th-text); }
+.beast-td-right { text-align: right; }
+.beast-td-numeric { text-align: right; font-weight: 700; color: var(--th-text); }
+.beast-td-date { text-align: right; font-size: 12px; }
+.beast-td-code { font-family: monospace; font-size: 11px; color: var(--th-text-secondary); }
+.beast-th-right { text-align: right; }
+
+/* Card flush (no padding, for tables inside cards) */
+.beast-card-flush { padding: 0; }
+
+/* Tab bar spacing when inside a card */
+.beast-tab-bar-spaced { margin-bottom: 20px; }
+
+/* Metric modifiers */
+.beast-metric-accent { border-left: 3px solid var(--beast-red); }
+.beast-metric-value-red { color: var(--beast-red); }
+.beast-metric-value-sm { font-size: 22px; }
+.beast-metric-warning { border-left: 3px solid #d97706; }
+.beast-metric-value-amber { color: #d97706; }
+.beast-metric-neutral { border-left: 3px solid var(--th-text-muted); }
+
+/* Modal body text */
+.beast-modal-body { font-size: 13px; color: var(--th-text-secondary); line-height: 1.6; margin-bottom: 20px; }
+.beast-modal-body strong { color: var(--th-text); }
+
+/* Modal actions row */
+.beast-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Modal preview backdrop */
+.beast-modal-preview { background: rgba(0, 0, 0, 0.4); padding: 40px; display: flex; justify-content: center; }
+
+/* Empty state title */
+.beast-empty-title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+
+/* Inline text input (inside filter bar) */
+.beast-filter-text { border: none; background: none; outline: none; color: var(--th-input-text); font-size: 13px; font-family: var(--font-body); flex: 1; min-width: 80px; padding: 2px 0; }
+.beast-filter-text::placeholder { color: var(--th-input-placeholder); }
+
+/* Dropdown positioning wrapper */
+.beast-dropdown-wrap { position: relative; }
+
+/* Pagination info centered */
+.beast-pagination-info-wrap { margin-top: 8px; text-align: center; }
+
+/* Tab panel (hidden by default, shown by JS) */
+.tab-panel-hidden { display: none; }
+
+/* Flex layouts (reusable) */
+/* ── Breadcrumbs ── */
+.beast-breadcrumb { display: flex; align-items: center; gap: 0; font-size: 13px; }
+.beast-breadcrumb-item { color: var(--th-text-muted); text-decoration: none; transition: color 0.15s; }
+.beast-breadcrumb-item:hover { color: var(--beast-red-light); }
+.beast-breadcrumb-item-active { color: var(--th-text); font-weight: 600; pointer-events: none; }
+.beast-breadcrumb-sep { color: var(--th-border); margin: 0 8px; font-size: 11px; user-select: none; }
+
+.beast-flex { display: flex; align-items: center; }
+.beast-flex-gap { gap: 16px; }
+.beast-flex-gap-sm { gap: 8px; }
+.beast-flex-1 { flex: 1; }
+.beast-mb-md { margin-bottom: 16px; }
+
+/* History list item */
+.beast-history-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--th-border-subtle); }
+.beast-history-item:last-child { border-bottom: none; }
+.beast-history-date { color: var(--th-text-muted); }
+.beast-history-list { font-size: 13px; color: var(--th-text-secondary); }
+
+/* Toolbar (fixed top-right) */
+.beast-toolbar { position: fixed; top: 20px; right: 20px; z-index: 100; display: flex; gap: 8px; }
+.beast-toolbar-group { display: flex; gap: 0; border: 1px solid var(--th-border); background: var(--th-surface); }
+.beast-toolbar-btn { padding: 8px 16px; font-size: 11px; font-weight: 700; font-family: var(--font-body); text-transform: uppercase; letter-spacing: 0.12em; cursor: pointer; border: none; transition: all 0.15s; background: transparent; color: var(--th-text-muted); }
+.beast-toolbar-btn-active { background: var(--beast-red); color: #fff; }
+.beast-toolbar-btn-lang { padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; background: transparent; color: var(--th-text-muted); }
+
+/* ═══════════════════════════════════════════════════════════════
+   STATUS INDICATORS
+   ═══════════════════════════════════════════════════════════════ */
+.status-pill { display: inline-flex; align-items: center; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+.status-completed { background: rgba(5, 150, 105, 0.15); color: #34d399; }
+.status-running { background: rgba(37, 99, 235, 0.15); color: #60a5fa; }
+.status-queued { background: var(--th-card); color: var(--th-text-muted); }
+.status-failed { background: rgba(220, 38, 38, 0.15); color: #f87171; }
+
+/* ── Step Progress ── */
+.beast-steps { display: flex; align-items: flex-start; justify-content: center; }
+.beast-step { display: flex; align-items: flex-start; }
+.beast-step-grow { flex: 1; }
+.beast-step-node { display: flex; flex-direction: column; align-items: center; }
+.beast-step-clickable { cursor: pointer; }
+.beast-step-clickable:hover .beast-step-label { color: var(--beast-red-light) !important; }
+.beast-step-clickable:hover .beast-step-dot-done { background: var(--beast-red-light); }
+.beast-step-dot { width: 12px; height: 12px; flex-shrink: 0; }
+.beast-step-dot-lg { width: 16px; height: 16px; }
+.beast-step-dot-done { background: var(--beast-red); }
+.beast-step-dot-active { position: relative; background: var(--beast-red); }
+.beast-step-dot-active::before { content: ''; position: absolute; inset: -2px; background: var(--beast-red-light); opacity: 0.5; animation: beast-step-ping 0.9s ease-out infinite; }
+.beast-step-dot-failed { background: #ef4444; }
+.beast-step-dot-skipped { border: 2px dashed var(--th-text-muted); background: transparent; }
+.beast-step-dot-pending { background: var(--th-border); }
+.beast-step-label { margin-top: 6px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; white-space: nowrap; transition: color 0.15s; }
+.beast-step-label-done { color: var(--beast-red); }
+.beast-step-label-active { color: var(--beast-red); }
+.beast-step-label-failed { color: #f87171; }
+.beast-step-label-skipped { color: var(--th-text-muted); }
+.beast-step-label-pending { color: var(--th-text-muted); }
+.beast-step-sublabel { font-size: 9px; color: var(--th-text-muted); font-variant-numeric: tabular-nums; }
+.beast-step-line { flex: 1; height: 2px; margin-top: 5px; margin-left: 4px; margin-right: 4px; }
+.beast-step-line-done { background: var(--beast-red); }
+.beast-step-line-pending { background: var(--th-border-subtle); }
+.beast-step-ring { outline: 2px solid var(--beast-red); outline-offset: 2px; }
+@keyframes beast-step-ping { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(2.2); opacity: 0; } }
+
+/* ── Pipeline (fork/join) ── */
+/*
+  Grid layout — 3 rows, N columns:
+    Row 1 (top):    empty ... | top-branch content | ... empty
+    Row 2 (center): clone → line → vert → line → vert → line → import → ...
+    Row 3 (bottom): empty ... | bot-branch content | ... empty
+*/
+.beast-pipeline {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-items: center;
+  justify-items: center;
+  column-gap: 0;
+  row-gap: 6px;
+}
+.beast-pipeline-node { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+.beast-pipeline-h { height: 2px; width: 100%; min-width: 16px; }
+.beast-pipeline-v { width: 2px; height: 100%; min-height: 6px; justify-self: center; }
+
+/* ── ReactFlow overrides (for PipelineProgress component) ── */
+.react-flow__node { padding: 0 !important; border: none !important; background: none !important; box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; }
+.react-flow__node:focus, .react-flow__node.selected { outline: none !important; box-shadow: none !important; }
+.react-flow { background: transparent !important; }
+.react-flow__node .beast-step-dot { position: relative; z-index: 2; display: block; }
+.react-flow__node .beast-step-dot::before { z-index: 1; }
+.react-flow__node .beast-step-sublabel { white-space: nowrap; }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOOLKIT-ONLY LAYOUT (not part of design system)
+   ═══════════════════════════════════════════════════════════════ */
+.demo-box {
+  background: var(--th-surface);
+  border: 1px solid var(--th-border);
+  padding: 20px;
+}
+.demo-modal-static {
+  background: var(--th-surface);
+  border: 1px solid var(--th-border);
+  padding: 24px;
+  max-width: 400px;
+}
+.label-above {
+  font-size: 10px;
+  color: var(--th-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-bottom: 4px;
+}
+.toc {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 48px;
+}
+.toc a {
+  display: block;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--th-text-muted);
+  background: var(--th-surface);
+  border: 1px solid var(--th-border);
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.toc a:hover {
+  color: var(--beast-red-light);
+  border-color: var(--beast-red);
+}
+.new-tag {
+  display: inline-block;
+  background: rgba(5, 150, 105, 0.2);
+  color: #34d399;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+</style>
+</head>
+<body>
+
+<h1 class="toolkit-title">BEAST Design Toolkit</h1>
+<p class="toolkit-subtitle">Component reference for the BEAST dashboard. Every UI element should use these classes. No inline Tailwind soup.</p>
+
+<div class="toc">
+  <a href="#breadcrumbs">Breadcrumbs</a>
+  <a href="#buttons">Buttons</a>
+  <a href="#inputs">Inputs & Forms</a>
+  <a href="#badges">Badges</a>
+  <a href="#step-progress">Step Progress</a>
+  <a href="#severity">Severity & Status</a>
+  <a href="#tables">Tables</a>
+  <a href="#tabs">Tabs</a>
+  <a href="#cards">Cards & Metrics</a>
+  <a href="#filters">Filters</a>
+  <a href="#modals">Modals</a>
+  <a href="#messages">Messages</a>
+  <a href="#empty">Empty States</a>
+  <a href="#typography">Typography</a>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="breadcrumbs">
+  <h2 class="section-title">Breadcrumbs</h2>
+  <p class="section-desc">Navigation path showing current location. Last item is active (bold, non-clickable).</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Simple (2 levels)</div>
+    <nav class="beast-breadcrumb">
+      <a href="#" class="beast-breadcrumb-item" data-en="Teams" data-uk="Команди">Teams</a>
+      <span class="beast-breadcrumb-sep">/</span>
+      <span class="beast-breadcrumb-item beast-breadcrumb-item-active">matrixweb</span>
+    </nav>
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Deep (3 levels)</div>
+    <nav class="beast-breadcrumb">
+      <a href="#" class="beast-breadcrumb-item" data-en="Teams" data-uk="Команди">Teams</a>
+      <span class="beast-breadcrumb-sep">/</span>
+      <a href="#" class="beast-breadcrumb-item">matrixweb</a>
+      <span class="beast-breadcrumb-sep">/</span>
+      <span class="beast-breadcrumb-item beast-breadcrumb-item-active" data-en="Findings" data-uk="Знахідки">Findings</span>
+    </nav>
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Deep (4 levels)</div>
+    <nav class="beast-breadcrumb">
+      <a href="#" class="beast-breadcrumb-item" data-en="Teams" data-uk="Команди">Teams</a>
+      <span class="beast-breadcrumb-sep">/</span>
+      <a href="#" class="beast-breadcrumb-item">matrixweb</a>
+      <span class="beast-breadcrumb-sep">/</span>
+      <a href="#" class="beast-breadcrumb-item" data-en="Tools" data-uk="Інструменти">Tools</a>
+      <span class="beast-breadcrumb-sep">/</span>
+      <span class="beast-breadcrumb-item beast-breadcrumb-item-active">Gitleaks</span>
+    </nav>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="buttons">
+  <h2 class="section-title">Buttons</h2>
+  <p class="section-desc">All buttons use <code>.beast-btn</code> as base, with a variant modifier. Add <code>.beast-btn-sm</code> for compact contexts.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Full Size (default)</div>
+    <div class="row">
+      <button class="beast-btn beast-btn-primary" data-en="Primary Action" data-uk="Основна дія">Primary Action</button>
+      <button class="beast-btn beast-btn-outline" data-en="Secondary" data-uk="Допоміжна">Secondary</button>
+      <button class="beast-btn beast-btn-danger" data-en="Delete" data-uk="Видалити">Delete</button>
+      <button class="beast-btn beast-btn-ghost" data-en="Ghost" data-uk="Прозора">Ghost</button>
+    </div>
+    <div class="row">
+      <!-- .beast-btn .beast-btn-primary -->
+      <!-- .beast-btn .beast-btn-outline -->
+      <!-- .beast-btn .beast-btn-danger -->
+      <!-- .beast-btn .beast-btn-ghost -->
+    </div>
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Small Size (.beast-btn-sm)</div>
+    <div class="row">
+      <button class="beast-btn beast-btn-primary beast-btn-sm" data-en="Add" data-uk="Додати">Add</button>
+      <button class="beast-btn beast-btn-outline beast-btn-sm" data-en="Edit" data-uk="Редагувати">Edit</button>
+      <button class="beast-btn beast-btn-danger beast-btn-sm" data-en="Remove" data-uk="Видалити">Remove</button>
+      <button class="beast-btn beast-btn-ghost beast-btn-sm" data-en="Cancel" data-uk="Скасувати">Cancel</button>
+    </div>
+    <div class="row">
+      <!-- .beast-btn .beast-btn-primary .beast-btn-sm -->
+    </div>
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Disabled State</div>
+    <div class="row">
+      <button class="beast-btn beast-btn-primary" disabled data-en="Disabled Primary" data-uk="Вимкнена основна">Disabled Primary</button>
+      <button class="beast-btn beast-btn-outline" disabled data-en="Disabled Outline" data-uk="Вимкнена допоміжна">Disabled Outline</button>
+      <button class="beast-btn beast-btn-danger" disabled data-en="Disabled Danger" data-uk="Вимкнена небезпечна">Disabled Danger</button>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="inputs">
+  <h2 class="section-title">Inputs & Forms</h2>
+  <p class="section-desc">All form controls. Labels, text inputs, selects, toggles.</p>
+
+  <div class="grid-2">
+    <div class="subsection">
+      <div class="subsection-label">Text Input (default)</div>
+      <label class="beast-label" data-en="Repository URL" data-uk="URL-адреса репозиторію">Repository URL</label>
+      <input class="beast-input" placeholder="https://github.com/org/repo" data-en-ph="https://github.com/org/repo" data-uk-ph="https://github.com/org/репозиторій" />
+      <!-- .beast-label + .beast-input -->
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">Text Input (small)</div>
+      <label class="beast-label" data-en="Filter" data-uk="Фільтр">Filter</label>
+      <input class="beast-input beast-input-sm" placeholder="Search..." data-en-ph="Search..." data-uk-ph="Пошук..." />
+      <!-- .beast-input .beast-input-sm -->
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">Select <span class="new-tag">New</span></div>
+      <label class="beast-label" data-en="Team" data-uk="Команда">Team</label>
+      <select class="beast-select">
+        <option data-en="All Teams" data-uk="Усі команди">All Teams</option>
+        <option>Frontend</option>
+        <option>Backend</option>
+      </select>
+      <!-- .beast-select -->
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">Select (small) <span class="new-tag">New</span></div>
+      <label class="beast-label" data-en="Status" data-uk="Статус">Status</label>
+      <select class="beast-select beast-select-sm">
+        <option data-en="All Statuses" data-uk="Усі статуси">All Statuses</option>
+        <option data-en="Active" data-uk="Активні">Active</option>
+        <option data-en="Mitigated" data-uk="Усунені">Mitigated</option>
+      </select>
+      <!-- .beast-select .beast-select-sm -->
+    </div>
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Toggle Switch</div>
+    <div class="row">
+      <label class="beast-toggle-label">
+        <input type="checkbox" class="beast-toggle" />
+        <span class="beast-toggle-text" data-en="Enable PR comments" data-uk="Увімкнути коментарі до PR-запитів">Enable PR comments</span>
+      </label>
+      <label class="beast-toggle-label">
+        <input type="checkbox" class="beast-toggle" checked />
+        <span class="beast-toggle-text" data-en="Auto-scan enabled" data-uk="Автоматичне сканування увімкнено">Auto-scan enabled</span>
+      </label>
+      <label class="beast-toggle-label beast-toggle-label-disabled">
+        <input type="checkbox" class="beast-toggle" disabled />
+        <span class="beast-toggle-text beast-toggle-text-disabled" data-en="Disabled" data-uk="Вимкнено">Disabled</span>
+      </label>
+    </div>
+    <!-- .beast-toggle -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Disabled Input</div>
+    <input class="beast-input" disabled value="Cannot edit" data-en="Cannot edit" data-uk="Неможливо редагувати" />
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="badges">
+  <h2 class="section-title">Badges</h2>
+  <p class="section-desc">Small labels for categories, pricing, status indicators.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Standard Badges</div>
+    <div class="row">
+      <span class="beast-badge beast-badge-green" data-en="Free" data-uk="Безкоштовно">Free</span>
+      <span class="beast-badge beast-badge-amber" data-en="Free Tier" data-uk="Безкоштовний рівень">Free Tier</span>
+      <span class="beast-badge beast-badge-blue" data-en="Recommended" data-uk="Рекомендовано">Recommended</span>
+      <span class="beast-badge beast-badge-red" data-en="Paid" data-uk="Платний">Paid</span>
+      <span class="beast-badge beast-badge-gray">SAST</span>
+      <span class="beast-badge beast-badge-purple">SCA</span>
+      <span class="beast-badge beast-badge-cyan" data-en="Secrets" data-uk="Секрети">Secrets</span>
+    </div>
+    <!-- .beast-badge .beast-badge-{color} -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Scan Status Pills</div>
+    <div class="row">
+      <span class="status-pill status-completed" data-en="Completed" data-uk="Завершено">Completed</span>
+      <span class="status-pill status-running" data-en="Running" data-uk="Виконується">Running</span>
+      <span class="status-pill status-queued" data-en="Queued" data-uk="В черзі">Queued</span>
+      <span class="status-pill status-failed" data-en="Failed" data-uk="Помилка">Failed</span>
+    </div>
+    <!-- .status-pill .status-{state} -->
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="step-progress">
+  <h2 class="section-title">Step Progress</h2>
+  <p class="section-desc">Horizontal step-by-step progress indicator using the BEAST-red palette. Used in onboarding wizard and scan pipeline.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Running (step 3 of 4 active)</div>
+    <div style="padding: 24px; background: var(--th-surface); border: 1px solid var(--th-border);">
+      <div class="beast-steps">
+        <div class="beast-step beast-step-grow">
+          <div class="beast-step-node beast-step-clickable">
+            <span class="beast-step-dot beast-step-dot-done"></span>
+            <span class="beast-step-label beast-step-label-done">Workspace</span>
+          </div>
+          <div class="beast-step-line beast-step-line-done"></div>
+        </div>
+        <div class="beast-step beast-step-grow">
+          <div class="beast-step-node beast-step-clickable">
+            <span class="beast-step-dot beast-step-dot-done"></span>
+            <span class="beast-step-label beast-step-label-done">Tools</span>
+          </div>
+          <div class="beast-step-line beast-step-line-done"></div>
+        </div>
+        <div class="beast-step beast-step-grow">
+          <div class="beast-step-node">
+            <span class="beast-step-dot beast-step-dot-active"></span>
+            <span class="beast-step-label beast-step-label-active">Source</span>
+          </div>
+          <div class="beast-step-line beast-step-line-pending"></div>
+        </div>
+        <div class="beast-step">
+          <div class="beast-step-node">
+            <span class="beast-step-dot beast-step-dot-pending"></span>
+            <span class="beast-step-label beast-step-label-pending">Import</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- .beast-steps > .beast-step > .beast-step-node + .beast-step-line
+         Dot: beast-step-dot-done | beast-step-dot-active | beast-step-dot-pending | beast-step-dot-failed | beast-step-dot-skipped
+         Label: beast-step-label-done | beast-step-label-active | beast-step-label-pending | beast-step-label-failed | beast-step-label-skipped
+         Line: beast-step-line-done | beast-step-line-pending
+         Size: beast-step-dot-lg  Ring: beast-step-ring -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Failed State</div>
+    <div style="padding: 24px; background: var(--th-surface); border: 1px solid var(--th-border);">
+      <div class="beast-steps">
+        <div class="beast-step beast-step-grow">
+          <div class="beast-step-node">
+            <span class="beast-step-dot beast-step-dot-done"></span>
+            <span class="beast-step-label beast-step-label-done">Clone</span>
+          </div>
+          <div class="beast-step-line beast-step-line-done"></div>
+        </div>
+        <div class="beast-step beast-step-grow">
+          <div class="beast-step-node">
+            <span class="beast-step-dot beast-step-dot-failed"></span>
+            <span class="beast-step-label beast-step-label-failed">Analysis</span>
+          </div>
+          <div class="beast-step-line beast-step-line-pending"></div>
+        </div>
+        <div class="beast-step beast-step-grow">
+          <div class="beast-step-node">
+            <span class="beast-step-dot beast-step-dot-skipped"></span>
+            <span class="beast-step-label beast-step-label-skipped">Sec Tools</span>
+          </div>
+          <div class="beast-step-line beast-step-line-pending"></div>
+        </div>
+        <div class="beast-step">
+          <div class="beast-step-node">
+            <span class="beast-step-dot beast-step-dot-pending"></span>
+            <span class="beast-step-label beast-step-label-pending">Import</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Scan Pipeline — Fork/Join (Sec Tools + AI Research parallel)</div>
+    <div style="padding: 16px 24px; background: var(--th-surface); border: 1px solid var(--th-border);">
+      <div id="beast-pipeline-mount" style="height: 170px; font-size: 13px;"></div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="severity">
+  <h2 class="section-title">Severity & Status <span class="new-tag">New Classes</span></h2>
+  <p class="section-desc">Currently these use raw Tailwind with light-theme colors. Proposed dark-native replacements.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Severity Badges</div>
+    <div class="row">
+      <span class="beast-severity beast-severity-critical"><span data-en="Critical" data-uk="Критичний">Critical</span></span>
+      <span class="beast-severity beast-severity-high"><span data-en="High" data-uk="Високий">High</span></span>
+      <span class="beast-severity beast-severity-medium"><span data-en="Medium" data-uk="Середній">Medium</span></span>
+      <span class="beast-severity beast-severity-low"><span data-en="Low" data-uk="Низький">Low</span></span>
+      <span class="beast-severity beast-severity-info"><span data-en="Info" data-uk="Інфо">Info</span></span>
+    </div>
+    <!-- .beast-severity .beast-severity-{level} -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Finding Status</div>
+    <div class="row">
+      <span class="beast-status beast-status-open"><span data-en="Open" data-uk="Відкритий">Open</span></span>
+      <span class="beast-status beast-status-accepted"><span data-en="Accepted" data-uk="Ризик прийнято">Accepted</span></span>
+      <span class="beast-status beast-status-false-positive"><span data-en="False Positive" data-uk="Хибнопозитивна">False Positive</span></span>
+      <span class="beast-status beast-status-fixed"><span data-en="Fixed" data-uk="Виправлено">Fixed</span></span>
+      <span class="beast-status beast-status-duplicate"><span data-en="Duplicate" data-uk="Дублікат">Duplicate</span></span>
+    </div>
+    <!-- .beast-status .beast-status-{type} -->
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="tables">
+  <h2 class="section-title">Tables</h2>
+  <p class="section-desc">Two styles: compact (beast-table in beast-card) and full-width with wrapper.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Compact Table (inside beast-card)</div>
+    <div class="beast-card beast-card-flush">
+      <table class="beast-table">
+        <thead>
+          <tr>
+            <th data-en="Tool" data-uk="Інструмент">Tool</th>
+            <th class="beast-th-right" data-en="Active" data-uk="Активні">Active</th>
+            <th class="beast-th-right" data-en="Dismissed" data-uk="Відхилені">Dismissed</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="beast-td-primary" data-en="Code Analysis" data-uk="Аналіз коду">Code Analysis</td>
+            <td class="beast-td-numeric">12</td>
+            <td class="beast-td-right">3</td>
+          </tr>
+          <tr>
+            <td class="beast-td-primary" data-en="Secrets" data-uk="Секрети">Secrets</td>
+            <td class="beast-td-numeric">5</td>
+            <td class="beast-td-right">1</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- .beast-card + .beast-table -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Full Table with Wrapper <span class="new-tag">New</span></div>
+    <div class="beast-table-wrap">
+      <table class="beast-table">
+        <thead>
+          <tr>
+            <th data-en="Finding" data-uk="Знахідка">Finding</th>
+            <th data-en="Severity" data-uk="Серйозність">Severity</th>
+            <th data-en="Location" data-uk="Розташування">Location</th>
+            <th data-en="Status" data-uk="Статус">Status</th>
+            <th class="beast-th-right" data-en="Date" data-uk="Дата">Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="beast-td-primary" data-en="Hardcoded API key in config.js" data-uk="Захардкоджений API-ключ у config.js">Hardcoded API key in config.js</td>
+            <td><span class="beast-severity beast-severity-critical">Critical</span></td>
+            <td><code class="beast-td-code">src/config.js:42</code></td>
+            <td><span class="beast-status beast-status-open">Open</span></td>
+            <td class="beast-td-date">Mar 15</td>
+          </tr>
+          <tr>
+            <td class="beast-td-primary" data-en="Outdated lodash dependency" data-uk="Застаріла залежність lodash">Outdated lodash dependency</td>
+            <td><span class="beast-severity beast-severity-medium">Medium</span></td>
+            <td><code class="beast-td-code">package.json:15</code></td>
+            <td><span class="beast-status beast-status-fixed">Fixed</span></td>
+            <td class="beast-td-date">Mar 12</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- .beast-table-wrap > .beast-table -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Sortable Table <span class="new-tag">New</span></div>
+    <div class="beast-table-wrap">
+      <table class="beast-table" id="sortable-demo">
+        <thead>
+          <tr>
+            <th class="beast-th-sort beast-th-sort-active sort-desc" data-col="0" data-en="Repository" data-uk="Репозиторій" onclick="sortTable(this,0,'text')">Repository <span class="beast-sort-icon"><span class="beast-sort-icon-up"></span><span class="beast-sort-icon-down"></span></span></th>
+            <th class="beast-th-sort beast-th-right" data-col="1" data-en="Findings" data-uk="Знахідки" onclick="sortTable(this,1,'num')">Findings <span class="beast-sort-icon"><span class="beast-sort-icon-up"></span><span class="beast-sort-icon-down"></span></span></th>
+            <th class="beast-th-sort" data-col="2" data-en="Severity" data-uk="Серйозність" onclick="sortTable(this,2,'sev')">Severity <span class="beast-sort-icon"><span class="beast-sort-icon-up"></span><span class="beast-sort-icon-down"></span></span></th>
+            <th class="beast-th-sort beast-th-right" data-col="3" data-en="Last Scan" data-uk="Останнє сканування" onclick="sortTable(this,3,'text')">Last Scan <span class="beast-sort-icon"><span class="beast-sort-icon-up"></span><span class="beast-sort-icon-down"></span></span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="beast-td-primary">matrixweb</td>
+            <td class="beast-td-numeric">24</td>
+            <td><span class="beast-severity beast-severity-critical"><span data-en="Critical" data-uk="Критичний">Critical</span></span></td>
+            <td class="beast-td-date">Mar 17</td>
+          </tr>
+          <tr>
+            <td class="beast-td-primary">synthflow-ai</td>
+            <td class="beast-td-numeric">7</td>
+            <td><span class="beast-severity beast-severity-high"><span data-en="High" data-uk="Високий">High</span></span></td>
+            <td class="beast-td-date">Mar 16</td>
+          </tr>
+          <tr>
+            <td class="beast-td-primary">fluorogenic-cytochromes</td>
+            <td class="beast-td-numeric">3</td>
+            <td><span class="beast-severity beast-severity-medium"><span data-en="Medium" data-uk="Середній">Medium</span></span></td>
+            <td class="beast-td-date">Mar 15</td>
+          </tr>
+          <tr>
+            <td class="beast-td-primary">adme-word-reports</td>
+            <td class="beast-td-numeric">0</td>
+            <td><span class="beast-severity beast-severity-info"><span data-en="Info" data-uk="Інфо">Info</span></span></td>
+            <td class="beast-td-date">Mar 12</td>
+          </tr>
+          <tr>
+            <td class="beast-td-primary">valo</td>
+            <td class="beast-td-numeric">12</td>
+            <td><span class="beast-severity beast-severity-low"><span data-en="Low" data-uk="Низький">Low</span></span></td>
+            <td class="beast-td-date">Mar 14</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- .beast-th-sort (.beast-th-sort-active .sort-asc / .sort-desc) + .beast-sort-icon -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Pagination <span class="new-tag">New</span></div>
+    <div class="beast-pagination" id="pagination-demo"></div>
+    <div class="beast-pagination-info-wrap">
+      <span class="beast-pagination-info" id="pagination-info"></span>
+    </div>
+    <!-- .beast-pagination > .beast-pagination-btn (.beast-pagination-active) + .beast-pagination-ellipsis -->
+  </div>
+
+  <div class="subsection">
+    <div class="subsection-label">Data Table Pattern <span class="new-tag">New</span></div>
+    <p style="font-size:12px;color:var(--th-text-muted);margin-bottom:12px;">
+      Standard layout for all data tables: ChipFilter search/filters + column settings gear + scrollable table + pagination.<br>
+      Reference implementation: <code>pages/repos.tsx</code>, <code>pages/repo.tsx → RepoFindings</code>
+    </p>
+
+    <!-- Filter bar + column gear -->
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <div style="flex:1;min-width:0;">
+        <div class="beast-filter-input">
+          <input class="beast-filter-text" placeholder="Search..." disabled />
+          <button class="beast-filter-add" disabled>+ Add filter</button>
+        </div>
+      </div>
+      <div class="beast-dropdown-wrap">
+        <button class="beast-btn beast-btn-outline beast-btn-filter" disabled title="Column settings">
+          <svg style="width:16px;height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Scrollable table -->
+    <div class="beast-table-wrap">
+      <table class="beast-table">
+        <thead>
+          <tr>
+            <th><button class="beast-th-sort" disabled>Finding <span class="beast-sort-arrows"><span>&#9650;</span><span>&#9660;</span></span></button></th>
+            <th><button class="beast-th-sort beast-th-sort-active" disabled>Severity <span class="beast-sort-arrows"><span>&#9650;</span><span class="active">&#9660;</span></span></button></th>
+            <th>Location</th>
+            <th><button class="beast-th-sort" disabled>Status <span class="beast-sort-arrows"><span>&#9650;</span><span>&#9660;</span></span></button></th>
+            <th><button class="beast-th-sort" disabled>Tool <span class="beast-sort-arrows"><span>&#9650;</span><span>&#9660;</span></span></button></th>
+            <th class="beast-th-right"><button class="beast-th-sort" disabled>Date <span class="beast-sort-arrows"><span>&#9650;</span><span>&#9660;</span></span></button></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="beast-td-primary"><a class="beast-link-red" href="#">Hardcoded JWT Secret</a></td>
+            <td><span class="beast-severity beast-severity-high">High</span></td>
+            <td><code class="beast-td-code">src/auth/config.ts:12</code></td>
+            <td><span class="beast-status beast-status-open">Open</span></td>
+            <td>Gitleaks</td>
+            <td class="beast-td-date">Mar 19</td>
+          </tr>
+          <tr class="beast-row-dimmed">
+            <td class="beast-td-primary"><a class="beast-link-red" href="#">No HEALTHCHECK defined</a></td>
+            <td><span class="beast-severity beast-severity-low">Low</span></td>
+            <td><code class="beast-td-code">Dockerfile</code></td>
+            <td><span class="beast-status beast-status-accepted">Accepted</span></td>
+            <td>Trivy</td>
+            <td class="beast-td-date">Mar 19</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="beast-pagination" style="margin-top:12px;">
+      <button class="beast-pagination-btn" disabled>First</button>
+      <button class="beast-pagination-btn beast-pagination-active">1</button>
+      <button class="beast-pagination-btn">2</button>
+      <button class="beast-pagination-btn">3</button>
+      <span class="beast-pagination-ellipsis">&hellip;</span>
+      <button class="beast-pagination-btn">10</button>
+      <button class="beast-pagination-btn">Last</button>
+    </div>
+    <div class="beast-pagination-info-wrap">
+      <span class="beast-pagination-info">Page 1 of 10</span>
+    </div>
+    <!--
+      Structure:
+        .beast-flex + .beast-flex-gap-sm
+          .beast-flex-grow > ChipFilter (beast-filter-input)
+          .beast-dropdown-wrap > gear button + FindingColumnSettings (beast-dropdown)
+        .beast-table-wrap (overflow-x: auto) > .beast-table
+        Pagination component (0-indexed pages)
+
+      Key classes:
+        .beast-flex-grow         — fills remaining width
+        .beast-btn-filter        — icon-only filter/settings button
+        .beast-dropdown-wrap     — relative container for dropdowns
+        .beast-dropdown          — positioned dropdown panel
+        .beast-dropdown-item     — label+checkbox row inside dropdown
+        .beast-table-wrap        — border + overflow-x: auto
+        .beast-row-dimmed        — faded row (risk accepted)
+        .beast-td-code           — monospace file path cell
+        .beast-td-date           — right-aligned date cell
+    -->
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="tabs">
+  <h2 class="section-title">Tabs</h2>
+  <p class="section-desc">Used for sub-navigation within pages.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Tab Bar with Content</div>
+    <div class="beast-card">
+      <div class="beast-card-title" data-en="Repository Details" data-uk="Деталі репозиторію">Repository Details</div>
+      <p class="beast-card-subtitle" data-en="View scan results and pull request activity" data-uk="Перегляд результатів сканування та активності pull-запитів">View scan results and pull request activity</p>
+      <div class="beast-tab-bar beast-tab-bar-spaced">
+        <button class="beast-tab beast-tab-active" data-en="Overview" data-uk="Огляд" onclick="switchTab(this,'tab-overview')">Overview</button>
+        <button class="beast-tab" data-en="Pull Requests" data-uk="Pull-запити" onclick="switchTab(this,'tab-prs')">Pull Requests</button>
+        <button class="beast-tab" data-en="History" data-uk="Історія" onclick="switchTab(this,'tab-history')">History</button>
+      </div>
+      <div id="tab-overview" class="tab-panel">
+        <div class="beast-flex beast-flex-gap beast-mb-md">
+          <div class="beast-metric beast-flex-1">
+            <p class="beast-metric-label" data-en="Active Findings" data-uk="Активні знахідки">Active Findings</p>
+            <p class="beast-metric-value">24</p>
+          </div>
+          <div class="beast-metric beast-flex-1">
+            <p class="beast-metric-label" data-en="Last Scan" data-uk="Останнє сканування">Last Scan</p>
+            <p class="beast-metric-value beast-metric-value-sm">Mar 17</p>
+          </div>
+        </div>
+        <p class="beast-card-subtitle" data-en="Repository overview with scan statistics and severity breakdown." data-uk="Огляд репозиторію зі статистикою сканувань та розподілом за серйозністю.">Repository overview with scan statistics and severity breakdown.</p>
+      </div>
+      <div id="tab-prs" class="tab-panel" style="display:none">
+        <table class="beast-table">
+          <thead><tr>
+            <th data-en="Title" data-uk="Заголовок">Title</th>
+            <th data-en="Author" data-uk="Автор">Author</th>
+            <th data-en="Status" data-uk="Статус">Status</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td class="beast-td-primary" data-en="Fix auth middleware bypass" data-uk="Виправити обхід мідлвари автентифікації">Fix auth middleware bypass</td>
+              <td>dmytro.k</td>
+              <td><span class="status-pill status-running" data-en="Open" data-uk="Відкритий">Open</span></td>
+            </tr>
+            <tr>
+              <td class="beast-td-primary" data-en="Update dependency versions" data-uk="Оновити версії залежностей">Update dependency versions</td>
+              <td>olena.s</td>
+              <td><span class="status-pill status-completed" data-en="Merged" data-uk="Змерджений">Merged</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="tab-history" class="tab-panel" style="display:none">
+        <div class="beast-history-list">
+          <div class="beast-history-item">
+            <span data-en="Full scan completed" data-uk="Повне сканування завершено">Full scan completed</span>
+            <span class="beast-history-date">Mar 17, 14:32</span>
+          </div>
+          <div class="beast-history-item">
+            <span data-en="PR scan triggered" data-uk="Сканування PR-запиту запущено">PR scan triggered</span>
+            <span class="beast-history-date">Mar 16, 09:15</span>
+          </div>
+          <div class="beast-history-item">
+            <span data-en="Repository imported" data-uk="Репозиторій імпортовано">Repository imported</span>
+            <span class="beast-history-date">Mar 12, 11:00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- .beast-card > .beast-card-title + .beast-card-subtitle + .beast-tab-bar > .beast-tab -->
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="cards">
+  <h2 class="section-title">Cards & Metrics</h2>
+  <p class="section-desc">Reusable containers: generic panel (beast-card) and metric display (beast-metric) — big number + label, for any numeric value.</p>
+
+  <div class="grid-2">
+    <div class="subsection">
+      <div class="subsection-label">Card</div>
+      <div class="beast-card">
+        <h3 class="beast-card-title" data-en="Security Overview" data-uk="Огляд безпеки">Security Overview</h3>
+        <p class="beast-card-subtitle" data-en="Last updated 2 hours ago" data-uk="Останнє оновлення 2 години тому">Last updated 2 hours ago</p>
+        <p class="beast-card-subtitle" data-en="Card content goes here. Use for panels, summaries, settings sections." data-uk="Зміст картки. Використовується для панелей, підсумків, розділів налаштувань.">Card content goes here. Use for panels, summaries, settings sections.</p>
+      </div>
+      <!-- .beast-card > .beast-card-title + .beast-card-subtitle -->
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">Stat Card</div>
+      <div class="grid-2">
+        <div class="beast-metric">
+          <p class="beast-metric-label" data-en="Total Scans" data-uk="Загальна кількість сканувань">Total Scans</p>
+          <p class="beast-metric-value">142</p>
+        </div>
+        <div class="beast-metric beast-metric-accent">
+          <p class="beast-metric-label" data-en="Critical" data-uk="Критичні">Critical</p>
+          <p class="beast-metric-value beast-metric-value-red">7</p>
+        </div>
+        <div class="beast-metric beast-metric-warning">
+          <p class="beast-metric-label" data-en="Warnings" data-uk="Попередження">Warnings</p>
+          <p class="beast-metric-value beast-metric-value-amber">12</p>
+        </div>
+        <div class="beast-metric beast-metric-neutral">
+          <p class="beast-metric-label" data-en="Total Events" data-uk="Всього подій">Total Events</p>
+          <p class="beast-metric-value">48</p>
+        </div>
+      </div>
+      <!-- .beast-metric > .beast-metric-label + .beast-metric-value -->
+      <!-- Modifiers: beast-metric-accent (red), beast-metric-warning (amber), beast-metric-neutral (gray) -->
+      <!-- Value colors: beast-metric-value-red, beast-metric-value-amber, beast-metric-value-sm -->
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="filters">
+  <h2 class="section-title">Filters <span class="new-tag">New</span></h2>
+  <p class="section-desc">Cloudflare-style chip filter input. Chips represent active filters by column. Add via dropdown, remove with X.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Chip Filter Input</div>
+    <div class="beast-dropdown-wrap" id="filter-container">
+      <div class="beast-filter-input" id="filter-input" onclick="document.getElementById('filter-text').focus()">
+        <span class="beast-chip" id="chip-sev">
+          <span class="beast-chip-key" data-en="Severity" data-uk="Серйозність">Severity</span>
+          <span data-en="is" data-uk="є">is</span>
+          <span class="beast-chip-value">Critical</span>
+          <button class="beast-chip-remove" onclick="removeChip('chip-sev')" title="Remove">&times;</button>
+        </span>
+        <span class="beast-chip" id="chip-status">
+          <span class="beast-chip-key" data-en="Status" data-uk="Статус">Status</span>
+          <span data-en="is" data-uk="є">is</span>
+          <span class="beast-chip-value" data-en="Active" data-uk="Активна">Active</span>
+          <button class="beast-chip-remove" onclick="removeChip('chip-status')" title="Remove">&times;</button>
+        </span>
+        <span class="beast-chip" id="chip-tool">
+          <span class="beast-chip-key" data-en="Tool" data-uk="Інструмент">Tool</span>
+          <span data-en="is" data-uk="є">is</span>
+          <span class="beast-chip-value">Gitleaks</span>
+          <button class="beast-chip-remove" onclick="removeChip('chip-tool')" title="Remove">&times;</button>
+        </span>
+        <button class="beast-filter-add" onclick="toggleFilterDropdown(event)" data-en="+ Add filter" data-uk="+ Додати фільтр">+ Add filter</button>
+        <input id="filter-text" type="text" class="beast-filter-text" data-en-ph="Type to search..." data-uk-ph="Введіть для пошуку..." placeholder="Type to search..." />
+      </div>
+      <!-- Dropdown: pick a column -->
+      <div class="beast-filter-dropdown" id="filter-dropdown" style="display:none">
+        <div class="beast-filter-dropdown-header" data-en="Filter by column" data-uk="Фільтрувати за стовпцем">Filter by column</div>
+        <button class="beast-filter-dropdown-item" onclick="pickColumn('Severity')"><span data-en="Severity" data-uk="Серйозність">Severity</span></button>
+        <button class="beast-filter-dropdown-item" onclick="pickColumn('Status')"><span data-en="Status" data-uk="Статус">Status</span></button>
+        <button class="beast-filter-dropdown-item" onclick="pickColumn('Tool')"><span data-en="Tool" data-uk="Інструмент">Tool</span></button>
+        <button class="beast-filter-dropdown-item" onclick="pickColumn('Repository')"><span data-en="Repository" data-uk="Репозиторій">Repository</span></button>
+        <button class="beast-filter-dropdown-item" onclick="pickColumn('Date')"><span data-en="Date" data-uk="Дата">Date</span></button>
+      </div>
+      <!-- Dropdown: pick a value -->
+      <div class="beast-filter-dropdown" id="filter-values" style="display:none">
+        <div class="beast-filter-dropdown-header" id="filter-values-header">Severity</div>
+        <div id="filter-values-list"></div>
+      </div>
+    </div>
+    <!-- .beast-filter-input > .beast-chip (.beast-chip-key + .beast-chip-value + .beast-chip-remove) + .beast-filter-add -->
+  </div>
+
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="modals">
+  <h2 class="section-title">Modals</h2>
+  <p class="section-desc">Defined in CSS but not yet used in code. Should replace all manual <code>fixed inset-0</code> patterns.</p>
+
+  <div class="subsection">
+    <div class="subsection-label">Modal (static preview)</div>
+    <div class="beast-modal-preview">
+      <div class="beast-modal">
+        <h3 class="beast-modal-title" data-en="Delete Repository" data-uk="Видалити репозиторій">Delete Repository</h3>
+        <p class="beast-modal-body" data-en="Are you sure you want to delete matrixweb? This will remove all scan data and findings." data-uk="Ви впевнені, що хочете видалити matrixweb? Це видалить усі дані сканування та знахідки.">
+          Are you sure you want to delete <strong>matrixweb</strong>? This will remove all scan data and findings.
+        </p>
+        <div class="beast-modal-actions">
+          <button class="beast-btn beast-btn-outline beast-btn-sm" data-en="Cancel" data-uk="Скасувати">Cancel</button>
+          <button class="beast-btn beast-btn-danger beast-btn-sm" data-en="Delete" data-uk="Видалити">Delete</button>
+        </div>
+      </div>
+    </div>
+    <!-- .beast-overlay > .beast-modal > .beast-modal-title -->
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="messages">
+  <h2 class="section-title">Messages</h2>
+  <p class="section-desc">Error and success feedback.</p>
+
+  <div class="col">
+    <div class="beast-error" data-en="Failed to connect: invalid API token. Check your credentials and try again." data-uk="Помилка підключення: невірний API-токен. Перевірте свої облікові дані та спробуйте ще раз.">Failed to connect: invalid API token. Check your credentials and try again.</div>
+    <div class="beast-success" data-en="Repository imported successfully. Scan queued." data-uk="Репозиторій успішно імпортовано. Сканування поставлено в чергу.">Repository imported successfully. Scan queued.</div>
+  </div>
+  <!-- .beast-error | .beast-success -->
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="empty">
+  <h2 class="section-title">Empty States</h2>
+  <p class="section-desc">Shown when no data is available.</p>
+
+  <div class="beast-empty">
+    <p class="beast-empty-title" data-en="No findings" data-uk="Знахідок немає">No findings</p>
+    <p data-en="No findings match the selected filters" data-uk="Жодна знахідка не відповідає вибраним фільтрам">No findings match the selected filters</p>
+  </div>
+  <!-- .beast-empty -->
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="typography">
+  <h2 class="section-title">Typography</h2>
+  <p class="section-desc">Page titles, section headers, labels.</p>
+
+  <div class="col">
+    <div>
+      <h1 class="beast-page-title" data-en="Page Title" data-uk="Заголовок сторінки">Page Title</h1>
+      <p class="beast-page-subtitle" data-en="Subtitle description text" data-uk="Текст підзаголовку сторінки">Subtitle description text</p>
+      <!-- .beast-page-title + .beast-page-subtitle -->
+    </div>
+    <div>
+      <h2 class="beast-card-title" data-en="Card Title" data-uk="Заголовок картки">Card Title</h2>
+      <p class="beast-card-subtitle" data-en="Card subtitle or description" data-uk="Підзаголовок або опис картки">Card subtitle or description</p>
+      <!-- .beast-card-title + .beast-card-subtitle -->
+    </div>
+    <div>
+      <div class="beast-category-header" data-en="Category Header" data-uk="Заголовок категорії">Category Header</div>
+      <!-- .beast-category-header -->
+    </div>
+    <div>
+      <label class="beast-label" data-en="Form Label" data-uk="Мітка форми">Form Label</label>
+      <!-- .beast-label -->
+    </div>
+  </div>
+</div>
+
+
+<div class="beast-mb-md"></div>
+
+<!-- Toolbar (fixed) -->
+<div id="toolbar" class="beast-toolbar">
+  <div class="beast-toolbar-group">
+    <button id="btn-dark" class="beast-toolbar-btn beast-toolbar-btn-active" onclick="setTheme('dark')">Dark</button>
+    <button id="btn-light" class="beast-toolbar-btn" onclick="setTheme('light')">Light</button>
+  </div>
+  <div class="beast-toolbar-group">
+    <button id="btn-en" class="beast-toolbar-btn-lang beast-toolbar-btn-active" onclick="setLang('en')">EN</button>
+    <button id="btn-uk" class="beast-toolbar-btn-lang" onclick="setLang('uk')">UA</button>
+  </div>
+</div>
+
+<script>
+function setTheme(theme) {
+  var root = document.documentElement;
+  var btnDark = document.getElementById('btn-dark');
+  var btnLight = document.getElementById('btn-light');
+  if (theme === 'light') {
+    root.classList.add('light');
+    btnLight.classList.add('beast-toolbar-btn-active');
+    btnDark.classList.remove('beast-toolbar-btn-active');
+  } else {
+    root.classList.remove('light');
+    btnDark.classList.add('beast-toolbar-btn-active');
+    btnLight.classList.remove('beast-toolbar-btn-active');
+  }
+}
+
+/* ── Pagination logic ── */
+var TOTAL_PAGES = 20;
+var currentPage = 1;
+var currentLang = 'en';
+
+function renderPagination(page) {
+  currentPage = page;
+  var container = document.getElementById('pagination-demo');
+  var info = document.getElementById('pagination-info');
+  container.innerHTML = '';
+
+  // First button
+  var firstBtn = document.createElement('button');
+  firstBtn.className = 'beast-pagination-btn';
+  firstBtn.textContent = currentLang === 'uk' ? 'Перша' : 'First';
+  firstBtn.disabled = page === 1;
+  firstBtn.onclick = function() { renderPagination(1); };
+  container.appendChild(firstBtn);
+
+
+  // Calculate visible page numbers: always show 5 pages
+  var start, end;
+  if (TOTAL_PAGES <= 5) {
+    start = 1;
+    end = TOTAL_PAGES;
+  } else if (page <= 3) {
+    start = 1;
+    end = 5;
+  } else if (page >= TOTAL_PAGES - 2) {
+    start = TOTAL_PAGES - 4;
+    end = TOTAL_PAGES;
+  } else {
+    start = page - 2;
+    end = page + 2;
+  }
+
+  // Ellipsis before
+  if (start > 1) {
+    var dots = document.createElement('span');
+    dots.className = 'beast-pagination-ellipsis';
+    dots.textContent = '...';
+    container.appendChild(dots);
+  }
+
+  // Page buttons
+  for (var i = start; i <= end; i++) {
+    (function(p) {
+      var btn = document.createElement('button');
+      btn.className = 'beast-pagination-btn' + (p === page ? ' beast-pagination-active' : '');
+      btn.textContent = p;
+      if (p !== page) {
+        btn.onclick = function() { renderPagination(p); };
+      }
+      container.appendChild(btn);
+    })(i);
+  }
+
+  // Ellipsis after
+  if (end < TOTAL_PAGES) {
+    var dots2 = document.createElement('span');
+    dots2.className = 'beast-pagination-ellipsis';
+    dots2.textContent = '...';
+    container.appendChild(dots2);
+  }
+
+
+  // Last button
+  var lastBtn = document.createElement('button');
+  lastBtn.className = 'beast-pagination-btn';
+  lastBtn.textContent = currentLang === 'uk' ? 'Остання' : 'Last';
+  lastBtn.disabled = page === TOTAL_PAGES;
+  lastBtn.onclick = function() { renderPagination(TOTAL_PAGES); };
+  container.appendChild(lastBtn);
+
+  // Info text
+  info.textContent = (currentLang === 'uk' ? 'Сторінка ' : 'Page ') + page + (currentLang === 'uk' ? ' з ' : ' of ') + TOTAL_PAGES;
+}
+
+// Init pagination on load
+document.addEventListener('DOMContentLoaded', function() { renderPagination(1); });
+
+/* ── Filter chip logic ── */
+var FILTER_VALUES = {
+  Severity: ['Critical', 'High', 'Medium', 'Low', 'Info'],
+  Status: ['Active', 'Accepted', 'False Positive', 'Mitigated'],
+  Tool: ['BEAST', 'Gitleaks', 'Trufflehog', 'Trivy', 'Semgrep', 'Snyk Code'],
+  Repository: ['matrixweb', 'synthflow-ai', 'valo', 'fluorogenic-cytochromes'],
+  Date: ['Today', 'Last 7 days', 'Last 30 days', 'Last 90 days'],
+};
+var chipCounter = 10;
+
+function removeChip(id) {
+  var chip = document.getElementById(id);
+  if (chip) chip.remove();
+}
+
+function toggleFilterDropdown(e) {
+  e.stopPropagation();
+  var dd = document.getElementById('filter-dropdown');
+  var vd = document.getElementById('filter-values');
+  vd.style.display = 'none';
+  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+}
+
+function pickColumn(col) {
+  document.getElementById('filter-dropdown').style.display = 'none';
+  var vd = document.getElementById('filter-values');
+  var header = document.getElementById('filter-values-header');
+  var list = document.getElementById('filter-values-list');
+  header.textContent = col;
+  list.innerHTML = '';
+  (FILTER_VALUES[col] || []).forEach(function(val) {
+    var btn = document.createElement('button');
+    btn.className = 'beast-filter-dropdown-item';
+    btn.textContent = val;
+    btn.onclick = function() { addChip(col, val); vd.style.display = 'none'; };
+    list.appendChild(btn);
+  });
+  vd.style.display = 'block';
+}
+
+function addChip(key, value) {
+  chipCounter++;
+  var chipId = 'chip-dyn-' + chipCounter;
+  var chip = document.createElement('span');
+  chip.className = 'beast-chip';
+  chip.id = chipId;
+  chip.innerHTML = '<span class="beast-chip-key">' + key + '</span> <span>is</span> <span class="beast-chip-value">' + value + '</span> <button class="beast-chip-remove" onclick="removeChip(\'' + chipId + '\')" title="Remove">&times;</button>';
+  var addBtn = document.querySelector('.beast-filter-add');
+  addBtn.parentElement.insertBefore(chip, addBtn);
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', function(e) {
+  var container = document.getElementById('filter-container');
+  if (container && !container.contains(e.target)) {
+    document.getElementById('filter-dropdown').style.display = 'none';
+    document.getElementById('filter-values').style.display = 'none';
+  }
+});
+
+function switchTab(btn, panelId) {
+  // Deactivate all tabs in this bar
+  var bar = btn.parentElement;
+  bar.querySelectorAll('.beast-tab').forEach(function(t) { t.classList.remove('beast-tab-active'); });
+  btn.classList.add('beast-tab-active');
+  // Hide all panels in the same card
+  var card = bar.parentElement;
+  card.querySelectorAll('.tab-panel').forEach(function(p) { p.style.display = 'none'; });
+  document.getElementById(panelId).style.display = 'block';
+}
+
+var SEV_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+
+function sortTable(th, colIdx, type) {
+  var table = document.getElementById('sortable-demo');
+  var tbody = table.querySelector('tbody');
+  var rows = Array.from(tbody.querySelectorAll('tr'));
+  var allThs = table.querySelectorAll('th.beast-th-sort');
+
+  // Determine direction
+  var isActive = th.classList.contains('beast-th-sort-active');
+  var wasAsc = th.classList.contains('sort-asc');
+  var asc = isActive ? !wasAsc : true;
+
+  // Reset all headers
+  allThs.forEach(function(h) {
+    h.classList.remove('beast-th-sort-active', 'sort-asc', 'sort-desc');
+  });
+  th.classList.add('beast-th-sort-active', asc ? 'sort-asc' : 'sort-desc');
+
+  rows.sort(function(a, b) {
+    var cellA = a.cells[colIdx];
+    var cellB = b.cells[colIdx];
+    var valA, valB;
+
+    if (type === 'num') {
+      valA = parseFloat(cellA.textContent) || 0;
+      valB = parseFloat(cellB.textContent) || 0;
+    } else if (type === 'sev') {
+      var sevA = cellA.textContent.trim();
+      var sevB = cellB.textContent.trim();
+      valA = SEV_ORDER[sevA] !== undefined ? SEV_ORDER[sevA] : 99;
+      valB = SEV_ORDER[sevB] !== undefined ? SEV_ORDER[sevB] : 99;
+    } else {
+      valA = cellA.textContent.trim().toLowerCase();
+      valB = cellB.textContent.trim().toLowerCase();
+    }
+
+    if (valA < valB) return asc ? -1 : 1;
+    if (valA > valB) return asc ? 1 : -1;
+    return 0;
+  });
+
+  rows.forEach(function(row) { tbody.appendChild(row); });
+}
+
+function setLang(lang) {
+  document.querySelectorAll('[data-' + lang + ']').forEach(function(el) {
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      el.value = el.getAttribute('data-' + lang);
+    } else {
+      el.textContent = el.getAttribute('data-' + lang);
+    }
+  });
+  document.querySelectorAll('[data-' + lang + '-ph]').forEach(function(el) {
+    el.placeholder = el.getAttribute('data-' + lang + '-ph');
+  });
+  // Re-render pagination with new language
+  currentLang = lang;
+  if (document.getElementById('pagination-demo')) renderPagination(currentPage);
+  // Update switcher buttons
+  var btnEn = document.getElementById('btn-en');
+  var btnUk = document.getElementById('btn-uk');
+  if (lang === 'uk') {
+    btnUk.classList.add('beast-toolbar-btn-active');
+    btnEn.classList.remove('beast-toolbar-btn-active');
+  } else {
+    btnEn.classList.add('beast-toolbar-btn-active');
+    btnUk.classList.remove('beast-toolbar-btn-active');
+  }
+}
+</script>
+<script type="module">
+// In dev mode (Vite), inject React refresh preamble and load TSX source directly.
+// In production, load the pre-built JS bundle.
+const isDev = location.port === '5173';
+if (isDev) {
+  const m = await import('/@react-refresh');
+  m.default.injectIntoGlobalHook(window);
+  window.$RefreshReg$ = () => {};
+  window.$RefreshSig$ = () => (type) => type;
+  window.__vite_plugin_react_preamble_installed__ = true;
+  await import('/src/toolkit-pipeline.tsx');
+} else {
+  await import('/assets/toolkit-pipeline.js');
+}
+</script>
+</body>
+</html>
