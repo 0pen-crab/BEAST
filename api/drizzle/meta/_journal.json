@@ -1,0 +1,139 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1773060307216,
+      "tag": "0000_eminent_slyde",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773072298601,
+      "tag": "0001_fantastic_inertia",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773158400000,
+      "tag": "0002_sources_rename",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1773417600000,
+      "tag": "0003_repo_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1773504000000,
+      "tag": "0004_auth_rbac",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1773590400000,
+      "tag": "0005_vault_secrets",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1741824000000,
+      "tag": "0006_security_tools_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1741910400000,
+      "tag": "0007_scan_pipeline_engine",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1742000000000,
+      "tag": "0008_repo_unique_with_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1742086400000,
+      "tag": "0009_developer_feedback",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1742172800000,
+      "tag": "0010_daily_activity_per_repo",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1742259200000,
+      "tag": "0011_drop_primary_areas",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1742345600000,
+      "tag": "0012_rename_developers_to_contributors",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1742432000000,
+      "tag": "0013_must_change_password",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1742518400000,
+      "tag": "0014_contributors_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1742604800000,
+      "tag": "0015_contributors_workspace_not_null",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1742691200000,
+      "tag": "0016_finding_contributor",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1742777600000,
+      "tag": "0017_finding_status_refactor",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1742864000000,
+      "tag": "0018_contributor_team",
+      "breakpoints": true
+    }
+  ]
+}

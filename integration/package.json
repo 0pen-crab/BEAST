@@ -1,0 +1,15 @@
+{
+  "name": "@beast/integration-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "vitest run src/smoke.test.ts"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.0"
+  }
+}

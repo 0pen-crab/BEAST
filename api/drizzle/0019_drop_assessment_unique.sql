@@ -1,0 +1,1 @@
+ALTER TABLE contributor_assessments DROP CONSTRAINT IF EXISTS contributor_assessments_contrib_repo_unique;
