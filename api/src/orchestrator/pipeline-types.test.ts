@@ -12,7 +12,7 @@ import {
 describe('pipeline-types', () => {
   it('exports timeout constants', () => {
     expect(AI_INACTIVITY_TIMEOUT_MS).toBe(20 * 60 * 1000);
-    expect(AI_MAX_TIMEOUT_MS).toBe(30 * 60 * 1000);
+    expect(AI_MAX_TIMEOUT_MS).toBe(60 * 60 * 1000);
   });
 
   it('exports scanner UID/GID constants', () => {

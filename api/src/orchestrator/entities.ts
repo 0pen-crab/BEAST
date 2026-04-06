@@ -207,7 +207,9 @@ interface CreateFindingData {
   cwe?: number;
   cvssScore?: number;
   tool: string;
+  category?: string;
   codeSnippet?: string;
+  secretValue?: string;
 }
 
 const VALID_SEVERITIES = ['Critical', 'High', 'Medium', 'Low', 'Info'] as const;
@@ -239,7 +241,9 @@ export async function createFinding(data: CreateFindingData): Promise<Finding> {
     cwe: data.cwe ?? null,
     cvssScore: data.cvssScore ?? null,
     tool: data.tool,
+    category: data.category ?? null,
     codeSnippet: data.codeSnippet ?? null,
+    secretValue: data.secretValue ?? null,
     fingerprint,
   }).returning();
   return row;
@@ -268,7 +272,9 @@ export async function upsertFinding(data: CreateFindingData): Promise<Finding> {
           testId: data.testId,
           severity: normalizeSeverity(data.severity),
           description: data.description ?? null,
+          category: data.category ?? existing[0].category,
           codeSnippet: data.codeSnippet ?? null,
+          secretValue: data.secretValue ?? existing[0].secretValue,
           status: 'open',
           updatedAt: new Date(),
         })
@@ -818,10 +824,28 @@ export async function upsertPullRequest(data: {
 // ── Workspace Tools ──────────────────────────────────────────
 
 export async function getWorkspaceTools(workspaceId: number) {
-  return db.select({
+  const rows = await db.select({
     toolKey: workspaceTools.toolKey,
     enabled: workspaceTools.enabled,
   }).from(workspaceTools).where(eq(workspaceTools.workspaceId, workspaceId));
+
+  // Auto-insert recommended tools that don't have rows yet
+  const existingKeys = new Set(rows.map(r => r.toolKey));
+  const allTools = getAllToolKeys();
+  const recommended = getRecommendedToolKeys();
+  const missing = allTools.filter(k => !existingKeys.has(k));
+
+  if (missing.length > 0) {
+    const newRows = missing.map(k => ({
+      workspaceId,
+      toolKey: k,
+      enabled: recommended.includes(k),
+    }));
+    await db.insert(workspaceTools).values(newRows).onConflictDoNothing();
+    rows.push(...newRows.map(r => ({ toolKey: r.toolKey, enabled: r.enabled })));
+  }
+
+  return rows;
 }
 
 export async function setWorkspaceTools(

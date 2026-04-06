@@ -10,6 +10,16 @@ vi.mock('../middleware/auth.ts', () => ({
   requireRole: () => async () => {},
 }));
 
+vi.mock('../lib/authorize.ts', () => ({
+  authorize: vi.fn(async (request: any) => { request.authorized = true; }),
+  authorizePublic: vi.fn((request: any) => { request.authorized = true; }),
+  authorizeSuperAdmin: vi.fn((request: any) => { request.authorized = true; }),
+  ForbiddenError: class ForbiddenError extends Error {
+    statusCode = 403;
+    constructor(msg = 'Forbidden') { super(msg); }
+  },
+}));
+
 import { db } from '../db/index.ts';
 
 const mockDb = db as any;
@@ -20,6 +30,10 @@ beforeAll(async () => {
   app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  // Simulate authenticated user for all requests
+  app.addHook('preHandler', async (request) => {
+    request.user = { id: 1, username: 'test', role: 'super_admin', displayName: 'Test', mustChangePassword: false };
+  });
   const mod = await import('./workspace-data.ts');
   await app.register(mod.workspaceDataRoutes);
   await app.ready();
@@ -192,6 +206,12 @@ describe('GET /teams/:id', () => {
 describe('PUT /teams/:id', () => {
   it('returns updated team', async () => {
     const updated = { id: 1, name: 'Updated', description: 'new desc' };
+    // Pre-query: select existing team for authorization
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([{ id: 1, workspaceId: 1, name: 'Team' }]),
+      }),
+    });
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
@@ -211,11 +231,10 @@ describe('PUT /teams/:id', () => {
   });
 
   it('returns 404 when team not found', async () => {
-    mockDb.update.mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([]),
-        }),
+    // Pre-query returns empty → 404 at pre-query stage
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
       }),
     });
 
@@ -232,10 +251,15 @@ describe('PUT /teams/:id', () => {
 
 describe('DELETE /teams/:id', () => {
   it('returns deleted: true on success', async () => {
-    mockDb.delete.mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([{ id: 1 }]),
+    // Pre-query: select existing team for authorization
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([{ id: 1, workspaceId: 1, name: 'Team' }]),
       }),
+    });
+    // delete().where() — no returning
+    mockDb.delete.mockReturnValue({
+      where: vi.fn().mockResolvedValue(undefined),
     });
 
     const res = await app.inject({
@@ -248,9 +272,10 @@ describe('DELETE /teams/:id', () => {
   });
 
   it('returns 404 when team not found', async () => {
-    mockDb.delete.mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([]),
+    // Pre-query returns empty → 404 at pre-query stage
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
       }),
     });
 
@@ -333,7 +358,16 @@ describe('GET /repositories', () => {
   });
 
   it('filters by team_id', async () => {
-    mockDb.select.mockReturnValue({
+    // Pre-query: resolve workspace from team
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+        }),
+      }),
+    });
+    // Main query
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         innerJoin: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -354,6 +388,16 @@ describe('GET /repositories', () => {
 
 describe('PATCH /repositories/bulk', () => {
   it('returns updated count when team_id provided', async () => {
+    // Pre-query: resolve workspace from first repo via team join
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ wsId: 1 }]),
+          }),
+        }),
+      }),
+    });
     // update().set().where() — non-returning
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
@@ -434,6 +478,16 @@ describe('GET /repositories/:id', () => {
 describe('PUT /repositories/:id', () => {
   it('returns updated repository', async () => {
     const updated = { id: 1, name: 'Updated', description: 'new desc' };
+    // Pre-query: resolve workspace via team join
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ wsId: 1 }]),
+          }),
+        }),
+      }),
+    });
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
@@ -453,10 +507,13 @@ describe('PUT /repositories/:id', () => {
   });
 
   it('returns 404 when not found', async () => {
-    mockDb.update.mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([]),
+    // Pre-query returns empty → 404 at pre-query stage
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
         }),
       }),
     });
@@ -478,7 +535,18 @@ describe('GET /repositories/:id/reports', () => {
       { fileType: 'profile', content: '# Profile report', createdAt: '2026-01-01' },
       { fileType: 'audit', content: '# Audit report', createdAt: '2026-01-01' },
     ];
-    mockDb.select.mockReturnValue({
+    // Pre-query: resolve workspace via team join
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ wsId: 1 }]),
+          }),
+        }),
+      }),
+    });
+    // Main query: scan_files joined with scans
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         innerJoin: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -502,7 +570,18 @@ describe('GET /repositories/:id/reports', () => {
   });
 
   it('returns empty object when no reports', async () => {
-    mockDb.select.mockReturnValue({
+    // Pre-query: resolve workspace via team join
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ wsId: 1 }]),
+          }),
+        }),
+      }),
+    });
+    // Main query returns empty
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         innerJoin: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -524,10 +603,19 @@ describe('GET /repositories/:id/reports', () => {
 
 describe('DELETE /repositories/:id', () => {
   it('returns deleted: true', async () => {
-    mockDb.delete.mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([{ id: 1 }]),
+    // Pre-query: resolve workspace via team join
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ wsId: 1 }]),
+          }),
+        }),
       }),
+    });
+    // delete().where() — no returning
+    mockDb.delete.mockReturnValue({
+      where: vi.fn().mockResolvedValue(undefined),
     });
 
     const res = await app.inject({
@@ -540,9 +628,14 @@ describe('DELETE /repositories/:id', () => {
   });
 
   it('returns 404 when not found', async () => {
-    mockDb.delete.mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([]),
+    // Pre-query returns empty → 404 at pre-query stage
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
       }),
     });
 
@@ -583,8 +676,16 @@ describe('GET /tests', () => {
   });
 
   it('filters by scan_id', async () => {
-    // scan_id filter → select().from().where().orderBy()
-    mockDb.select.mockReturnValue({
+    // Pre-query: resolve workspace from scan
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+        }),
+      }),
+    });
+    // Main query: scan_id filter → select().from().where().orderBy()
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
           orderBy: vi.fn().mockResolvedValue([]),
@@ -602,8 +703,18 @@ describe('GET /tests', () => {
   });
 
   it('filters by repository_id', async () => {
-    // repository_id filter → select({...}).from().innerJoin().where().orderBy()
-    mockDb.select.mockReturnValue({
+    // Pre-query: resolve workspace from repo via team join
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ wsId: 1 }]),
+          }),
+        }),
+      }),
+    });
+    // Main query: repository_id filter → select({...}).from().innerJoin().where().orderBy()
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         innerJoin: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -625,10 +736,13 @@ describe('GET /tests', () => {
 
 describe('GET /tests/:id', () => {
   it('returns test by id', async () => {
-    const test = { id: 1, tool: 'gitleaks', scanId: 'abc' };
+    const test = { id: 1, tool: 'gitleaks', scanId: 'abc', workspaceId: 1 };
+    // select({...columns, workspaceId}).from(tests).innerJoin(scans).where()
     mockDb.select.mockReturnValue({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([test]),
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([test]),
+        }),
       }),
     });
 
@@ -642,9 +756,12 @@ describe('GET /tests/:id', () => {
   });
 
   it('returns 404 when test not found', async () => {
+    // select({...}).from(tests).innerJoin(scans).where() returns empty
     mockDb.select.mockReturnValue({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
       }),
     });
 
@@ -665,11 +782,11 @@ describe('GET /tests/:id', () => {
 describe('GET /findings', () => {
   it('returns 200 with count and results', async () => {
     const findingsList = [
-      { id: 1, title: 'SQL Injection', severity: 'High', status: 'open' },
-      { id: 2, title: 'XSS', severity: 'Medium', status: 'open' },
+      { id: 1, title: 'SQL Injection', severity: 'High', status: 'open', secretValue: 'abc123secret' },
+      { id: 2, title: 'XSS', severity: 'Medium', status: 'open', secretValue: null },
     ];
     // First select = count query: select({count}).from().where()
-    // Second select = data query: select().from().where().orderBy().limit().offset()
+    // Second select = data query: select().from().innerJoin(tests).innerJoin(scans).leftJoin(contributors).leftJoin(repositories).where().orderBy().limit().offset()
     let callCount = 0;
     mockDb.select.mockImplementation(() => {
       callCount++;
@@ -684,10 +801,18 @@ describe('GET /findings', () => {
       // data query
       return {
         from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockReturnValue({
-              limit: vi.fn().mockReturnValue({
-                offset: vi.fn().mockResolvedValue(findingsList),
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockReturnValue({
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockResolvedValue(findingsList),
+                      }),
+                    }),
+                  }),
+                }),
               }),
             }),
           }),
@@ -704,7 +829,10 @@ describe('GET /findings', () => {
     const body = res.json();
     expect(body).toHaveProperty('count', 2);
     expect(body).toHaveProperty('results');
-    expect(body.results).toEqual(findingsList);
+    // secretValue is masked by maskSecret: 'abc123secret' → 'abc1******et', null → null
+    expect(body.results[0].secretValue).toBe('abc1******et');
+    expect(body.results[1].secretValue).toBeNull();
+    expect(body.results).toHaveLength(2);
   });
 
   it('returns empty results when no findings', async () => {
@@ -720,10 +848,18 @@ describe('GET /findings', () => {
       }
       return {
         from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockReturnValue({
-              limit: vi.fn().mockReturnValue({
-                offset: vi.fn().mockResolvedValue([]),
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockReturnValue({
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockResolvedValue([]),
+                      }),
+                    }),
+                  }),
+                }),
               }),
             }),
           }),
@@ -766,10 +902,18 @@ describe('GET /findings', () => {
       }
       return {
         from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockReturnValue({
-              limit: vi.fn().mockReturnValue({
-                offset: vi.fn().mockResolvedValue([]),
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockReturnValue({
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockResolvedValue([]),
+                      }),
+                    }),
+                  }),
+                }),
               }),
             }),
           }),
@@ -798,10 +942,18 @@ describe('GET /findings', () => {
       }
       return {
         from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockReturnValue({
-              limit: vi.fn().mockReturnValue({
-                offset: vi.fn().mockResolvedValue([]),
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockReturnValue({
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockResolvedValue([]),
+                      }),
+                    }),
+                  }),
+                }),
               }),
             }),
           }),
@@ -830,10 +982,18 @@ describe('GET /findings', () => {
       }
       return {
         from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockReturnValue({
-              limit: vi.fn().mockReturnValue({
-                offset: vi.fn().mockResolvedValue([]),
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockReturnValue({
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockResolvedValue([]),
+                      }),
+                    }),
+                  }),
+                }),
               }),
             }),
           }),
@@ -912,12 +1072,16 @@ describe('GET /findings/counts', () => {
 
 describe('GET /findings/:id', () => {
   function mockFindingSelect(rows: any[]) {
+    // select({...columns, workspaceId, contributorName, repositoryName, scanId})
+    //   .from(findings).innerJoin(tests).innerJoin(scans).leftJoin(contributors).leftJoin(repositories).where()
     mockDb.select.mockReturnValue({
       from: vi.fn().mockReturnValue({
         innerJoin: vi.fn().mockReturnValue({
           innerJoin: vi.fn().mockReturnValue({
             leftJoin: vi.fn().mockReturnValue({
-              where: vi.fn().mockResolvedValue(rows),
+              leftJoin: vi.fn().mockReturnValue({
+                where: vi.fn().mockResolvedValue(rows),
+              }),
             }),
           }),
         }),
@@ -926,7 +1090,7 @@ describe('GET /findings/:id', () => {
   }
 
   it('returns finding by id', async () => {
-    const finding = { id: 1, title: 'SQL Injection', severity: 'High' };
+    const finding = { id: 1, title: 'SQL Injection', severity: 'High', workspaceId: 1, secretValue: null };
     mockFindingSelect([finding]);
 
     const res = await app.inject({
@@ -935,7 +1099,7 @@ describe('GET /findings/:id', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual(finding);
+    expect(res.json()).toEqual({ ...finding, secretValue: null });
   });
 
   it('returns 404 when finding not found', async () => {
@@ -954,7 +1118,7 @@ describe('GET /findings/:id', () => {
     const finding = {
       id: 1, title: 'SQL Injection', severity: 'High',
       contributorId: 5, contributorName: 'Alice',
-      workspaceId: 1,
+      workspaceId: 1, secretValue: null,
     };
     mockFindingSelect([finding]);
 
@@ -971,6 +1135,16 @@ describe('GET /findings/:id', () => {
 describe('PATCH /findings/:id', () => {
   it('updates finding status', async () => {
     const updated = { id: 1, title: 'Vuln', status: 'risk_accepted' };
+    // Pre-query: resolve workspace via finding → test → scan
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+          }),
+        }),
+      }),
+    });
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
@@ -990,6 +1164,17 @@ describe('PATCH /findings/:id', () => {
   });
 
   it('returns 400 when no fields to update', async () => {
+    // Pre-query: resolve workspace via finding → test → scan
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+          }),
+        }),
+      }),
+    });
+
     const res = await app.inject({
       method: 'PATCH',
       url: '/findings/1',
@@ -1001,10 +1186,13 @@ describe('PATCH /findings/:id', () => {
   });
 
   it('returns 404 when finding not found', async () => {
-    mockDb.update.mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([]),
+    // Pre-query returns empty → 404 at pre-query stage
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([]),
+          }),
         }),
       }),
     });
@@ -1029,7 +1217,18 @@ describe('GET /findings/:id/notes', () => {
     const notes = [
       { id: 1, findingId: 1, author: 'user', content: 'Test note' },
     ];
-    mockDb.select.mockReturnValue({
+    // Pre-query: resolve workspace via finding → test → scan
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+          }),
+        }),
+      }),
+    });
+    // Main query: select().from(findingNotes).where().orderBy()
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
           orderBy: vi.fn().mockResolvedValue(notes),
@@ -1050,10 +1249,14 @@ describe('GET /findings/:id/notes', () => {
 describe('POST /findings/:id/notes', () => {
   it('creates a note and returns 201', async () => {
     const note = { id: 1, findingId: 1, author: 'user', noteType: 'comment', content: 'My note' };
-    // First select = verify finding exists
-    mockDb.select.mockReturnValue({
+    // Pre-query: resolve workspace via finding → test → scan (also serves as existence check)
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([{ id: 1 }]),
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+          }),
+        }),
       }),
     });
     // Then insert
@@ -1074,9 +1277,14 @@ describe('POST /findings/:id/notes', () => {
   });
 
   it('returns 404 when finding does not exist', async () => {
-    mockDb.select.mockReturnValue({
+    // Pre-query returns empty → 404
+    mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([]),
+          }),
+        }),
       }),
     });
 

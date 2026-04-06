@@ -43,6 +43,9 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then OSV_ARCH="arm64"; else OSV_ARCH="amd64"
     curl -fsSL "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_${OSV_ARCH}" \
     -o /usr/local/bin/osv-scanner && chmod +x /usr/local/bin/osv-scanner
 
+# Bearer
+RUN curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
 # -- Runtime stage ---------------------------------------------------------
 FROM ubuntu:24.04
 
@@ -89,11 +92,17 @@ COPY --from=downloader /usr/local/bin/trufflehog /usr/local/bin/trufflehog
 COPY --from=downloader /usr/local/bin/trivy /usr/local/bin/trivy
 COPY --from=downloader /usr/local/bin/jf /usr/local/bin/jf
 COPY --from=downloader /usr/local/bin/osv-scanner /usr/local/bin/osv-scanner
+COPY --from=downloader /usr/local/bin/bearer /usr/local/bin/bearer
 
 # Python-based security tools
 RUN pip3 install --no-cache-dir --break-system-packages \
     semgrep \
     checkov
+
+# Presidio in isolated venv: its deps conflict with semgrep/checkov
+RUN python3 -m venv /opt/presidio-venv && \
+    /opt/presidio-venv/bin/pip install --no-cache-dir presidio-analyzer presidio-anonymizer && \
+    /opt/presidio-venv/bin/python -m spacy download en_core_web_lg
 
 # ggshield in isolated venv: its deps (marshmallow, click) conflict with semgrep/checkov
 RUN python3 -m venv /opt/ggshield-venv && \
@@ -125,6 +134,12 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY scripts/ /scripts/
 RUN chmod +x /scripts/*.sh
+# Custom rules (PII, etc.)
+COPY rules/ /rules/
+
+# Third-party Semgrep rules: apiiro malicious code detection
+RUN git clone --depth 1 https://github.com/apiiro/malicious-code-ruleset.git /rules/apiiro && \
+    rm -rf /rules/apiiro/.git /rules/apiiro/README.md /rules/apiiro/LICENSE /rules/apiiro/CONTRIBUTING.md
 
 EXPOSE 22
 

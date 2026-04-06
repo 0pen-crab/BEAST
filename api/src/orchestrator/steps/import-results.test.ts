@@ -96,6 +96,9 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     profilePath: '/tmp/work/agent/repo-profile.md',
     cloneUrl: 'https://github.com/org/repo.git',
     reportLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
     ...overrides,
   };
 }
@@ -189,9 +192,50 @@ describe('TOOL_MAP', () => {
       'trivy-secrets', 'trivy-sca', 'trivy-iac',
       'jf-audit', 'semgrep', 'osv-scanner',
       'checkov', 'gitguardian', 'snyk-sca', 'snyk-code', 'snyk-iac',
+      'bearer', 'presidio', 'semgrep-pii',
     ];
     expect(Object.keys(TOOL_MAP)).toEqual(expect.arrayContaining(expectedKeys));
-    expect(Object.keys(TOOL_MAP)).toHaveLength(14);
+    expect(Object.keys(TOOL_MAP)).toHaveLength(17);
+  });
+});
+
+// ── TOOL_CATEGORY_MAP ───────────────────────────────────────────
+
+describe('TOOL_CATEGORY_MAP', () => {
+  it('maps all tools to a category', async () => {
+    const { TOOL_CATEGORY_MAP, TOOL_MAP } = await import('./import-results.ts');
+    // Every tool in TOOL_MAP should have a category
+    for (const tool of Object.values(TOOL_MAP)) {
+      expect(TOOL_CATEGORY_MAP).toHaveProperty(tool);
+    }
+  });
+
+  it('maps PII tools to pii category', async () => {
+    const { TOOL_CATEGORY_MAP } = await import('./import-results.ts');
+    expect(TOOL_CATEGORY_MAP['bearer']).toBe('pii');
+    expect(TOOL_CATEGORY_MAP['presidio']).toBe('pii');
+    expect(TOOL_CATEGORY_MAP['semgrep-pii']).toBe('pii');
+  });
+
+  it('maps secrets tools to secrets category', async () => {
+    const { TOOL_CATEGORY_MAP } = await import('./import-results.ts');
+    expect(TOOL_CATEGORY_MAP['gitleaks']).toBe('secrets');
+    expect(TOOL_CATEGORY_MAP['trufflehog']).toBe('secrets');
+    expect(TOOL_CATEGORY_MAP['trivy-secrets']).toBe('secrets');
+    expect(TOOL_CATEGORY_MAP['gitguardian']).toBe('secrets');
+  });
+
+  it('maps trivy variants to different categories', async () => {
+    const { TOOL_CATEGORY_MAP } = await import('./import-results.ts');
+    expect(TOOL_CATEGORY_MAP['trivy-secrets']).toBe('secrets');
+    expect(TOOL_CATEGORY_MAP['trivy-sca']).toBe('sca');
+    expect(TOOL_CATEGORY_MAP['trivy-iac']).toBe('iac');
+  });
+
+  it('maps semgrep variants to different categories', async () => {
+    const { TOOL_CATEGORY_MAP } = await import('./import-results.ts');
+    expect(TOOL_CATEGORY_MAP['semgrep']).toBe('sast');
+    expect(TOOL_CATEGORY_MAP['semgrep-pii']).toBe('pii');
   });
 });
 

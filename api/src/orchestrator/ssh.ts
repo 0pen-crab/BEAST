@@ -60,6 +60,25 @@ export function sshWriteFile(config: SSHConfig, remotePath: string, data: string
   });
 }
 
+export function sshReadFile(config: SSHConfig, remotePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const conn = new Client();
+    conn
+      .on('ready', () => {
+        conn.sftp((err, sftp) => {
+          if (err) { conn.end(); return reject(err); }
+          const chunks: Buffer[] = [];
+          const rs = sftp.createReadStream(remotePath);
+          rs.on('data', (chunk: Buffer) => chunks.push(chunk));
+          rs.on('error', (e: Error) => { conn.end(); reject(e); });
+          rs.on('end', () => { conn.end(); resolve(Buffer.concat(chunks).toString('utf-8')); });
+        });
+      })
+      .on('error', reject)
+      .connect(config);
+  });
+}
+
 export interface SSHExecOptions {
   /** Kill the connection if no stdout/stderr data arrives for this many ms */
   inactivityTimeoutMs?: number;

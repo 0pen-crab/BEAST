@@ -46,6 +46,9 @@ function makeCtx(overrides: Partial<PipelineContext> = {}): PipelineContext {
     profilePath: '/workspace/repo/repo-profile.md',
     cloneUrl: 'https://github.com/org/repo.git',
     reportLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
     ...overrides,
   } as PipelineContext;
 }

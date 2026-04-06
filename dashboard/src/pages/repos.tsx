@@ -6,8 +6,8 @@ import { useRepositories, useTeams, useSources, useBulkUpdateRepositories, useTr
 import { ProviderIcon } from '@/lib/provider-icons';
 import { apiFetch, fetchApi } from '@/api/client';
 import { useWorkspace } from '@/lib/workspace';
-import { generateFindingsMarkdown, downloadFile, downloadAsZip, type ExportFinding } from '@/lib/export-findings';
-import { ExportDialog } from '@/components/export-dialog';
+import { generateFindingsMarkdown, generateFindingsCsv, downloadFile, downloadAsZip, type ExportFinding } from '@/lib/export-findings';
+import { ExportDialog, type ExportFormat } from '@/components/export-dialog';
 import type { Finding } from '@/api/types';
 import { TableSkeleton } from '@/components/skeleton';
 import { EmptyState } from '@/components/empty-state';
@@ -528,7 +528,6 @@ export function ReposPage() {
 
   const bulkScan = async () => {
     if (selected.size === 0) return;
-    if (!confirm(`Trigger scans for ${selected.size} repositories?`)) return;
     setBulkLoading('scan');
 
     const repos = (allRepos ?? []).filter((r) => selected.has(r.id));
@@ -572,7 +571,7 @@ export function ReposPage() {
     );
   };
 
-  const fetchRepoFindings = async (repoId: number, severities: string[], tools: string[]): Promise<Finding[]> => {
+  const fetchRepoFindings = async (repoId: number, severities: string[], tools: string[], statuses: string[]): Promise<Finding[]> => {
     const wsId = currentWorkspace?.id;
     let allFindings: Finding[] = [];
     let offset = 0;
@@ -583,13 +582,14 @@ export function ReposPage() {
       const params = new URLSearchParams({
         workspace_id: String(wsId),
         repository_id: String(repoId),
-        status: 'open',
+        status: statuses.join(','),
         severity: severities.join(','),
         tool: tools.join(','),
         limit: String(limit),
         offset: String(offset),
         sort: 'severity',
         dir: 'asc',
+        include_secrets: 'true',
       });
       const page = await fetchApi<{ count: number; results: Finding[] }>(`/api/findings?${params}`);
       allFindings = allFindings.concat(page.results);
@@ -600,33 +600,38 @@ export function ReposPage() {
     return allFindings;
   };
 
-  // Collect unique tool keys from workspace findings (for the export dialog)
-  const { data: toolCounts } = useFindingCountsByTool();
-  const availableTools = useMemo(
-    () => (toolCounts ?? []).map((tc) => tc.tool).sort(),
-    [toolCounts],
+  // Collect tool counts scoped to selected repos (for export dialog)
+  const selectedRepoIds = useMemo(() => [...selected], [selected]);
+  const { data: toolCounts } = useFindingCountsByTool(
+    selectedRepoIds.length > 0 ? selectedRepoIds : undefined,
   );
 
-  const handleExport = async (severities: string[], tools: string[]) => {
+  const handleExport = async (severities: string[], tools: string[], statuses: string[], format: ExportFormat) => {
     setShowExportDialog(false);
     if (selected.size === 0) return;
     setBulkLoading('export');
 
+    const isCsv = format === 'csv';
+    const ext = isCsv ? 'csv' : 'md';
+    const mime = isCsv ? 'text/csv' : 'text/markdown';
     const repos = (allRepos ?? []).filter((r) => selected.has(r.id));
+
+    const generateContent = (repoName: string, findings: ExportFinding[]) =>
+      isCsv ? generateFindingsCsv(findings) : generateFindingsMarkdown(repoName, findings);
 
     if (repos.length === 1) {
       const repo = repos[0];
-      const findings = await fetchRepoFindings(repo.id, severities, tools);
-      const md = generateFindingsMarkdown(repo.name, findings as ExportFinding[]);
+      const findings = await fetchRepoFindings(repo.id, severities, tools, statuses);
+      const content = generateContent(repo.name, findings as ExportFinding[]);
       const safeName = repo.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      downloadFile(`${safeName}-findings.md`, md);
+      downloadFile(`${safeName}-findings.${ext}`, content, mime);
     } else {
       const files: { name: string; content: string }[] = [];
       for (const repo of repos) {
-        const findings = await fetchRepoFindings(repo.id, severities, tools);
-        const md = generateFindingsMarkdown(repo.name, findings as ExportFinding[]);
+        const findings = await fetchRepoFindings(repo.id, severities, tools, statuses);
+        const content = generateContent(repo.name, findings as ExportFinding[]);
         const safeName = repo.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        files.push({ name: `${safeName}-findings.md`, content: md });
+        files.push({ name: `${safeName}-findings.${ext}`, content });
       }
       const date = new Date().toISOString().slice(0, 10);
       await downloadAsZip(files, `findings-export-${date}.zip`);
@@ -833,7 +838,7 @@ export function ReposPage() {
       <ExportDialog
         open={showExportDialog}
         repoCount={selected.size}
-        availableTools={availableTools}
+        toolCounts={toolCounts ?? []}
         onExport={handleExport}
         onCancel={() => setShowExportDialog(false)}
       />

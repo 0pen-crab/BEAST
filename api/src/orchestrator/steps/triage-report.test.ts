@@ -131,6 +131,9 @@ describe('prepareTriageInput', () => {
     profilePath: '/tmp/profile.md',
     cloneUrl: 'https://example.com/repo.git',
     reportLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
     ...overrides,
   });
 
@@ -308,6 +311,9 @@ describe('runTriageAndReport', () => {
     profilePath: '/tmp/profile.md',
     cloneUrl: 'https://example.com/repo.git',
     reportLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
     ...overrides,
   });
 
@@ -436,6 +442,9 @@ describe('runTriageStep', () => {
     profilePath: '/tmp/profile.md',
     cloneUrl: 'https://example.com/repo.git',
     reportLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
     ...overrides,
   });
 

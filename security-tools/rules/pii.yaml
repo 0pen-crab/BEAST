@@ -1,0 +1,322 @@
+rules:
+  # ═══════════════════════════════════════════════════════════════
+  # Contact Information
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.hardcoded-email-address
+    languages: [generic]
+    severity: INFO
+    message: "Hardcoded email address detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '(?i)\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b'
+
+  - id: pii.hardcoded-phone-international
+    languages: [generic]
+    severity: INFO
+    message: "Hardcoded international phone number detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '\+\d{1,3}[\s\-]?\(?\d{2,4}\)?[\s\-]?\d{3,4}[\s\-]?\d{2,4}\b'
+
+  - id: pii.hardcoded-phone-ua
+    languages: [generic]
+    severity: INFO
+    message: "Hardcoded Ukrainian phone number detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '(?:\+?380|0)\s?\(?\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b'
+
+  - id: pii.hardcoded-phone-ru
+    languages: [generic]
+    severity: INFO
+    message: "Hardcoded Russian phone number detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '(?:\+?7|8)\s?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Network / Infrastructure
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.hardcoded-ipv4-address
+    languages: [generic]
+    severity: INFO
+    message: "Hardcoded IPv4 address detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    patterns:
+      - pattern-regex: '\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\b'
+      - pattern-not-regex: '\b(?:127\.0\.0\.1|0\.0\.0\.0|255\.255\.255\.\d+)\b'
+
+  - id: pii.hardcoded-ipv6-address
+    languages: [generic]
+    severity: INFO
+    message: "Hardcoded IPv6 address detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b'
+
+  - id: pii.hardcoded-mac-address
+    languages: [generic]
+    severity: INFO
+    message: "Hardcoded MAC address detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '(?i)\b(?:[0-9a-f]{2}[:\-]){5}[0-9a-f]{2}\b'
+
+  - id: pii.internal-hostname
+    languages: [generic]
+    severity: INFO
+    message: "Internal hostname or domain detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)\b[a-z0-9][\w\-]*\.(?:internal|local|corp|lan|intranet|home|priv)\b'
+
+  - id: pii.database-connection-string
+    languages: [generic]
+    severity: WARNING
+    message: "Database connection string with credentials detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '(?i)(?:mysql|postgres(?:ql)?|mongodb(?:\+srv)?|redis|amqp|mssql)://[^\s:]+:[^\s@]+@[^\s]+'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Financial — Cards & Accounts
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.hardcoded-credit-card
+    languages: [generic]
+    severity: WARNING
+    message: "Possible hardcoded credit card number detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6(?:011|5\d{2}))[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b'
+
+  - id: pii.hardcoded-iban
+    languages: [generic]
+    severity: WARNING
+    message: "Possible hardcoded IBAN detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '\b[A-Z]{2}\d{2}[\s]?[\dA-Z]{4}[\s]?(?:[\dA-Z]{4}[\s]?){2,7}[\dA-Z]{1,4}\b'
+
+  - id: pii.hardcoded-swift-bic
+    languages: [generic]
+    severity: WARNING
+    message: "Possible hardcoded SWIFT/BIC code detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '(?i)(?:swift|bic|банк)\s*[:=]\s*[''"]?[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?[''"]?'
+
+  - id: pii.ua-card-number
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Ukrainian bank card number (ПриватБанк, Моно, etc.)"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '\b(?:5168|5167|4149|4157|5375|5363|5355|5309)\s?\d{4}\s?\d{4}\s?\d{4}\b'
+
+  # ═══════════════════════════════════════════════════════════════
+  # National IDs — CIS Countries
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.ua-inn
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Ukrainian INN (ІПН) — individual tax number"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:inn|іпн|инн|ідентифікаційний|tax_?(?:id|number|code))\s*[:=]\s*[''"]?\d{10}[''"]?'
+
+  - id: pii.ua-edrpou
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Ukrainian EDRPOU (ЄДРПОУ) — company registration number"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:edrpou|єдрпоу|едрпоу|company_?(?:id|code|number))\s*[:=]\s*[''"]?\d{8}[''"]?'
+
+  - id: pii.ua-passport
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Ukrainian passport number detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '[А-ЯІЇЄҐА-ЯЁ]{2}\d{6}'
+
+  - id: pii.ua-id-card
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Ukrainian ID card number detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:id_?card|документ|посвідчення|id_?number)\s*[:=]\s*[''"]?\d{9}[''"]?'
+
+  - id: pii.ru-inn
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Russian INN (ИНН) — tax identification number"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:inn|инн|tax_?(?:id|number|code))\s*[:=]\s*[''"]?\d{10,12}[''"]?'
+
+  - id: pii.ru-passport
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Russian internal passport number detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:passport|паспорт)\s*[:=]\s*[''"]?\d{2}\s?\d{2}\s?\d{6}[''"]?'
+
+  - id: pii.ru-snils
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Russian SNILS (СНИЛС) detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '\b\d{3}[\s\-]\d{3}[\s\-]\d{3}[\s\-]?\d{2}\b'
+
+  - id: pii.ru-ogrn
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Russian OGRN (ОГРН) — company registration number"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:ogrn|огрн)\s*[:=]\s*[''"]?[15]\d{12}[''"]?'
+
+  - id: pii.ru-kpp
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Russian KPP (КПП) — tax registration reason code"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:kpp|кпп)\s*[:=]\s*[''"]?\d{9}[''"]?'
+
+  - id: pii.by-passport
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Belarusian passport number detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '\b[A-Z]{2}\d{7}\b'
+
+  - id: pii.kz-iin
+    languages: [generic]
+    severity: WARNING
+    message: "Possible Kazakh IIN (ИИН) — individual identification number"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:iin|иин|ідентифікаційний)\s*[:=]\s*[''"]?\d{12}[''"]?'
+
+  # ═══════════════════════════════════════════════════════════════
+  # National IDs — US & EU (keep for completeness)
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.us-ssn
+    languages: [generic]
+    severity: WARNING
+    message: "Possible US SSN detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '\b\d{3}[\s\-]\d{2}[\s\-]\d{4}\b'
+
+  - id: pii.eu-vat-number
+    languages: [generic]
+    severity: INFO
+    message: "Possible EU VAT number detected"
+    metadata:
+      category: pii
+      confidence: HIGH
+    pattern-regex: '\b(?:AT|BE|BG|CY|CZ|DE|DK|EE|EL|ES|FI|FR|HR|HU|IE|IT|LT|LU|LV|MT|NL|PL|PT|RO|SE|SI|SK)[A-Z0-9]{8,12}\b'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Corporate Identifiers
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.duns-number
+    languages: [generic]
+    severity: INFO
+    message: "Possible DUNS number (company identifier) detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '\b\d{2}[\s\-]\d{3}[\s\-]\d{4}\b'
+
+  - id: pii.us-ein
+    languages: [generic]
+    severity: WARNING
+    message: "Possible US EIN (Employer Identification Number) detected"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '\b\d{2}[\s\-]\d{7}\b'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Dates & Personal Identifiers
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.date-of-birth-pattern
+    languages: [generic]
+    severity: INFO
+    message: "Possible date of birth pattern detected"
+    metadata:
+      category: pii
+      confidence: LOW
+    pattern-regex: '(?i)(?:dob|birth_?date|date_?of_?birth|born|дата_?народження|дата_?рождения)\s*[:=]\s*[''"]?\d{1,4}[\.\-/]\d{1,2}[\.\-/]\d{1,4}'
+
+  - id: pii.personal-data-field
+    languages: [generic]
+    severity: INFO
+    message: "Variable or field name suggests personal data storage"
+    metadata:
+      category: pii
+      confidence: LOW
+    pattern-regex: '(?i)(?:first_?name|last_?name|full_?name|passport|ssn|social_?security|tax_?id|inn|snils|ідентифікаційний|паспорт|прізвище|імя)\s*[:=]'
+
+  # ═══════════════════════════════════════════════════════════════
+  # PII in Logging (data flow patterns)
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: pii.logging-email
+    languages: [generic]
+    severity: WARNING
+    message: "Email address may be logged — potential PII leak"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:log(?:ger)?|console|print|puts|warn|info|debug|error|fprintf|syslog|NSLog)\s*[\.(]\s*.*\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b'
+
+  - id: pii.logging-personal-field
+    languages: [generic]
+    severity: WARNING
+    message: "Personal data field may be logged — potential PII leak"
+    metadata:
+      category: pii
+      confidence: MEDIUM
+    pattern-regex: '(?i)(?:log(?:ger)?|console|print|warn|info|debug|error)\s*[\.(]\s*.*(?:password|passwd|secret|ssn|passport|credit.?card|card.?number|cvv|birth.?date|phone.?number|паспорт|пароль)'

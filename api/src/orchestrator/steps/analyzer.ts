@@ -252,7 +252,7 @@ export async function buildContributorsToAssess(ctx: PipelineContext): Promise<C
 // ── Step wrapper ──────────────────────────────────────────────────────────────
 
 export async function runAnalysisStep({ ctx }: StepInput): Promise<AnalysisOutput> {
-  // 1. Collect git metadata → repo-metadata.json
+  // 1. Collect git metadata → repo-metadata.json (always — used by other steps)
   const metadataPath = path.join(ctx.agentDir, 'repo-metadata.json');
   const metadata = collectGitMetadata(ctx.repoPath);
   fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
@@ -263,6 +263,17 @@ export async function runAnalysisStep({ ctx }: StepInput): Promise<AnalysisOutpu
     path.join(ctx.agentDir, 'contributors-to-assess.json'),
     JSON.stringify(devsToAssess, null, 2),
   );
+
+  // Skip AI analysis if disabled in workspace settings
+  if (!ctx.aiAnalysisEnabled) {
+    console.log(`[analysis] AI analysis disabled for workspace ${ctx.workspaceId}, skipping`);
+    return {
+      aiAvailable: false,
+      profileGenerated: false,
+      contributorsAssessed: devsToAssess.length,
+      metadataPath,
+    };
+  }
 
   // 3. Check profile exists locally (no SSH!)
   const profileExists = fs.existsSync(ctx.profilePath);

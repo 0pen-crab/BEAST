@@ -307,3 +307,4 @@ function SettingsIcon() {
     </svg>
   );
 }
+

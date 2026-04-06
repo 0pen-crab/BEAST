@@ -63,6 +63,7 @@ write_empty_result() {
     *.json)
       case "$key" in
         trivy-*) echo '{"Results":[]}' > "$outfile" ;;
+        bearer) echo '{}' > "$outfile" ;;
         *) echo '[]' > "$outfile" ;;
       esac
       ;;
@@ -307,7 +308,12 @@ fi
 # -- Semgrep (SAST) -----------------------------------------------------------
 if is_enabled "semgrep"; then
   run_tool "semgrep" "$RESULTS_DIR/semgrep-results.sarif" \
-    semgrep scan --config auto --sarif -o "$RESULTS_DIR/semgrep-results.sarif" "$REPO_PATH"
+    semgrep scan \
+      --config auto \
+      --config p/owasp-top-ten \
+      --config p/trailofbits \
+      --config /rules/apiiro \
+      --sarif -o "$RESULTS_DIR/semgrep-results.sarif" "$REPO_PATH"
 else
   TOOL_STATUS["semgrep"]="skipped"; TOOL_EXIT["semgrep"]=""; TOOL_FILE["semgrep"]="null"; TOOL_DURATION["semgrep"]=0
 fi
@@ -382,11 +388,35 @@ else
   TOOL_STATUS["snyk-iac"]="skipped"; TOOL_EXIT["snyk-iac"]=""; TOOL_FILE["snyk-iac"]="null"; TOOL_DURATION["snyk-iac"]=0
 fi
 
+# -- Bearer (PII — sensitive data flows) --------------------------------------
+if is_enabled "bearer"; then
+  run_tool "bearer" "$RESULTS_DIR/bearer-results.json" \
+    bearer scan "$REPO_PATH" --report dataflow --format json --output "$RESULTS_DIR/bearer-results.json" --quiet
+else
+  TOOL_STATUS["bearer"]="skipped"; TOOL_EXIT["bearer"]=""; TOOL_FILE["bearer"]="null"; TOOL_DURATION["bearer"]=0
+fi
+
+# -- Presidio (PII — NLP-based personal data detection) -----------------------
+if is_enabled "presidio"; then
+  run_tool "presidio" "$RESULTS_DIR/presidio-results.sarif" \
+    /opt/presidio-venv/bin/python /scripts/presidio-scan.py "$REPO_PATH" "$RESULTS_DIR/presidio-results.sarif"
+else
+  TOOL_STATUS["presidio"]="skipped"; TOOL_EXIT["presidio"]=""; TOOL_FILE["presidio"]="null"; TOOL_DURATION["presidio"]=0
+fi
+
+# -- Semgrep PII (PII-specific rules) -----------------------------------------
+if is_enabled "semgrep-pii"; then
+  run_tool "semgrep-pii" "$RESULTS_DIR/semgrep-pii-results.sarif" \
+    semgrep scan --config /rules/pii.yaml --sarif -o "$RESULTS_DIR/semgrep-pii-results.sarif" "$REPO_PATH"
+else
+  TOOL_STATUS["semgrep-pii"]="skipped"; TOOL_EXIT["semgrep-pii"]=""; TOOL_FILE["semgrep-pii"]="null"; TOOL_DURATION["semgrep-pii"]=0
+fi
+
 echo "[security-tools] All scans complete"
 
 # -- Build JSON summary (last line of stdout) ------------------------------
 TOOLS_JSON=()
-for key in gitleaks trufflehog trivy-secrets trivy-sca trivy-iac jf-audit semgrep osv-scanner checkov gitguardian snyk-sca snyk-code snyk-iac; do
+for key in gitleaks trufflehog trivy-secrets trivy-sca trivy-iac jf-audit semgrep osv-scanner checkov gitguardian snyk-sca snyk-code snyk-iac bearer presidio semgrep-pii; do
   if [ -n "${TOOL_STATUS[$key]+x}" ]; then
     status="${TOOL_STATUS[$key]}"
     exit_code="${TOOL_EXIT[$key]}"

@@ -69,6 +69,10 @@ export interface PipelineContext {
   cloneUrl: string;
   /** Language code for reports (e.g. 'en', 'uk'). Read from workspace.default_language */
   reportLanguage: string;
+  /** Workspace AI feature toggles — read from workspaces table */
+  aiAnalysisEnabled: boolean;
+  aiScanningEnabled: boolean;
+  aiTriageEnabled: boolean;
 }
 
 // ── Step interface ──

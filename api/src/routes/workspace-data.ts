@@ -6,6 +6,13 @@ import { teams, repositories, scans, tests, findings, findingNotes, scanFiles, c
 import type { NewTeam, NewRepository } from '../db/schema.ts';
 import { authorize, ForbiddenError } from '../lib/authorize.ts';
 
+/** Mask a secret value, showing only the first 4 and last 2 characters. */
+function maskSecret(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= 8) return '*'.repeat(value.length);
+  return value.slice(0, 4) + '*'.repeat(value.length - 6) + value.slice(-2);
+}
+
 export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
   // ═══════════════════════════════════════════════════════════════
   // TEAMS
@@ -541,11 +548,12 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
           offset: z.coerce.number().min(0).default(0),
           sort: z.enum(['severity', 'created_at', 'updated_at', 'title', 'tool', 'status', 'cvss_score', 'repository', 'contributor', 'file_path']).default('created_at'),
           dir: z.enum(['asc', 'desc']).default('desc'),
+          include_secrets: z.coerce.boolean().default(false),
         }),
       },
     },
     async (request) => {
-      const { workspace_id, severity, status, tool, repository_id, test_id, limit, offset, sort, dir } = request.query;
+      const { workspace_id, severity, status, tool, repository_id, test_id, limit, offset, sort, dir, include_secrets } = request.query;
 
       if (workspace_id) {
         await authorize(request, workspace_id, 'member');
@@ -605,12 +613,17 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         count: sql<number>`count(*)`,
       }).from(findings).where(whereClause);
 
-      // Data — include contributor name via LEFT JOIN
+      // Data — include contributor name + repository name + scanId via JOINs
       const rows = await db.select({
         ...getTableColumns(findings),
         contributorName: contributors.displayName,
+        repositoryName: repositories.name,
+        scanId: scans.id,
       }).from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
         .leftJoin(contributors, eq(contributors.id, findings.contributorId))
+        .leftJoin(repositories, eq(repositories.id, findings.repositoryId))
         .where(whereClause)
         .orderBy(sortDir)
         .limit(limit)
@@ -618,7 +631,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
 
       return {
         count: Number(countRow.count),
-        results: rows,
+        results: include_secrets ? rows : rows.map(r => ({ ...r, secretValue: maskSecret(r.secretValue) })),
       };
     },
   );
@@ -675,18 +688,19 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
-  // GET /api/findings/counts-by-tool?workspace_id=X
+  // GET /api/findings/counts-by-tool?workspace_id=X&repository_ids=1,2,3
   app.get(
     '/findings/counts-by-tool',
     {
       schema: {
         querystring: z.object({
           workspace_id: z.coerce.number().positive().optional(),
+          repository_ids: z.string().optional(),
         }),
       },
     },
     async (request) => {
-      const { workspace_id } = request.query;
+      const { workspace_id, repository_ids } = request.query;
 
       if (workspace_id) {
         await authorize(request, workspace_id, 'member');
@@ -701,6 +715,12 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
           .innerJoin(scans, eq(scans.id, tests.scanId))
           .where(eq(scans.workspaceId, workspace_id));
         conditions.push(inArray(findings.testId, workspaceScans));
+      }
+      if (repository_ids) {
+        const repoIds = repository_ids.split(',').map(Number).filter((n) => n > 0);
+        if (repoIds.length > 0) {
+          conditions.push(inArray(findings.repositoryId, repoIds));
+        }
       }
       const whereClause = conditions.length ? and(...conditions) : undefined;
 
@@ -748,7 +768,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         throw new ForbiddenError('Cannot resolve workspace for finding');
       }
 
-      return finding;
+      return { ...finding, secretValue: maskSecret(finding.secretValue) };
     },
   );
 
