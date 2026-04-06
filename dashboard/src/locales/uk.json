@@ -9,7 +9,8 @@
     "contributors": "Контрибʼютори",
     "teams": "Команди",
     "members": "Учасники",
-    "settings": "Налаштування"
+    "settings": "Налаштування",
+    "export": "Експорт"
   },
   "brand": {
     "tagline": "Покращене тестування безпеки додатків"
@@ -185,7 +186,12 @@
     "repository": "Репозиторій",
     "duration": "Тривалість",
     "completed": "Завершено",
-    "findings": "Знахідки"
+    "findings": "Знахідки",
+    "securityBrief": "Security Brief",
+    "securityBriefProcessing": "Аналізуємо...",
+    "securityBriefDownload": "Завантажити Brief",
+    "securityBriefFailed": "Аналіз не вдався",
+    "securityBriefNoFindings": "Немає відкритих знахідок для аналізу"
   },
   "scans": {
     "title": "Сканування",
@@ -521,7 +527,23 @@
     "accessToken": "Токен доступу",
     "bbUsername": "Імʼя користувача Bitbucket",
     "securityTools": "Інструменти безпеки",
-    "securityToolsSubtitle": "Налаштуйте інструменти сканування безпеки для ваших перевірок"
+    "securityToolsSubtitle": "Налаштуйте інструменти сканування безпеки для ваших перевірок",
+    "aiCapabilities": "AI можливості",
+    "aiCapabilitiesSubtitle": "Налаштуйте AI-функції аналізу для ваших сканувань",
+    "aiAnalysis": "Профілювання репозиторію",
+    "aiAnalysisDesc": "Генерує комплексний профіль репозиторію — огляд архітектури, технологічний стек, оцінка контриб'юторів та якість коду.",
+    "aiScanning": "Дослідження вразливостей",
+    "aiScanningDesc": "Claude Code сканує вихідний код на вразливості безпеки, небезпечні патерни та потенційні експлойти за допомогою AI.",
+    "aiTriage": "AI тріаж та звітність",
+    "aiTriageDesc": "Аналізує всі знахідки, пріоритезує за критичністю та бізнес-впливом, генерує консолідований звіт безпеки.",
+    "claudeStatus": "Статус Claude Code",
+    "claudeAuthenticated": "Автентифіковано",
+    "claudeNotAuthenticated": "Не автентифіковано",
+    "claudeUnreachable": "Недоступний",
+    "claudeAuthHint": "Виконайте <code>make auth</code> в кореневій директорії проєкту для автентифікації Claude Code.",
+    "claudeUnreachableHint": "Контейнер claude-runner не відповідає. Перевірте, чи він запущений.",
+    "enabled": "Увімкнено",
+    "disabled": "Вимкнено"
   },
   "pipeline": {
     "clone": "Клонування репозиторію",
@@ -585,7 +607,8 @@
       "secrets": "Secrets",
       "sast": "SAST",
       "sca": "SCA",
-      "iac": "IaC"
+      "iac": "IaC",
+      "pii": "Персональні дані"
     },
     "badges": {
       "free": "Безкоштовний і відкритий",

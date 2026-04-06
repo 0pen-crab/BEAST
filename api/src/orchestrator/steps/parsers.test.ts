@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy } from './parsers.ts';
+import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy, parseBearer } from './parsers.ts';
 
 // ── parseSarif ─────────────────────────────────────────────────────
 
@@ -50,6 +50,7 @@ describe('parseSarif', () => {
       vulnIdFromTool: 'RULE-001',
       cwe: 89,
       cvssScore: null,
+      secretValue: null, // no snippet in region
     });
   });
 
@@ -372,6 +373,51 @@ describe('parseSarif', () => {
     const findings = parseSarif(JSON.stringify(sarif));
     expect(findings[0].cvssScore).toBeNull();
   });
+
+  it('extracts snippet text as secretValue from region', () => {
+    const sarif = {
+      runs: [{
+        results: [{
+          ruleId: 'pii-rule',
+          message: { text: 'PII found' },
+          locations: [{
+            physicalLocation: {
+              artifactLocation: { uri: 'config.yaml' },
+              region: {
+                startLine: 5,
+                snippet: { text: 'email = john@example.com' },
+              },
+            },
+          }],
+        }],
+      }],
+    };
+    const findings = parseSarif(JSON.stringify(sarif));
+    expect(findings[0].secretValue).toBe('email = john@example.com');
+  });
+
+  it('extracts matchedText from properties over snippet', () => {
+    const sarif = {
+      runs: [{
+        results: [{
+          ruleId: 'pii/email',
+          message: { text: 'Email detected' },
+          properties: { matchedText: 'john@example.com' },
+          locations: [{
+            physicalLocation: {
+              artifactLocation: { uri: 'app.py' },
+              region: {
+                startLine: 10,
+                snippet: { text: 'email = john@example.com' },
+              },
+            },
+          }],
+        }],
+      }],
+    };
+    const findings = parseSarif(JSON.stringify(sarif));
+    expect(findings[0].secretValue).toBe('john@example.com');
+  });
 });
 
 // ── parseGitleaks ──────────────────────────────────────────────────
@@ -397,6 +443,7 @@ describe('parseGitleaks', () => {
       vulnIdFromTool: 'aws-access-key',
       cwe: 798,
       cvssScore: null,
+      secretValue: null,
     });
   });
 
@@ -502,6 +549,24 @@ describe('parseGitleaks', () => {
   it('returns empty array for non-array JSON (number)', () => {
     expect(parseGitleaks('42')).toEqual([]);
   });
+
+  it('extracts Secret field as secretValue', () => {
+    const data = [{ RuleID: 'api-key', Secret: 'AKIAIOSFODNN7EXAMPLE', File: 'config.yaml' }];
+    const findings = parseGitleaks(JSON.stringify(data));
+    expect(findings[0].secretValue).toBe('AKIAIOSFODNN7EXAMPLE');
+  });
+
+  it('falls back to Match when Secret is missing', () => {
+    const data = [{ RuleID: 'api-key', Match: 'api_key=abc123', File: 'config.yaml' }];
+    const findings = parseGitleaks(JSON.stringify(data));
+    expect(findings[0].secretValue).toBe('api_key=abc123');
+  });
+
+  it('sets secretValue to null when neither Secret nor Match present', () => {
+    const data = [{ RuleID: 'api-key', File: 'config.yaml' }];
+    const findings = parseGitleaks(JSON.stringify(data));
+    expect(findings[0].secretValue).toBeNull();
+  });
 });
 
 // ── parseTrufflehog ────────────────────────────────────────────────
@@ -528,6 +593,7 @@ describe('parseTrufflehog', () => {
       vulnIdFromTool: 'trufflehog-AWS',
       cwe: 798,
       cvssScore: null,
+      secretValue: null,
     });
   });
 
@@ -625,6 +691,24 @@ describe('parseTrufflehog', () => {
 
   it('returns empty array for only whitespace', () => {
     expect(parseTrufflehog('   \n  \n   ')).toEqual([]);
+  });
+
+  it('extracts Raw field as secretValue', () => {
+    const entry = { DetectorName: 'GitHub', Raw: 'ghp_abc123secrettoken' };
+    const findings = parseTrufflehog(JSON.stringify(entry));
+    expect(findings[0].secretValue).toBe('ghp_abc123secrettoken');
+  });
+
+  it('falls back to RawV2 when Raw is missing', () => {
+    const entry = { DetectorName: 'GitHub', RawV2: 'ghp_v2token' };
+    const findings = parseTrufflehog(JSON.stringify(entry));
+    expect(findings[0].secretValue).toBe('ghp_v2token');
+  });
+
+  it('sets secretValue to null when neither Raw nor RawV2 present', () => {
+    const entry = { DetectorName: 'Generic' };
+    const findings = parseTrufflehog(JSON.stringify(entry));
+    expect(findings[0].secretValue).toBeNull();
   });
 });
 
@@ -739,6 +823,7 @@ describe('parseTrivy', () => {
       vulnIdFromTool: 'CVE-2023-1234',
       cwe: null,
       cvssScore: 9.8,
+      secretValue: null,
     });
   });
 
@@ -859,6 +944,7 @@ describe('parseTrivy', () => {
       vulnIdFromTool: 'aws-access-key-id',
       cwe: 798,
       cvssScore: null,
+      secretValue: 'AKIA***',
     });
   });
 
@@ -955,6 +1041,7 @@ describe('parseTrivy', () => {
       vulnIdFromTool: 'DS001',
       cwe: null,
       cvssScore: null,
+      secretValue: null,
     });
   });
 
@@ -1134,5 +1221,109 @@ describe('parseTrivy', () => {
       ],
     };
     expect(parseTrivy(JSON.stringify(data))).toEqual([]);
+  });
+});
+
+// ── parseBearer (dataflow format) ─────────────────────────────────
+
+describe('parseBearer', () => {
+  it('parses data_types with locations', () => {
+    const data = {
+      data_types: [{
+        name: 'Email Address',
+        category_name: 'Contact',
+        category_groups: ['PII', 'Personal Data'],
+        detectors: [{
+          name: 'java',
+          locations: [
+            { filename: 'src/User.java', start_line_number: 14, field_name: 'email', object_name: 'User' },
+            { filename: 'src/Admin.java', start_line_number: 8, field_name: 'contactEmail', object_name: 'Admin' },
+          ],
+        }],
+      }],
+    };
+    const findings = parseBearer(JSON.stringify(data));
+    expect(findings).toHaveLength(2);
+    expect(findings[0].title).toBe('Email Address in User.email');
+    expect(findings[0].filePath).toBe('src/User.java');
+    expect(findings[0].line).toBe(14);
+    expect(findings[0].secretValue).toBe('User.email');
+    expect(findings[0].description).toContain('Contact');
+    expect(findings[0].description).toContain('PII');
+    expect(findings[1].title).toBe('Email Address in Admin.contactEmail');
+  });
+
+  it('parses a finding with all fields', () => {
+    const data = {
+      data_types: [{
+        name: 'Passwords',
+        category_name: 'Authenticating',
+        category_groups: ['PII', 'Personal Data'],
+        detectors: [{
+          name: 'java',
+          locations: [{
+            filename: 'src/Login.java',
+            start_line_number: 42,
+            field_name: 'password',
+            object_name: 'LoginForm',
+          }],
+        }],
+      }],
+    };
+    const findings = parseBearer(JSON.stringify(data));
+    expect(findings[0]).toEqual({
+      title: 'Passwords in LoginForm.password',
+      severity: 'Info',
+      description: 'Bearer detected Passwords (Authenticating) — PII, Personal Data',
+      filePath: 'src/Login.java',
+      line: 42,
+      vulnIdFromTool: 'bearer-datatype-passwords',
+      cwe: null,
+      cvssScore: null,
+      secretValue: 'LoginForm.password',
+    });
+  });
+
+  it('handles multiple detectors per data type', () => {
+    const data = {
+      data_types: [{
+        name: 'Username',
+        category_name: 'Identification',
+        category_groups: ['PII'],
+        detectors: [
+          { name: 'java', locations: [{ filename: 'a.java', start_line_number: 1, field_name: 'username', object_name: 'User' }] },
+          { name: 'ruby', locations: [{ filename: 'b.rb', start_line_number: 5, field_name: 'user_name', object_name: 'Account' }] },
+        ],
+      }],
+    };
+    const findings = parseBearer(JSON.stringify(data));
+    expect(findings).toHaveLength(2);
+    expect(findings[0].filePath).toBe('a.java');
+    expect(findings[1].filePath).toBe('b.rb');
+  });
+
+  it('returns empty array for invalid JSON', () => {
+    expect(parseBearer('not json')).toEqual([]);
+  });
+
+  it('returns empty array for empty object', () => {
+    expect(parseBearer('{}')).toEqual([]);
+  });
+
+  it('handles missing field_name and object_name', () => {
+    const data = {
+      data_types: [{
+        name: 'Geographic',
+        category_name: 'Demographic',
+        category_groups: ['PII'],
+        detectors: [{
+          name: 'java',
+          locations: [{ filename: 'src/Geo.java', start_line_number: 10 }],
+        }],
+      }],
+    };
+    const findings = parseBearer(JSON.stringify(data));
+    expect(findings[0].title).toBe('Geographic in src/Geo.java');
+    expect(findings[0].secretValue).toBeNull();
   });
 });

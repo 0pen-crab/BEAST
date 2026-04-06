@@ -76,4 +76,10 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText('dashboard.repositories')).toBeInTheDocument();
   });
+
+  it('renders the Security Brief button', () => {
+    renderWithProviders(<DashboardPage />);
+
+    expect(screen.getByText('dashboard.securityBrief')).toBeInTheDocument();
+  });
 });

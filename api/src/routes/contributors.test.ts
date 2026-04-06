@@ -91,6 +91,9 @@ beforeAll(async () => {
   app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  app.addHook('preHandler', async (request) => {
+    request.user = { id: 1, username: 'test', role: 'super_admin', displayName: 'Test', mustChangePassword: false };
+  });
   const mod = await import('./contributors.ts');
   await app.register(mod.contributorRoutes);
   await app.ready();
@@ -210,7 +213,8 @@ describe('GET /contributors/:id/activity', () => {
       { activityDate: '2026-01-01', commitCount: 8 },
       { activityDate: '2026-01-02', commitCount: 3 },
     ];
-    mockSelect(aggregated);
+    // First select: contributor existence check; second select: activity query
+    mockSelect([{ workspaceId: 1 }], aggregated);
 
     const res = await app.inject({
       method: 'GET',
@@ -222,7 +226,8 @@ describe('GET /contributors/:id/activity', () => {
   });
 
   it('accepts custom weeks parameter', async () => {
-    mockSelect([]);
+    // First select: contributor existence check; second select: activity query
+    mockSelect([{ workspaceId: 1 }], []);
 
     const res = await app.inject({
       method: 'GET',
@@ -279,7 +284,8 @@ describe('ingestContributors daily_activity', () => {
 describe('GET /contributors/:id/repos', () => {
   it('returns repo stats rows', async () => {
     const repos = [{ id: 1, contributorId: 1, repoName: 'beast', commitCount: 50 }];
-    mockSelect(repos);
+    // First select: contributor existence check; second select: repo stats query
+    mockSelect([{ workspaceId: 1 }], repos);
 
     const res = await app.inject({
       method: 'GET',
@@ -298,7 +304,8 @@ describe('GET /contributors/:id/assessments', () => {
     const assessments = [
       { id: 1, contributorId: 1, scoreSecurity: 8.0, repoName: 'beast' },
     ];
-    mockSelect(assessments);
+    // First select: contributor existence check; second select: assessments query
+    mockSelect([{ workspaceId: 1 }], assessments);
 
     const res = await app.inject({
       method: 'GET',

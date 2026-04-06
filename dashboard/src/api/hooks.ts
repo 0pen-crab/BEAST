@@ -258,14 +258,15 @@ export function useFindingCounts(params?: {
   });
 }
 
-export function useFindingCountsByTool() {
+export function useFindingCountsByTool(repositoryIds?: number[]) {
   const { currentWorkspace } = useWorkspace();
   const wsId = currentWorkspace?.id;
+  const repoIdsParam = repositoryIds?.length ? repositoryIds.join(',') : undefined;
   return useQuery({
-    queryKey: ['findingCountsByTool', wsId],
+    queryKey: ['findingCountsByTool', wsId, repoIdsParam],
     queryFn: () =>
       fetchApi<{ tool: string; active: number; dismissed: number }[]>(
-        buildUrl('/api/findings/counts-by-tool', { workspace_id: wsId }),
+        buildUrl('/api/findings/counts-by-tool', { workspace_id: wsId, repository_ids: repoIdsParam }),
       ),
     enabled: !!wsId,
   });
@@ -977,6 +978,43 @@ export function useDisconnectTool(workspaceId: number | undefined) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workspace-tools', workspaceId] });
+    },
+  });
+}
+
+
+// ── Claude Status ────────────────────────────────────────────
+
+export interface ClaudeStatusResponse {
+  status: 'authenticated' | 'not_authenticated' | 'unreachable';
+  message?: string;
+}
+
+export function useClaudeStatus() {
+  return useQuery({
+    queryKey: ['claude-status'],
+    queryFn: () => fetchApi<ClaudeStatusResponse>('/api/claude-status'),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+}
+
+// ── AI Settings ──────────────────────────────────────────────
+
+export function useUpdateAiSettings(workspaceId: number | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: {
+      ai_analysis_enabled?: boolean;
+      ai_scanning_enabled?: boolean;
+      ai_triage_enabled?: boolean;
+    }) =>
+      mutateApi<Record<string, unknown>>(`/api/workspaces/${workspaceId}`, {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workspaces'] });
     },
   });
 }

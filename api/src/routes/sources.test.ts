@@ -11,6 +11,15 @@ vi.mock('../middleware/auth.ts', () => ({
   requireRole: () => async () => {},
 }));
 
+vi.mock('../lib/authorize.ts', () => ({
+  authorize: vi.fn(async (request: any) => { request.authorized = true; }),
+  authorizePublic: vi.fn((request: any) => { request.authorized = true; }),
+  ForbiddenError: class ForbiddenError extends Error {
+    statusCode = 403;
+    constructor(msg = 'Forbidden') { super(msg); }
+  },
+}));
+
 vi.mock('../orchestrator/entities.ts', () => ({
   createSource: vi.fn(),
   getSource: vi.fn(),

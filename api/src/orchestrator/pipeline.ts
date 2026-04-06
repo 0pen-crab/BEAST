@@ -119,11 +119,25 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
   const profilePath = `${agentDir}/repo-profile.md`;
 
   let reportLanguage = 'en';
+  let aiAnalysisEnabled = true;
+  let aiScanningEnabled = true;
+  let aiTriageEnabled = true;
+
   if (scan.workspaceId) {
-    const [ws] = await db.select({ defaultLanguage: workspaces.defaultLanguage })
+    const [ws] = await db.select({
+      defaultLanguage: workspaces.defaultLanguage,
+      aiAnalysisEnabled: workspaces.aiAnalysisEnabled,
+      aiScanningEnabled: workspaces.aiScanningEnabled,
+      aiTriageEnabled: workspaces.aiTriageEnabled,
+    })
       .from(workspaces)
       .where(eq(workspaces.id, scan.workspaceId));
-    if (ws?.defaultLanguage) reportLanguage = ws.defaultLanguage;
+    if (ws) {
+      if (ws.defaultLanguage) reportLanguage = ws.defaultLanguage;
+      aiAnalysisEnabled = ws.aiAnalysisEnabled;
+      aiScanningEnabled = ws.aiScanningEnabled;
+      aiTriageEnabled = ws.aiTriageEnabled;
+    }
   }
 
   return {
@@ -144,6 +158,9 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
     profilePath,
     cloneUrl,
     reportLanguage,
+    aiAnalysisEnabled,
+    aiScanningEnabled,
+    aiTriageEnabled,
   };
 }
 

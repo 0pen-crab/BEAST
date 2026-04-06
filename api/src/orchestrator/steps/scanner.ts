@@ -48,6 +48,10 @@ export async function runScanner(ctx: PipelineContext): Promise<{ cost?: number;
 }
 
 export async function runAiResearchStep({ ctx, prev }: StepInput): Promise<AiResearchOutput> {
+  if (!ctx.aiScanningEnabled) {
+    console.log(`[ai-research] AI scanning disabled for workspace ${ctx.workspaceId}, skipping`);
+    return { scanCompleted: false, skipped: true, durationMs: 0 };
+  }
   if (!prev.aiAvailable) {
     return { scanCompleted: false, skipped: true, durationMs: 0 };
   }

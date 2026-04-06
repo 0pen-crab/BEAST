@@ -67,8 +67,10 @@ export interface Finding {
   cwe: number | null;
   cvssScore: number | null;
   tool: string;
+  category: string | null;
   status: string;
   codeSnippet: string | null;
+  secretValue: string | null;
   riskAcceptedReason: string | null;
   fingerprint: string | null;
   duplicateOf: number | null;
@@ -276,7 +278,7 @@ export interface AdminWorkspace {
 
 // ── Tool Configuration ─────────────────────────────────────────
 
-export type ToolCategory = 'secrets' | 'sast' | 'sca' | 'iac';
+export type ToolCategory = 'secrets' | 'sast' | 'sca' | 'iac' | 'pii';
 export type ToolPricing = 'free' | 'free_tier' | 'paid';
 
 export interface CredentialField {

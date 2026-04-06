@@ -24,6 +24,8 @@ import { webhookRoutes } from './routes/webhooks.ts';
 import { memberRoutes } from './routes/members.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { workspaceToolRoutes } from './routes/workspace-tools.ts';
+import { claudeStatusRoutes } from './routes/claude-status.ts';
+import { highlightsRoutes } from './routes/highlights.ts';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { db } from './db/index.ts';
 import { createWorkspaceEvent } from './orchestrator/entities.ts';
@@ -123,6 +125,8 @@ export function buildApp() {
   app.register(memberRoutes, { prefix: '/api' });
   app.register(adminRoutes, { prefix: '/api' });
   app.register(workspaceToolRoutes, { prefix: '/api' });
+  app.register(claudeStatusRoutes, { prefix: '/api' });
+  app.register(highlightsRoutes, { prefix: '/api' });
 
   app.get('/api/provider-secrets', async (request) => {
     // Public metadata, but requires authentication
