@@ -16,6 +16,8 @@ import {
   useUpdateWorkspaceTools,
   useValidateToken,
   useDisconnectTool,
+  useClaudeStatus,
+  useUpdateAiSettings,
 } from '@/api/hooks';
 import { apiFetch } from '@/api/client';
 import { SourceForm } from '@/components/sources/source-form';
@@ -55,7 +57,7 @@ export function SettingsPage() {
 
   return (
     <ErrorBoundary>
-      <div className="settings-main space-y-6">
+      <div className="space-y-6">
         <div>
           <h1 className="beast-page-title">{t('settings.title')}</h1>
           <p className="beast-page-subtitle">
@@ -63,16 +65,26 @@ export function SettingsPage() {
           </p>
         </div>
 
-        <EditSection
-          workspace={currentWorkspace}
-          onUpdated={refetchWorkspaces}
-          readOnly={!canEdit}
-        />
+        <div className="settings-main">
+          <EditSection
+            workspace={currentWorkspace}
+            onUpdated={refetchWorkspaces}
+            readOnly={!canEdit}
+          />
+        </div>
 
         {canEdit && (
-          <div ref={sourcesRef} id="sources" className={highlightSources ? 'beast-highlight-pulse' : ''}>
+          <div ref={sourcesRef} id="sources" className={cn('settings-main', highlightSources && 'beast-highlight-pulse')}>
             <SourcesSection workspaceId={currentWorkspace.id} />
           </div>
+        )}
+
+        {/* AI Capabilities */}
+        {canEdit && (
+          <AiCapabilitiesSection
+            workspace={currentWorkspace}
+            onUpdated={refetchWorkspaces}
+          />
         )}
 
         {canEdit && <SecurityToolsSection workspaceId={currentWorkspace.id} />}
@@ -224,6 +236,93 @@ function EditSection({
   );
 }
 
+// ── AI Capabilities Section ──────────────────────────────────
+
+const AI_TECHNIQUES = [
+  { key: 'ai_analysis_enabled' as const, wsField: 'aiAnalysisEnabled' as const, titleKey: 'settings.aiAnalysis', descKey: 'settings.aiAnalysisDesc' },
+  { key: 'ai_scanning_enabled' as const, wsField: 'aiScanningEnabled' as const, titleKey: 'settings.aiScanning', descKey: 'settings.aiScanningDesc' },
+  { key: 'ai_triage_enabled' as const, wsField: 'aiTriageEnabled' as const, titleKey: 'settings.aiTriage', descKey: 'settings.aiTriageDesc' },
+] as const;
+
+function AiCapabilitiesSection({
+  workspace,
+  onUpdated,
+}: {
+  workspace: Workspace;
+  onUpdated: () => void;
+}) {
+  const { t } = useTranslation();
+  const { data: claudeStatus, isLoading: claudeLoading } = useClaudeStatus();
+  const updateAi = useUpdateAiSettings(workspace.id);
+
+  function handleToggle(key: typeof AI_TECHNIQUES[number]['key'], enabled: boolean) {
+    updateAi.mutate({ [key]: enabled }, { onSuccess: onUpdated });
+  }
+
+  const status = claudeStatus?.status ?? 'unreachable';
+  const dotClass = status === 'authenticated' ? 'beast-claude-status-dot-ok'
+    : status === 'not_authenticated' ? 'beast-claude-status-dot-warn'
+    : 'beast-claude-status-dot-error';
+  const valueClass = status === 'authenticated' ? 'beast-claude-status-value-ok'
+    : status === 'not_authenticated' ? 'beast-claude-status-value-warn'
+    : 'beast-claude-status-value-error';
+  const statusLabel = status === 'authenticated' ? t('settings.claudeAuthenticated')
+    : status === 'not_authenticated' ? t('settings.claudeNotAuthenticated')
+    : t('settings.claudeUnreachable');
+
+  return (
+    <div className="beast-card">
+      <div className="beast-ai-section-header">
+        <div>
+          <h2 className="beast-card-title">{t('settings.aiCapabilities')}</h2>
+          <p className="beast-card-subtitle">{t('settings.aiCapabilitiesSubtitle')}</p>
+        </div>
+        <div className="beast-claude-status-inline">
+          <div className={cn('beast-claude-status-dot', dotClass)} />
+          <span className="beast-claude-status-label">{t('settings.claudeStatus')}:</span>
+          <span className={cn('beast-claude-status-value', valueClass)}>
+            {claudeLoading ? '...' : statusLabel}
+          </span>
+        </div>
+      </div>
+
+      {!claudeLoading && status !== 'authenticated' && (
+        <div className="beast-claude-status-hint-block">
+          <span
+            dangerouslySetInnerHTML={{
+              __html: status === 'not_authenticated'
+                ? t('settings.claudeAuthHint')
+                : t('settings.claudeUnreachableHint'),
+            }}
+          />
+        </div>
+      )}
+
+      <div className="settings-ai-row">
+        {AI_TECHNIQUES.map((tech) => {
+          const enabled = workspace[tech.wsField];
+          return (
+            <div key={tech.key} className="beast-ai-card">
+              <div className="beast-ai-card-header">
+                <h3 className="beast-ai-card-title">{t(tech.titleKey)}</h3>
+                <label className="beast-toggle-label">
+                  <input
+                    type="checkbox"
+                    className="beast-toggle"
+                    checked={enabled}
+                    onChange={(e) => handleToggle(tech.key, e.target.checked)}
+                  />
+                </label>
+              </div>
+              <p className="beast-ai-card-desc">{t(tech.descKey)}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SecurityToolsSection({ workspaceId }: { workspaceId: number }) {
   const { t } = useTranslation();
   const { data: registry = [] } = useToolRegistry();
@@ -251,7 +350,7 @@ function SecurityToolsSection({ workspaceId }: { workspaceId: number }) {
   >({});
 
   // Group tools by category
-  const categories = ['secrets', 'sast', 'sca', 'iac'] as const;
+  const categories = ['secrets', 'sast', 'sca', 'iac', 'pii'] as const;
   const grouped = categories.map(cat => ({
     category: cat,
     tools: registry.filter((tool: ToolDefinition) => tool.category === cat),
@@ -545,7 +644,7 @@ function SourceCard({
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 flex-shrink" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={onSync}
             disabled={syncing}

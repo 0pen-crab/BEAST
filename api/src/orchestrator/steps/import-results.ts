@@ -4,7 +4,7 @@ import { execSync } from 'child_process';
 import { eq } from 'drizzle-orm';
 import { createTest, upsertFinding, updateTestFindingsCount, addScanFile, createWorkspaceEvent } from '../entities.ts';
 import { ensureWorkspace, ensureTeam, ensureRepository } from '../entities.ts';
-import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy, type ParsedFinding } from './parsers.ts';
+import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy, parseBearer, type ParsedFinding } from './parsers.ts';
 import { db } from '../../db/index.ts';
 import { scans, scanEvents, repositories } from '../../db/schema.ts';
 import { ingestContributors, findOrCreateContributor, type IngestContributor, type IngestAssessment } from '../../routes/contributors.ts';
@@ -26,6 +26,28 @@ export interface ImportSummary {
   imports: Array<{ key: string; testId?: number; findingsCount?: number; error?: string }>;
 }
 
+// ── Tool → category mapping ─────────────────────────────────────
+
+export const TOOL_CATEGORY_MAP: Record<string, string> = {
+  'beast': 'sast',
+  'gitleaks': 'secrets',
+  'trufflehog': 'secrets',
+  'trivy-secrets': 'secrets',
+  'trivy-sca': 'sca',
+  'trivy-iac': 'iac',
+  'jfrog': 'sca',
+  'semgrep': 'sast',
+  'osv-scanner': 'sca',
+  'checkov': 'iac',
+  'gitguardian': 'secrets',
+  'snyk-sca': 'sca',
+  'snyk-code': 'sast',
+  'snyk-iac': 'iac',
+  'bearer': 'pii',
+  'presidio': 'pii',
+  'semgrep-pii': 'pii',
+};
+
 // ── Tool key mapping: result file key -> tool name for DB ────────
 
 export const TOOL_MAP: Record<string, string> = {
@@ -43,6 +65,9 @@ export const TOOL_MAP: Record<string, string> = {
   'snyk-sca': 'snyk-sca',
   'snyk-code': 'snyk-code',
   'snyk-iac': 'snyk-iac',
+  'bearer': 'bearer',
+  'presidio': 'presidio',
+  'semgrep-pii': 'semgrep-pii',
 };
 
 const RESULT_SPECS: [string, string, string, string][] = [
@@ -60,6 +85,9 @@ const RESULT_SPECS: [string, string, string, string][] = [
   ['snyk-sca', 'snyk-sca-results.sarif', 'SARIF', 'Snyk SCA'],
   ['snyk-code', 'snyk-code-results.sarif', 'SARIF', 'Snyk Code'],
   ['snyk-iac', 'snyk-iac-results.sarif', 'SARIF', 'Snyk IaC'],
+  ['bearer', 'bearer-results.json', 'Bearer Scan', 'Bearer PII'],
+  ['presidio', 'presidio-results.sarif', 'SARIF', 'Presidio PII'],
+  ['semgrep-pii', 'semgrep-pii-results.sarif', 'SARIF', 'Semgrep PII'],
   ['git-stats', 'git-contributor-stats.json', '_stats', ''],
 ];
 
@@ -420,6 +448,7 @@ export async function deduplicateAssessments(
 
 export async function readResults(ctx: { resultsDir: string }): Promise<ResultFile[]> {
   const results: ResultFile[] = [];
+  console.log(`[import] readResults: scanning ${ctx.resultsDir} for ${RESULT_SPECS.length} result specs`);
 
   for (const [key, filename, scanType, testTitle] of RESULT_SPECS) {
     const filePath = path.join(ctx.resultsDir, filename);
@@ -436,12 +465,15 @@ export async function readResults(ctx: { resultsDir: string }): Promise<ResultFi
         });
       }
     } catch (err: any) {
-      if (err?.code !== 'ENOENT') {
+      if (err?.code === 'ENOENT') {
+        // File not found — normal for tools that didn't run
+      } else {
         console.error(`[import] Failed to read result file ${filePath}:`, err instanceof Error ? err.message : err);
       }
     }
   }
 
+  console.log(`[import] readResults: found ${results.length} files: [${results.map(r => r.key).join(', ')}]`);
   return results;
 }
 
@@ -523,7 +555,12 @@ export async function importToDatabase(
         case 'snyk-sca':
         case 'snyk-code':
         case 'snyk-iac':
+        case 'presidio':
+        case 'semgrep-pii':
           parsed = parseSarif(content);
+          break;
+        case 'bearer':
+          parsed = parseBearer(content);
           break;
         case 'gitleaks':
           parsed = parseGitleaks(content);
@@ -540,16 +577,21 @@ export async function importToDatabase(
           parsed = [];
       }
 
+      // Resolve category from tool key
+      const category = TOOL_CATEGORY_MAP[tool];
+
       // Insert findings (continue on individual failures)
       let importedCount = 0;
       for (const f of parsed) {
         try {
           const codeSnippet = repoPath ? extractCodeSnippet(repoPath, f.filePath ?? '', f.line) : undefined;
+          // PII findings are always Info severity
+          const severity = category === 'pii' ? 'Info' : f.severity;
           await upsertFinding({
             testId: test.id,
             repositoryId,
             title: f.title,
-            severity: f.severity,
+            severity,
             description: f.description,
             filePath: f.filePath,
             line: f.line ?? undefined,
@@ -557,7 +599,9 @@ export async function importToDatabase(
             cwe: f.cwe ?? undefined,
             cvssScore: f.cvssScore ?? undefined,
             tool,
+            category,
             codeSnippet,
+            secretValue: f.secretValue ?? undefined,
           });
           importedCount++;
         } catch (err) {

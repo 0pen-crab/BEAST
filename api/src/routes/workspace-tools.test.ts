@@ -63,7 +63,7 @@ describe('GET /tools/registry', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(Array.isArray(body)).toBe(true);
-    expect(body.length).toBe(13);
+    expect(body.length).toBe(16);
     expect(body[0]).toHaveProperty('key');
     expect(body[0]).toHaveProperty('displayName');
   });

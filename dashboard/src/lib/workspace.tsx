@@ -16,6 +16,9 @@ export interface Workspace {
   name: string;
   description: string | null;
   defaultLanguage: string;
+  aiAnalysisEnabled: boolean;
+  aiScanningEnabled: boolean;
+  aiTriageEnabled: boolean;
   createdAt: string;
 }
 

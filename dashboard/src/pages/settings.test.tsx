@@ -51,11 +51,13 @@ vi.mock('@/api/hooks', () => ({
   useUpdateWorkspaceTools: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useValidateToken: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useDisconnectTool: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useClaudeStatus: vi.fn(() => ({ data: { status: 'authenticated' }, isLoading: false })),
+  useUpdateAiSettings: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 vi.mock('@/lib/workspace', () => ({
   useWorkspace: vi.fn(() => ({
-    currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', createdAt: '2026-01-01' },
+    currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, createdAt: '2026-01-01' },
     workspaces: [{ id: 1, name: 'Test Workspace' }],
     switchWorkspace: vi.fn(),
     isLoading: false,
@@ -70,7 +72,7 @@ const { canWrite } = await import('@/lib/permissions');
 describe('SettingsPage', () => {
   beforeEach(() => {
     vi.mocked(useWorkspace).mockReturnValue({
-      currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', createdAt: '2026-01-01' },
+      currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, createdAt: '2026-01-01' },
       workspaces: [{ id: 1, name: 'Test Workspace' }],
       switchWorkspace: vi.fn(),
       isLoading: false,
@@ -228,5 +230,77 @@ describe('SettingsPage', () => {
     renderWithProviders(<SettingsPage />);
 
     expect(screen.queryByText('settings.securityTools')).not.toBeInTheDocument();
+  });
+
+  // ── AI Capabilities Section ──
+
+  it('renders three AI technique cards', () => {
+    renderWithProviders(<SettingsPage />);
+
+    expect(screen.getByText('settings.aiAnalysis')).toBeInTheDocument();
+    expect(screen.getByText('settings.aiScanning')).toBeInTheDocument();
+    expect(screen.getByText('settings.aiTriage')).toBeInTheDocument();
+  });
+
+  it('renders AI technique descriptions', () => {
+    renderWithProviders(<SettingsPage />);
+
+    expect(screen.getByText('settings.aiAnalysisDesc')).toBeInTheDocument();
+    expect(screen.getByText('settings.aiScanningDesc')).toBeInTheDocument();
+    expect(screen.getByText('settings.aiTriageDesc')).toBeInTheDocument();
+  });
+
+  it('shows Claude status indicator', () => {
+    renderWithProviders(<SettingsPage />);
+
+    expect(screen.getByText('settings.claudeStatus:')).toBeInTheDocument();
+    expect(screen.getByText('settings.claudeAuthenticated')).toBeInTheDocument();
+  });
+
+  it('shows not authenticated status with hint', async () => {
+    const { useClaudeStatus } = await import('@/api/hooks');
+    vi.mocked(useClaudeStatus).mockReturnValue({
+      data: { status: 'not_authenticated' },
+      isLoading: false,
+    } as any);
+
+    renderWithProviders(<SettingsPage />);
+
+    expect(screen.getByText('settings.claudeNotAuthenticated')).toBeInTheDocument();
+  });
+
+  it('shows toggle switches for each AI technique', () => {
+    renderWithProviders(<SettingsPage />);
+
+    const toggles = document.querySelectorAll('.beast-toggle');
+    // At least 3 toggles for the AI techniques (there may be more from tool cards)
+    expect(toggles.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('AI section hidden for non-admin users', () => {
+    vi.mocked(canWrite).mockReturnValue(false);
+
+    renderWithProviders(<SettingsPage />);
+
+    expect(screen.queryByText('settings.aiAnalysis')).not.toBeInTheDocument();
+  });
+
+  it('calls updateAiSettings when toggling AI feature', async () => {
+    const mockMutate = vi.fn();
+    const { useUpdateAiSettings } = await import('@/api/hooks');
+    vi.mocked(useUpdateAiSettings).mockReturnValue({ mutate: mockMutate, isPending: false } as any);
+
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    // Find the first toggle (AI Analysis) and click it
+    const toggles = document.querySelectorAll('.beast-ai-card .beast-toggle');
+    expect(toggles.length).toBe(3);
+    await user.click(toggles[0]);
+
+    expect(mockMutate).toHaveBeenCalledWith(
+      { ai_analysis_enabled: false },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 });

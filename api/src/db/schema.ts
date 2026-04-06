@@ -27,6 +27,9 @@ export const workspaces = pgTable('workspaces', {
   name: varchar('name', { length: 256 }).unique().notNull(),
   description: text('description'),
   defaultLanguage: varchar('default_language', { length: 10 }).default('en'),
+  aiAnalysisEnabled: boolean('ai_analysis_enabled').notNull().default(true),
+  aiScanningEnabled: boolean('ai_scanning_enabled').notNull().default(true),
+  aiTriageEnabled: boolean('ai_triage_enabled').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 });
 
@@ -304,9 +307,11 @@ export const findings = pgTable('findings', {
   cwe: integer('cwe'),
   cvssScore: real('cvss_score'),
   tool: varchar('tool', { length: 64 }).notNull(),
+  category: varchar('category', { length: 32 }),
   status: varchar('status', { length: 32 }).default('open'),
   riskAcceptedReason: text('risk_accepted_reason'),
   codeSnippet: text('code_snippet'),
+  secretValue: text('secret_value'),
   fingerprint: varchar('fingerprint', { length: 128 }),
   duplicateOf: integer('duplicate_of').references((): any => findings.id),
   contributorId: integer('contributor_id').references(() => contributors.id, { onDelete: 'set null' }),
@@ -319,6 +324,7 @@ export const findings = pgTable('findings', {
   index('idx_findings_severity').on(table.severity),
   index('idx_findings_status').on(table.status),
   index('idx_findings_contributor_id').on(table.contributorId),
+  index('idx_findings_category').on(table.category),
 ]);
 
 // ── 14. finding_notes ───────────────────────────────────────

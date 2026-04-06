@@ -51,6 +51,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     profilePath: '/tmp/profile.md',
     cloneUrl: 'https://example.com/repo1.git',
     reportLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
     ...overrides,
   } as any;
 }

@@ -165,6 +165,8 @@ body {
   overflow: visible;
 }
 
+/* Remove max-width constraint when using new two-column layout */
+
 .settings-tools-row {
   display: flex;
   gap: 24px;
@@ -180,6 +182,115 @@ body {
   flex-shrink: 0;
   align-self: stretch;
 }
+
+/* ── Settings two-column row ── */
+.settings-two-col {
+  display: grid;
+  grid-template-columns: 5fr 7fr;
+  gap: 24px;
+  align-items: start;
+  max-width: 960px;
+}
+.settings-two-col > * { min-width: 0; }
+
+/* ── AI capabilities row (inside beast-card) ── */
+.settings-ai-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+.settings-ai-row > * { min-width: 0; }
+
+/* ── AI technique card (nested inside beast-card) ── */
+.beast-ai-card {
+  background: var(--th-card, var(--th-bg));
+  border: 1px solid var(--th-border);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.beast-ai-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.beast-ai-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--th-text);
+}
+
+.beast-ai-card-desc {
+  font-size: 13px;
+  color: var(--th-text-muted);
+  line-height: 1.5;
+}
+
+
+/* ── AI section header (title + status inline) ── */
+.beast-ai-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+/* ── Claude status indicator (inline in header) ── */
+.beast-claude-status-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.beast-claude-status-hint-block {
+  font-size: 12px;
+  color: var(--th-text-muted);
+  margin-bottom: 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--th-border);
+  background: rgba(250, 204, 21, 0.04);
+}
+
+.beast-claude-status-hint-block code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 6px;
+  font-family: var(--th-font-mono, monospace);
+  font-size: 12px;
+  color: var(--th-text-secondary);
+}
+
+.beast-claude-status-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.beast-claude-status-dot-ok { background: #059669; }
+.beast-claude-status-dot-warn { background: #facc15; }
+.beast-claude-status-dot-error { background: #f87171; }
+
+.beast-claude-status-label {
+  font-size: 13px;
+  color: var(--th-text-secondary);
+  font-weight: 500;
+}
+
+.beast-claude-status-value {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.beast-claude-status-value-ok { color: #059669; }
+.beast-claude-status-value-warn { color: #facc15; }
+.beast-claude-status-value-error { color: #f87171; }
+
 
 /* ── Cards / Sections ── */
 .beast-card {
@@ -763,23 +874,138 @@ body {
   gap: 8px;
 }
 
+/* ── Export modal ── */
+.beast-export-modal {
+  max-width: 780px;
+  padding: 0;
+}
+
+.beast-export-modal .beast-modal-actions {
+  padding: 16px 28px;
+  border-top: 1px solid var(--th-border);
+}
+
+.beast-export-subtitle {
+  font-size: 13px;
+  color: var(--th-text-secondary);
+  margin-top: 4px;
+}
+
+.beast-export-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.beast-export-left {
+  padding: 0 28px 20px;
+  border-right: 1px solid var(--th-border);
+}
+
+.beast-export-right {
+  padding: 0 28px 20px;
+}
+
+.beast-export-col-header {
+  padding-top: 28px;
+  margin-bottom: 20px;
+}
+
+.beast-export-col-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--th-text);
+}
+
+.beast-export-tools-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .beast-export-section {
-  margin-top: 16px;
+  margin-top: 20px;
+}
+
+.beast-export-section:first-child { margin-top: 0; }
+
+.beast-export-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.beast-export-section-header .beast-export-section-title {
+  margin-bottom: 0;
 }
 
 .beast-export-section-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--th-text-muted);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
+.beast-export-toggle-all {
+  font-size: 11px;
+  color: var(--th-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.beast-export-toggle-all:hover { color: var(--th-text); }
+
+/* Format radio cards */
+.beast-export-format-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.beast-export-format-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--th-border);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.beast-export-format-option:hover { border-color: var(--th-text-muted); }
+.beast-export-format-option.is-active { border-color: var(--beast-red); }
+
+.beast-export-format-option input { display: none; }
+
+.beast-export-format-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--th-text);
+}
+
+.beast-export-format-desc {
+  font-size: 11px;
+  color: var(--th-text-muted);
+}
+
+/* Checkbox rows */
 .beast-export-checks {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 20px;
+  gap: 8px 20px;
+}
+
+.beast-export-checks-col {
+  flex-direction: column;
+  gap: 6px;
 }
 
 .beast-export-check {
@@ -789,6 +1015,67 @@ body {
   font-size: 13px;
   cursor: pointer;
   color: var(--th-text);
+}
+
+/* Tool categories */
+.beast-export-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.beast-export-cat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.beast-export-cat-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.beast-export-cat-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.beast-export-tool-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--th-text);
+}
+
+.beast-export-tool-item.is-disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.beast-export-tool-name { flex: 1; }
+
+.beast-export-count {
+  font-size: 11px;
+  color: var(--th-text-muted);
+  background: var(--th-border);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: center;
+}
+
+.beast-export-empty {
+  font-size: 13px;
+  color: var(--th-text-muted);
+  font-style: italic;
+  margin-top: 8px;
 }
 
 /* ── Empty states ── */
@@ -1023,6 +1310,91 @@ body {
 
 /* ── Legend label (fixed width for alignment) ── */
 .beast-legend-label { width: 64px; }
+
+/* ── Security Brief button group ── */
+.beast-brief-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.beast-btn-brief {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid var(--th-border);
+  background: transparent;
+  color: var(--th-text);
+}
+
+.beast-btn-brief:hover:not(:disabled) {
+  border-color: var(--color-beast-red);
+  color: var(--color-beast-red);
+}
+
+.beast-btn-brief:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.beast-btn-brief-processing {
+  border-color: var(--color-beast-red);
+  color: var(--color-beast-red);
+  cursor: wait;
+}
+
+.beast-brief-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: beast-spin 0.7s linear infinite;
+}
+
+@keyframes beast-spin {
+  to { transform: rotate(360deg); }
+}
+
+.beast-btn-brief-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--th-border);
+  background: transparent;
+  color: var(--th-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.beast-btn-brief-download:hover {
+  border-color: var(--color-beast-red);
+  color: var(--color-beast-red);
+}
+
+.beast-btn-brief-download svg {
+  width: 16px;
+  height: 16px;
+}
+
+.beast-brief-error {
+  color: var(--color-beast-red);
+  font-size: 12px;
+  font-weight: 600;
+}
 
 /* ── Filter input (Cloudflare-style chip bar) ── */
 .beast-chip-filter-wrap { flex: 1; min-width: 0; }
@@ -1263,6 +1635,7 @@ body {
   padding: 12px 16px;
   cursor: pointer;
   transition: background 0.15s;
+  overflow: hidden;
 }
 .beast-source-header:hover { background: var(--th-hover); }
 

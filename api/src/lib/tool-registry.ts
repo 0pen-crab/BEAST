@@ -1,4 +1,4 @@
-export type ToolCategory = 'secrets' | 'sast' | 'sca' | 'iac';
+export type ToolCategory = 'secrets' | 'sast' | 'sca' | 'iac' | 'pii';
 
 export type ToolPricing = 'free' | 'free_tier' | 'paid';
 
@@ -40,6 +40,10 @@ export const TOOL_CATEGORIES: Record<ToolCategory, { label: string; description:
   iac: {
     label: 'Infrastructure as Code (IaC)',
     description: 'Scan Terraform, CloudFormation, Dockerfiles, and Kubernetes manifests for misconfigurations.',
+  },
+  pii: {
+    label: 'Personal Data (PII)',
+    description: 'Detect exposed personal information — names, emails, IP addresses, domains, and other PII in source code.',
   },
 };
 
@@ -234,6 +238,42 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     pricing: 'free_tier',
     runnerKey: 'snyk',
     runnerArgs: { mode: 'iac test' },
+  },
+
+  // ── PII ──
+  {
+    key: 'bearer',
+    displayName: 'Bearer',
+    description: 'Detect sensitive data flows — emails, IPs, names, dates of birth, and more — in source code.',
+    category: 'pii',
+    website: 'https://docs.bearer.com',
+    credentials: [],
+    recommended: true,
+    pricing: 'free',
+    runnerKey: 'bearer',
+  },
+  {
+    key: 'presidio',
+    displayName: 'Presidio',
+    description: 'NLP-powered PII detection — names, phone numbers, credit cards, IBANs, and other personal data.',
+    category: 'pii',
+    website: 'https://microsoft.github.io/presidio',
+    credentials: [],
+    recommended: true,
+    pricing: 'free',
+    runnerKey: 'presidio',
+  },
+  {
+    key: 'semgrep-pii',
+    displayName: 'Semgrep PII',
+    description: 'Semgrep with PII-specific rules for detecting personal data exposure patterns.',
+    category: 'pii',
+    website: 'https://semgrep.dev',
+    credentials: [],
+    recommended: true,
+    pricing: 'free',
+    runnerKey: 'semgrep',
+    runnerArgs: { config: 'p/pii' },
   },
 ];
 

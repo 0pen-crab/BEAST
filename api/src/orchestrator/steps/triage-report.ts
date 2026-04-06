@@ -282,6 +282,10 @@ export async function applyTriageDecisions(
 // ── StepFn wrapper ──────────────────────────────────────────────────
 
 export async function runTriageStep({ ctx, prev }: StepInput): Promise<TriageReportOutput> {
+  if (!ctx.aiTriageEnabled) {
+    console.log(`[triage] AI triage disabled for workspace ${ctx.workspaceId}, skipping`);
+    return { triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0 };
+  }
   if (!prev.aiAvailable) {
     return { triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0 };
   }
