@@ -16,3 +16,4 @@ test-results/
 
 # Git worktrees
 .worktrees/
+.claude/
