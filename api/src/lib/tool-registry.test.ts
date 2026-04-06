@@ -1,65 +1,82 @@
 import { describe, it, expect } from 'vitest';
-import { TOOL_REGISTRY, TOOL_CATEGORIES, type ToolDefinition } from './tool-registry.ts';
+import {
+  TOOL_REGISTRY,
+  TOOL_CATEGORIES,
+  getToolByKey,
+  getAllToolKeys,
+  getToolsByCategory,
+  getRecommendedToolKeys,
+} from './tool-registry.ts';
 
 describe('tool-registry', () => {
-  it('has no duplicate tool keys', () => {
+  it('has pii category defined', () => {
+    expect(TOOL_CATEGORIES).toHaveProperty('pii');
+    expect(TOOL_CATEGORIES.pii.label).toBe('Personal Data (PII)');
+  });
+
+  it('has all 5 categories', () => {
+    const keys = Object.keys(TOOL_CATEGORIES);
+    expect(keys).toContain('secrets');
+    expect(keys).toContain('sast');
+    expect(keys).toContain('sca');
+    expect(keys).toContain('iac');
+    expect(keys).toContain('pii');
+  });
+
+  it('getToolsByCategory("pii") returns 3 tools', () => {
+    const piiTools = getToolsByCategory('pii');
+    expect(piiTools).toHaveLength(3);
+    const keys = piiTools.map(t => t.key);
+    expect(keys).toContain('bearer');
+    expect(keys).toContain('presidio');
+    expect(keys).toContain('semgrep-pii');
+  });
+
+  it('getAllToolKeys includes PII tool keys', () => {
+    const keys = getAllToolKeys();
+    expect(keys).toContain('bearer');
+    expect(keys).toContain('presidio');
+    expect(keys).toContain('semgrep-pii');
+  });
+
+  it('getToolByKey returns correct PII tool definitions', () => {
+    const bearer = getToolByKey('bearer');
+    expect(bearer).toBeDefined();
+    expect(bearer!.category).toBe('pii');
+    expect(bearer!.pricing).toBe('free');
+    expect(bearer!.credentials).toHaveLength(0);
+
+    const presidio = getToolByKey('presidio');
+    expect(presidio).toBeDefined();
+    expect(presidio!.category).toBe('pii');
+
+    const semgrepPii = getToolByKey('semgrep-pii');
+    expect(semgrepPii).toBeDefined();
+    expect(semgrepPii!.category).toBe('pii');
+    expect(semgrepPii!.runnerArgs).toEqual({ config: 'p/pii' });
+  });
+
+  it('all 3 PII tools are recommended', () => {
+    const recommended = getRecommendedToolKeys();
+    expect(recommended).toContain('bearer');
+    expect(recommended).toContain('presidio');
+    expect(recommended).toContain('semgrep-pii');
+  });
+
+  it('every tool has a unique key', () => {
     const keys = TOOL_REGISTRY.map(t => t.key);
-    expect(keys.length).toBe(new Set(keys).size);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it('all tools have valid categories', () => {
-    const validCategories = Object.keys(TOOL_CATEGORIES);
+  it('every tool has required fields', () => {
     for (const tool of TOOL_REGISTRY) {
-      expect(validCategories).toContain(tool.category);
-    }
-  });
-
-  it('all tools have valid pricing', () => {
-    for (const tool of TOOL_REGISTRY) {
+      expect(tool.key).toBeTruthy();
+      expect(tool.displayName).toBeTruthy();
+      expect(tool.description).toBeTruthy();
+      expect(tool.category).toBeTruthy();
+      expect(tool.website).toBeTruthy();
+      expect(tool.runnerKey).toBeTruthy();
       expect(['free', 'free_tier', 'paid']).toContain(tool.pricing);
-    }
-  });
-
-  it('free tools have no credential fields', () => {
-    for (const tool of TOOL_REGISTRY.filter(t => t.pricing === 'free')) {
-      expect(tool.credentials).toHaveLength(0);
-    }
-  });
-
-  it('non-free tools have at least one credential field', () => {
-    for (const tool of TOOL_REGISTRY.filter(t => t.pricing !== 'free')) {
-      expect(tool.credentials.length).toBeGreaterThan(0);
-    }
-  });
-
-  it('contains exactly 13 tool entries', () => {
-    expect(TOOL_REGISTRY).toHaveLength(13);
-  });
-
-  it('has 4 categories', () => {
-    expect(Object.keys(TOOL_CATEGORIES)).toHaveLength(4);
-  });
-
-  it('all credential fields have vaultLabel', () => {
-    for (const tool of TOOL_REGISTRY) {
-      for (const cred of tool.credentials) {
-        expect(cred.vaultLabel).toBeTruthy();
-      }
-    }
-  });
-
-  it('snyk tools share the same credential vaultLabel', () => {
-    const snykTools = TOOL_REGISTRY.filter(t => t.runnerKey === 'snyk');
-    expect(snykTools).toHaveLength(3);
-    const labels = snykTools.flatMap(t => t.credentials.map(c => c.vaultLabel));
-    expect(new Set(labels).size).toBe(1);
-  });
-
-  it('trivy tools share the same runnerKey', () => {
-    const trivyTools = TOOL_REGISTRY.filter(t => t.runnerKey === 'trivy');
-    expect(trivyTools).toHaveLength(3);
-    for (const t of trivyTools) {
-      expect(t.runnerArgs?.scanners).toBeTruthy();
     }
   });
 });

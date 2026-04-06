@@ -7,6 +7,7 @@ export interface ParsedFinding {
   vulnIdFromTool: string;
   cwe: number | null;
   cvssScore: number | null;
+  secretValue: string | null;
 }
 
 // ── SARIF Parser (BEAST code-analysis + JFrog Xray) ────────────
@@ -42,12 +43,13 @@ export function parseSarif(content: string): ParsedFinding[] {
       const locations = (result.locations ?? []) as Array<{
         physicalLocation?: {
           artifactLocation?: { uri?: string };
-          region?: { startLine?: number };
+          region?: { startLine?: number; snippet?: { text?: string } };
         };
       }>;
       const loc = locations[0]?.physicalLocation;
       const filePath = loc?.artifactLocation?.uri ?? '';
       const line = loc?.region?.startLine ?? null;
+      const snippet = loc?.region?.snippet?.text ?? null;
 
       // Severity: check properties.severity first, then level
       const props = (result.properties ?? {}) as Record<string, string>;
@@ -69,6 +71,9 @@ export function parseSarif(content: string): ParsedFinding[] {
         ?? '';
       const description = message || ruleDesc;
 
+      // Extract matched value: properties.matchedText (presidio) or region snippet
+      const matchedText = props.matchedText || snippet || null;
+
       findings.push({
         title: ruleDesc || message || ruleId,
         severity,
@@ -78,6 +83,7 @@ export function parseSarif(content: string): ParsedFinding[] {
         vulnIdFromTool: ruleId,
         cwe,
         cvssScore: null,
+        secretValue: matchedText,
       });
     }
   }
@@ -107,6 +113,7 @@ export function parseGitleaks(content: string): ParsedFinding[] {
       vulnIdFromTool: (entry.RuleID as string) || '',
       cwe: 798,
       cvssScore: null,
+      secretValue: (entry.Secret as string) || (entry.Match as string) || null,
     });
   }
 
@@ -135,6 +142,7 @@ export function parseTrufflehog(content: string): ParsedFinding[] {
     const meta = entry.SourceMetadata as { Data?: { Filesystem?: { file?: string; line?: number } } };
     const filePath = meta?.Data?.Filesystem?.file ?? '';
     const lineNum = meta?.Data?.Filesystem?.line ?? null;
+    const rawSecret = (entry.Raw as string) || (entry.RawV2 as string) || null;
 
     findings.push({
       title: `${verified ? 'Verified secret' : 'Potential secret'}: ${detector}`,
@@ -145,6 +153,7 @@ export function parseTrufflehog(content: string): ParsedFinding[] {
       vulnIdFromTool: `trufflehog-${detector}`,
       cwe: 798,
       cvssScore: null,
+      secretValue: rawSecret,
     });
   }
 
@@ -186,6 +195,7 @@ export function parseTrivy(content: string): ParsedFinding[] {
         vulnIdFromTool: (vuln.VulnerabilityID as string) || '',
         cwe: null,
         cvssScore: (vuln.CVSS as { nvd?: { V3Score?: number } })?.nvd?.V3Score ?? null,
+        secretValue: null,
       });
     }
 
@@ -200,6 +210,7 @@ export function parseTrivy(content: string): ParsedFinding[] {
         vulnIdFromTool: (secret.RuleID as string) || '',
         cwe: 798,
         cvssScore: null,
+        secretValue: (secret.Match as string) || null,
       });
     }
 
@@ -214,7 +225,62 @@ export function parseTrivy(content: string): ParsedFinding[] {
         vulnIdFromTool: (misconf.ID as string) || '',
         cwe: null,
         cvssScore: null,
+        secretValue: null,
       });
+    }
+  }
+
+  return findings;
+}
+
+// ── Bearer Parser (dataflow JSON format) ───────────────────────
+
+export function parseBearer(content: string): ParsedFinding[] {
+  const findings: ParsedFinding[] = [];
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(content);
+  } catch {
+    return findings;
+  }
+
+  // Dataflow report: { data_types: [...], risks: [...] }
+  const dataTypes = (data.data_types ?? []) as Array<{
+    name?: string;
+    category_name?: string;
+    category_groups?: string[];
+    detectors?: Array<{
+      name?: string;
+      locations?: Array<{
+        filename?: string;
+        start_line_number?: number;
+        field_name?: string;
+        object_name?: string;
+        subject_name?: string;
+      }>;
+    }>;
+  }>;
+
+  for (const dt of dataTypes) {
+    const typeName = dt.name || 'Unknown';
+    const category = dt.category_name || '';
+    const groups = (dt.category_groups ?? []).join(', ');
+
+    for (const detector of dt.detectors ?? []) {
+      for (const loc of detector.locations ?? []) {
+        const fieldInfo = [loc.object_name, loc.field_name].filter(Boolean).join('.');
+        findings.push({
+          title: `${typeName} in ${fieldInfo || loc.filename || 'unknown'}`,
+          severity: 'Info',
+          description: `Bearer detected ${typeName} (${category}) — ${groups}`,
+          filePath: loc.filename || '',
+          line: loc.start_line_number ?? null,
+          vulnIdFromTool: `bearer-datatype-${typeName.toLowerCase().replace(/\s+/g, '-')}`,
+          cwe: null,
+          cvssScore: null,
+          secretValue: fieldInfo || null,
+        });
+      }
     }
   }
 

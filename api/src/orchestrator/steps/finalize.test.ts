@@ -128,6 +128,9 @@ describe('ingestContributorStats', () => {
     profilePath: '/tmp/profile.md',
     cloneUrl: 'https://example.com/repo.git',
     reportLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
     ...overrides,
   } as PipelineContext);
 

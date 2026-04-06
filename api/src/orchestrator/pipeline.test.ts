@@ -369,7 +369,7 @@ describe('runPipeline', () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockDb.where.mockImplementation(() => {
-      return Promise.resolve([{ status: 'running', defaultLanguage: 'uk' }]);
+      return Promise.resolve([{ status: 'running', defaultLanguage: 'uk', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true }]);
     });
 
     await runPipeline(makeScan({ workspaceId: 5 }));
@@ -464,10 +464,37 @@ describe('buildContext', () => {
   it('resolves workspace language', async () => {
     const { buildContext } = await import('./pipeline.ts');
 
-    mockDb.where.mockResolvedValueOnce([{ defaultLanguage: 'uk' }]);
+    mockDb.where.mockResolvedValueOnce([{ defaultLanguage: 'uk', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true }]);
 
     const ctx = await buildContext(makeScan({ workspaceId: 5 }));
 
     expect(ctx.reportLanguage).toBe('uk');
+  });
+
+  it('reads AI feature flags from workspace', async () => {
+    const { buildContext } = await import('./pipeline.ts');
+
+    mockDb.where.mockResolvedValueOnce([{
+      defaultLanguage: 'en',
+      aiAnalysisEnabled: false,
+      aiScanningEnabled: false,
+      aiTriageEnabled: true,
+    }]);
+
+    const ctx = await buildContext(makeScan({ workspaceId: 5 }));
+
+    expect(ctx.aiAnalysisEnabled).toBe(false);
+    expect(ctx.aiScanningEnabled).toBe(false);
+    expect(ctx.aiTriageEnabled).toBe(true);
+  });
+
+  it('defaults AI flags to true when no workspace', async () => {
+    const { buildContext } = await import('./pipeline.ts');
+
+    const ctx = await buildContext(makeScan({ workspaceId: null }));
+
+    expect(ctx.aiAnalysisEnabled).toBe(true);
+    expect(ctx.aiScanningEnabled).toBe(true);
+    expect(ctx.aiTriageEnabled).toBe(true);
   });
 });

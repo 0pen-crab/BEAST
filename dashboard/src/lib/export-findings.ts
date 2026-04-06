@@ -4,7 +4,7 @@ import type { Finding } from '@/api/types';
 export type ExportFinding = Pick<
   Finding,
   'id' | 'title' | 'severity' | 'tool' | 'status' | 'description' |
-  'filePath' | 'line' | 'cwe' | 'cvssScore' | 'codeSnippet' | 'createdAt'
+  'filePath' | 'line' | 'cwe' | 'cvssScore' | 'codeSnippet' | 'secretValue' | 'createdAt' | 'repositoryName'
 >;
 
 const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low', 'Info'] as const;
@@ -75,12 +75,53 @@ export function generateFindingsMarkdown(repoName: string, findings: ExportFindi
         lines.push('');
       }
 
+      if (f.secretValue) {
+        lines.push(`**Secret:** \`${f.secretValue}\``);
+        lines.push('');
+      }
+
       lines.push('---');
       lines.push('');
     }
   }
 
   return lines.join('\n');
+}
+
+const CSV_HEADER = 'ID,Repository,Title,Severity,Tool,Status,File,Line,CWE,CVSS,Secret,Description,Created';
+
+/** Escape a value for CSV (RFC 4180). */
+function csvEscape(value: string | number | null | undefined): string {
+  if (value == null) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/** Generate a CSV export of findings. */
+export function generateFindingsCsv(findings: ExportFinding[]): string {
+  const lines: string[] = [CSV_HEADER];
+  for (const f of findings) {
+    const file = f.filePath ? cleanFilePath(f.filePath) : '';
+    lines.push([
+      f.id,
+      csvEscape(f.repositoryName),
+      csvEscape(f.title),
+      f.severity,
+      f.tool,
+      f.status,
+      csvEscape(file),
+      f.line ?? '',
+      f.cwe != null ? `CWE-${f.cwe}` : '',
+      f.cvssScore ?? '',
+      csvEscape(f.secretValue),
+      csvEscape(f.description),
+      f.createdAt,
+    ].join(','));
+  }
+  return lines.join('\n') + '\n';
 }
 
 /** Trigger a blob download in the browser. */

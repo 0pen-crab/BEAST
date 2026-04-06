@@ -9,7 +9,8 @@
     "contributors": "Contributors",
     "teams": "Teams",
     "members": "Members",
-    "settings": "Settings"
+    "settings": "Settings",
+    "export": "Export"
   },
   "brand": {
     "tagline": "Better Application Security Testing"
@@ -185,7 +186,12 @@
     "repository": "Repository",
     "duration": "Duration",
     "completed": "Completed",
-    "findings": "Findings"
+    "findings": "Findings",
+    "securityBrief": "Security Brief",
+    "securityBriefProcessing": "Analyzing...",
+    "securityBriefDownload": "Download Brief",
+    "securityBriefFailed": "Analysis failed",
+    "securityBriefNoFindings": "No open findings to analyze"
   },
   "scans": {
     "title": "Scans",
@@ -521,7 +527,23 @@
     "accessToken": "Access Token",
     "bbUsername": "Bitbucket Username",
     "securityTools": "Security Tools",
-    "securityToolsSubtitle": "Configure which security scanning tools run on your scans"
+    "securityToolsSubtitle": "Configure which security scanning tools run on your scans",
+    "aiCapabilities": "AI Capabilities",
+    "aiCapabilitiesSubtitle": "Configure AI-powered analysis features for your scans",
+    "aiAnalysis": "Repository Profiling",
+    "aiAnalysisDesc": "Generates a comprehensive repository profile — architecture overview, technology stack, contributor assessment, and code quality insights.",
+    "aiScanning": "Vulnerability Research",
+    "aiScanningDesc": "Claude Code scans source code for security vulnerabilities, insecure patterns, and potential exploits using AI-powered reasoning.",
+    "aiTriage": "AI Triage & Reporting",
+    "aiTriageDesc": "Analyzes all findings, prioritizes them by severity and business impact, and generates a consolidated security report.",
+    "claudeStatus": "Claude Code Status",
+    "claudeAuthenticated": "Authenticated",
+    "claudeNotAuthenticated": "Not authenticated",
+    "claudeUnreachable": "Unreachable",
+    "claudeAuthHint": "Run <code>make auth</code> in the project root to authenticate Claude Code.",
+    "claudeUnreachableHint": "The claude-runner container is not responding. Check that it is running.",
+    "enabled": "Enabled",
+    "disabled": "Disabled"
   },
   "pipeline": {
     "clone": "Clone repository",
@@ -585,7 +607,8 @@
       "secrets": "Secrets",
       "sast": "SAST",
       "sca": "SCA",
-      "iac": "IaC"
+      "iac": "IaC",
+      "pii": "Personal Data"
     },
     "badges": {
       "free": "Free & Open Source",

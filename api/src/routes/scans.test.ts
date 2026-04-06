@@ -10,6 +10,16 @@ vi.mock('../middleware/auth.ts', () => ({
   requireRole: () => async () => {},
 }));
 
+vi.mock('../lib/authorize.ts', () => ({
+  authorize: vi.fn(async (request: any) => { request.authorized = true; }),
+  authorizePublic: vi.fn((request: any) => { request.authorized = true; }),
+  authorizeSuperAdmin: vi.fn((request: any) => { request.authorized = true; }),
+  ForbiddenError: class ForbiddenError extends Error {
+    statusCode = 403;
+    constructor(msg = 'Forbidden') { super(msg); }
+  },
+}));
+
 // Mock the orchestrator/db module (scan CRUD helpers)
 const mockCreateScan = vi.fn();
 const mockGetScan = vi.fn();
@@ -29,6 +39,9 @@ beforeAll(async () => {
   app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  app.addHook('preHandler', async (request) => {
+    request.user = { id: 1, username: 'test', role: 'super_admin', displayName: 'Test', mustChangePassword: false };
+  });
   const mod = await import('./scans.ts');
   await app.register(mod.scanRoutes);
   await app.ready();
@@ -292,7 +305,7 @@ describe('POST /scans', () => {
 
 describe('GET /scans/:id', () => {
   it('returns scan by id with steps', async () => {
-    const scan = { id: 'abc-123', status: 'completed', repoName: 'my-repo' };
+    const scan = { id: 'abc-123', status: 'completed', repoName: 'my-repo', workspaceId: 1 };
     mockGetScan.mockResolvedValueOnce(scan);
 
     // Mock scanSteps query: db.select().from(scanSteps).where(...).orderBy(...)
@@ -390,7 +403,7 @@ describe('DELETE /scans/:id', () => {
   });
 
   it('returns 409 when scan is not queued', async () => {
-    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'running' });
+    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'running', workspaceId: 1 });
 
     const res = await app.inject({
       method: 'DELETE',
@@ -402,7 +415,7 @@ describe('DELETE /scans/:id', () => {
   });
 
   it('deletes queued scan successfully', async () => {
-    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'queued' });
+    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'queued', workspaceId: 1 });
     // Mock db.delete(scans).where(...)
     mockDb.delete.mockReturnValue({
       where: vi.fn().mockResolvedValue([]),
@@ -435,7 +448,7 @@ describe('POST /scans/:id/cancel', () => {
   });
 
   it('returns 409 when scan is not active', async () => {
-    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'completed' });
+    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'completed', workspaceId: 1 });
 
     const res = await app.inject({
       method: 'POST',
@@ -447,7 +460,7 @@ describe('POST /scans/:id/cancel', () => {
   });
 
   it('cancels a running scan', async () => {
-    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'running', repositoryId: 1 });
+    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'running', repositoryId: 1, workspaceId: 1 });
     // Mock db.update — called for both scan status and repo status
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
@@ -466,7 +479,7 @@ describe('POST /scans/:id/cancel', () => {
   });
 
   it('cancels a queued scan', async () => {
-    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'queued' });
+    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'queued', workspaceId: 1 });
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([]),

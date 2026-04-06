@@ -162,6 +162,16 @@ export function FindingDetailPage() {
                   </div>
                 </>
               )}
+              {finding.secretValue && (
+                <>
+                  <div className="beast-section-header">
+                    <span className="beast-label beast-label-inline">{t('findings.detail.secretValue', 'Secret Value')}</span>
+                  </div>
+                  <div className="beast-section-pad-sm">
+                    <code className="beast-td-code beast-secret-masked">{finding.secretValue}</code>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Notes card */}

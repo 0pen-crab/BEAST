@@ -37,17 +37,23 @@ export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
           name: z.string().min(1).max(256),
           description: z.string().optional(),
           default_language: z.string().max(10).optional(),
+          ai_analysis_enabled: z.boolean().optional(),
+          ai_scanning_enabled: z.boolean().optional(),
+          ai_triage_enabled: z.boolean().optional(),
         }),
       },
     },
     async (request, reply) => {
       authorizeSuperAdmin(request);
-      const { name, description, default_language } = request.body;
+      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled } = request.body;
       try {
         const [row] = await db.insert(workspaces).values({
           name,
           description: description ?? null,
           defaultLanguage: default_language ?? 'en',
+          aiAnalysisEnabled: ai_analysis_enabled ?? true,
+          aiScanningEnabled: ai_scanning_enabled ?? true,
+          aiTriageEnabled: ai_triage_enabled ?? true,
         }).returning();
         await initDefaultTools(row.id);
         return reply.status(201).send(row);
@@ -71,18 +77,24 @@ export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
           name: z.string().min(1).max(256).optional(),
           description: z.string().optional(),
           default_language: z.string().max(10).optional(),
+          ai_analysis_enabled: z.boolean().optional(),
+          ai_scanning_enabled: z.boolean().optional(),
+          ai_triage_enabled: z.boolean().optional(),
         }),
       },
     },
     async (request, reply) => {
       authorizeSuperAdmin(request);
       const { id } = request.params;
-      const { name, description, default_language } = request.body;
+      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled } = request.body;
 
       const updates: Partial<NewWorkspace> = {};
       if (name !== undefined) updates.name = name;
       if (description !== undefined) updates.description = description;
       if (default_language !== undefined) updates.defaultLanguage = default_language;
+      if (ai_analysis_enabled !== undefined) updates.aiAnalysisEnabled = ai_analysis_enabled;
+      if (ai_scanning_enabled !== undefined) updates.aiScanningEnabled = ai_scanning_enabled;
+      if (ai_triage_enabled !== undefined) updates.aiTriageEnabled = ai_triage_enabled;
 
       const rows = await db.update(workspaces)
         .set(updates)

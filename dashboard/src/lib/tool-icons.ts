@@ -15,6 +15,9 @@ export const TOOL_ICONS: Record<string, string> = {
   'snyk-iac': '/tools/snyk.png',
   'osv-scanner': '/tools/osv.png',
   jfrog: '/tools/jfrog.png',
+  bearer: '/tools/bearer.png',
+  presidio: '/tools/presidio.png',
+  'semgrep-pii': '/tools/semgrep.png',
 };
 
 /** Override colors for tools without icons (fallback letter avatar) */

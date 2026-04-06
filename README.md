@@ -3,6 +3,7 @@
   <img src="docs/beast.png" alt="BEAST" width="400" />
 </p>
 <h3 align="center"><code>BE</code>TTER &nbsp;&nbsp;&nbsp;<code>A</code>PPLICATION &nbsp;&nbsp;&nbsp;<code>S</code>ECURITY &nbsp;&nbsp;&nbsp;<code>T</code>ESTING</h3>
+<p align="center">2026-04-01</p>
 
 <p align="left">
 Run security scans across your entire codebase — regardless of where the code lives. Connect GitHub, GitLab, or Bitbucket organizations, paste a repo URL, upload a zip, or mount a local folder. BEAST combines AI-powered analysis (Claude Code) with industry-standard security tools to find vulnerabilities, secrets, misconfigurations, and dependency risks — then triages findings and generates actionable reports.

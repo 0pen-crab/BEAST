@@ -20,6 +20,16 @@ vi.mock('../middleware/auth.ts', () => ({
   requireRole: () => async () => {},
 }));
 
+vi.mock('../lib/authorize.ts', () => ({
+  authorize: vi.fn(async (request: any) => { request.authorized = true; }),
+  authorizePublic: vi.fn((request: any) => { request.authorized = true; }),
+  authorizeSuperAdmin: vi.fn((request: any) => { request.authorized = true; }),
+  ForbiddenError: class ForbiddenError extends Error {
+    statusCode = 403;
+    constructor(msg = 'Forbidden') { super(msg); }
+  },
+}));
+
 import { db } from '../db/index.ts';
 
 // ── Mock entity functions used by auth & engagement-reports routes ──
@@ -222,25 +232,23 @@ describe('Contract: GET /findings', () => {
     mockDb.select.mockImplementation(() => {
       callCount++;
       if (callCount === 1) {
-        // count query
+        // count query: select({count}).from(findings).where(...)
         return {
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockResolvedValue([{ count: 1 }]),
           }),
         };
       }
-      // data query
-      return {
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockReturnValue({
-              limit: vi.fn().mockReturnValue({
-                offset: vi.fn().mockResolvedValue([finding]),
-              }),
-            }),
-          }),
-        }),
-      };
+      // data query: select({...}).from(findings).innerJoin(tests).innerJoin(scans).leftJoin(contributors).leftJoin(repositories).where(...).orderBy(...).limit(...).offset(...)
+      const chain: any = {};
+      chain.from = vi.fn().mockReturnValue(chain);
+      chain.innerJoin = vi.fn().mockReturnValue(chain);
+      chain.leftJoin = vi.fn().mockReturnValue(chain);
+      chain.where = vi.fn().mockReturnValue(chain);
+      chain.orderBy = vi.fn().mockReturnValue(chain);
+      chain.limit = vi.fn().mockReturnValue(chain);
+      chain.offset = vi.fn().mockResolvedValue([finding]);
+      return chain;
     });
 
     const res = await app.inject({
@@ -439,10 +447,19 @@ describe('Contract: GET /repositories', () => {
 
 describe('Contract: GET /scan-reports/:scanId', () => {
   it('report objects have content and updatedAt (camelCase), not created_at/file_type', async () => {
+    const scanUuid = '00000000-0000-4000-8000-000000000001';
+
+    // Pre-query: db.select({workspaceId}).from(scans).where(eq(scans.id, scanId))
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+      }),
+    });
+
     mockGetScanFiles.mockResolvedValueOnce([
       {
         id: 1,
-        scanId: 'scan-uuid-1',
+        scanId: scanUuid,
         fileName: 'profile.md',
         fileType: 'profile',
         filePath: null,
@@ -451,7 +468,7 @@ describe('Contract: GET /scan-reports/:scanId', () => {
       },
       {
         id: 2,
-        scanId: 'scan-uuid-1',
+        scanId: scanUuid,
         fileName: 'audit.md',
         fileType: 'audit',
         filePath: null,
@@ -462,7 +479,7 @@ describe('Contract: GET /scan-reports/:scanId', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: '/scan-reports/scan-uuid-1',
+      url: `/scan-reports/${scanUuid}`,
     });
 
     expect(res.statusCode).toBe(200);
@@ -631,12 +648,27 @@ describe('Contract: GET /tests?scan_id=X', () => {
       importStatus: 'completed',
       createdAt: '2026-02-20T08:00:00.000Z',
     };
-    mockDb.select.mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockResolvedValue([testRow]),
+    let selectCall = 0;
+    mockDb.select.mockImplementation(() => {
+      selectCall++;
+      if (selectCall === 1) {
+        // Auth pre-query: db.select({workspaceId}).from(scans).where(...).limit(1)
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+            }),
+          }),
+        };
+      }
+      // Main query: db.select().from(tests).where(...).orderBy(...)
+      return {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockResolvedValue([testRow]),
+          }),
         }),
-      }),
+      };
     });
 
     const res = await app.inject({
@@ -683,6 +715,14 @@ describe('Contract: PATCH /findings/:id', () => {
       createdAt: now,
       updatedAt: now,
     };
+
+    // Auth pre-query: db.select({workspaceId}).from(findings).innerJoin(tests).innerJoin(scans).where(...)
+    const authChain: any = {};
+    authChain.from = vi.fn().mockReturnValue(authChain);
+    authChain.innerJoin = vi.fn().mockReturnValue(authChain);
+    authChain.where = vi.fn().mockResolvedValue([{ workspaceId: 1 }]);
+    mockDb.select.mockReturnValueOnce(authChain);
+
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({

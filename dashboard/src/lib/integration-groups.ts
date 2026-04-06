@@ -17,6 +17,7 @@ export const toolCategoryColors: Record<string, string> = {
   sast: 'bg-blue-600',
   sca: 'bg-emerald-600',
   iac: 'bg-amber-600',
+  pii: 'bg-rose-600',
 };
 
 export const snykLabels: Record<string, string> = {

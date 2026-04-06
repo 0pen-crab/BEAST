@@ -10,6 +10,15 @@ vi.mock('../middleware/auth.ts', () => ({
   requireRole: () => async () => {},
 }));
 
+vi.mock('../lib/authorize.ts', () => ({
+  authorize: vi.fn(async (request: any) => { request.authorized = true; }),
+  authorizePublic: vi.fn((request: any) => { request.authorized = true; }),
+  ForbiddenError: class ForbiddenError extends Error {
+    statusCode = 403;
+    constructor(msg = 'Forbidden') { super(msg); }
+  },
+}));
+
 import { db } from '../db/index.ts';
 
 const mockDb = db as any;
@@ -20,6 +29,9 @@ beforeAll(async () => {
   app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  app.addHook('preHandler', async (request) => {
+    request.user = { id: 1, username: 'test', role: 'super_admin', displayName: 'Test', mustChangePassword: false };
+  });
   const mod = await import('./scan-events.ts');
   await app.register(mod.scanEventRoutes);
   await app.ready();
@@ -271,6 +283,15 @@ describe('GET /scan-events/stats', () => {
 describe('PATCH /scan-events/:id', () => {
   it('marks event as resolved', async () => {
     const resolvedEvent = { id: 1, resolved: true, resolvedAt: '2026-03-06T00:00:00Z' };
+
+    // First call: db.select({ workspaceId }).from(scanEvents).where(...) — authorization lookup
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+      }),
+    });
+
+    // Second call: db.update(scanEvents).set(...).where(...).returning()
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
@@ -290,11 +311,10 @@ describe('PATCH /scan-events/:id', () => {
   });
 
   it('returns 404 when event not found', async () => {
-    mockDb.update.mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([]),
-        }),
+    // db.select({ workspaceId }).from(scanEvents).where(...) — returns empty (event not found)
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
       }),
     });
 
