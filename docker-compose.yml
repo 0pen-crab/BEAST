@@ -81,7 +81,7 @@ services:
       - NET_ADMIN
       - NET_RAW
     ports:
-      - "2222:22"
+      - "7722:22"
     environment:
       SCANNER_SSH_PUBKEY: ${SCANNER_SSH_PUBKEY:-}
     volumes:
