@@ -260,12 +260,8 @@ function AiCapabilitiesSection({
   }
 
   const status = claudeStatus?.status ?? 'unreachable';
-  const dotClass = status === 'authenticated' ? 'beast-claude-status-dot-ok'
-    : status === 'not_authenticated' ? 'beast-claude-status-dot-warn'
-    : 'beast-claude-status-dot-error';
-  const valueClass = status === 'authenticated' ? 'beast-claude-status-value-ok'
-    : status === 'not_authenticated' ? 'beast-claude-status-value-warn'
-    : 'beast-claude-status-value-error';
+  const dotClass = status === 'authenticated' ? 'beast-claude-status-dot-ok' : 'beast-claude-status-dot-error';
+  const valueClass = status === 'authenticated' ? 'beast-claude-status-value-ok' : 'beast-claude-status-value-error';
   const statusLabel = status === 'authenticated' ? t('settings.claudeAuthenticated')
     : status === 'not_authenticated' ? t('settings.claudeNotAuthenticated')
     : t('settings.claudeUnreachable');
@@ -278,11 +274,20 @@ function AiCapabilitiesSection({
           <p className="beast-card-subtitle">{t('settings.aiCapabilitiesSubtitle')}</p>
         </div>
         <div className="beast-claude-status-inline">
-          <div className={cn('beast-claude-status-dot', dotClass)} />
-          <span className="beast-claude-status-label">{t('settings.claudeStatus')}:</span>
-          <span className={cn('beast-claude-status-value', valueClass)}>
-            {claudeLoading ? '...' : statusLabel}
-          </span>
+          {claudeLoading ? (
+            <>
+              <div className="beast-brief-spinner" />
+              <span className="beast-claude-status-value">{t('settings.claudeChecking')}</span>
+            </>
+          ) : (
+            <>
+              <div className={cn('beast-claude-status-dot', dotClass)} />
+              <span className="beast-claude-status-label">{t('settings.claudeStatus')}:</span>
+              <span className={cn('beast-claude-status-value', valueClass)}>
+                {statusLabel}
+              </span>
+            </>
+          )}
         </div>
       </div>
 

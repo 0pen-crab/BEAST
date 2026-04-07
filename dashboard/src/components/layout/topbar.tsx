@@ -7,6 +7,7 @@ import { isSuperAdmin } from '@/lib/permissions';
 import { setLanguage } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { BeastAcronym } from '@/components/beast-acronym';
+import { RateLimitNotice } from './rate-limit-banner';
 
 interface TopbarProps {
   onMenuClick: () => void;
@@ -46,6 +47,9 @@ export function Topbar({ onMenuClick }: TopbarProps) {
       <div className="hidden lg:block">
         <BeastAcronym size="md" restColor="text-[#777]" />
       </div>
+
+      {/* Center: alerts area */}
+      <RateLimitNotice />
 
       {/* User menu */}
       <div ref={menuRef} className="relative">

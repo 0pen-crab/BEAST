@@ -292,6 +292,74 @@ body {
 .beast-claude-status-value-error { color: #f87171; }
 
 
+/* ── Topbar Alert (rate limit, etc.) ── */
+.beast-topbar-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.beast-topbar-alert-icon {
+  color: #f87171;
+  flex-shrink: 0;
+  animation: beast-alert-pulse 2s ease-in-out infinite;
+}
+
+@keyframes beast-alert-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.beast-topbar-alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.beast-topbar-alert-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fca5a5;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.beast-topbar-alert-sub {
+  font-size: 10px;
+  color: var(--th-text-muted);
+  white-space: nowrap;
+}
+
+.beast-topbar-alert-action {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #f87171;
+  padding: 3px 8px;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.beast-topbar-alert-action:hover {
+  background: rgba(248, 113, 113, 0.1);
+  color: #fca5a5;
+}
+
+.beast-topbar-alert-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
 /* ── Cards / Sections ── */
 .beast-card {
   background: var(--th-surface);
@@ -1139,6 +1207,12 @@ body {
 .beast-banner-success {
   border-color: var(--color-beast-green, #22c55e);
   background: color-mix(in srgb, var(--color-beast-green, #22c55e) 8%, var(--th-surface));
+}
+
+.beast-banner-warning {
+  border-color: #f87171;
+  background: color-mix(in srgb, #f87171 8%, var(--th-surface));
+  color: #fca5a5;
 }
 
 .beast-banner-content {

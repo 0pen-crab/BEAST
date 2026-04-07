@@ -277,11 +277,11 @@
     "source": "Source",
     "addRepo": "Add more repositories",
     "addRepoPublicUrl": "Public URL",
-    "addRepoUpload": "Upload ZIP",
+    "addRepoUpload": "Upload archive",
     "addRepoFromSource": "From source",
     "pasteUrl": "Paste repository URL",
     "uploadZip": "Upload repository archive",
-    "dropZipHere": "Drop .zip file here or click to browse",
+    "dropZipHere": "Drop .zip, .tar, or .tar.gz file here or click to browse",
     "addButton": "Add",
     "uploading": "Uploading...",
     "language": "Language",
@@ -537,10 +537,11 @@
     "aiTriage": "AI Triage & Reporting",
     "aiTriageDesc": "Analyzes all findings, prioritizes them by severity and business impact, and generates a consolidated security report.",
     "claudeStatus": "Claude Code Status",
+    "claudeChecking": "Checking Claude Code Status...",
     "claudeAuthenticated": "Authenticated",
     "claudeNotAuthenticated": "Not authenticated",
     "claudeUnreachable": "Unreachable",
-    "claudeAuthHint": "Run <code>make auth</code> in the project root to authenticate Claude Code.",
+    "claudeAuthHint": "Run <code>make claude-login</code> in the project root to authenticate Claude Code.",
     "claudeUnreachableHint": "The claude-runner container is not responding. Check that it is running.",
     "enabled": "Enabled",
     "disabled": "Disabled"
@@ -638,5 +639,10 @@
     "mustChangePassword": "You must change your password before continuing",
     "passwordMismatch": "Passwords do not match",
     "passwordTooShort": "Password must be at least 6 characters"
+  },
+  "worker": {
+    "rateLimitPaused": "Scan queue paused — Claude AI rate limit reached",
+    "rateLimitDetail": "Queue will auto-resume when limits reset",
+    "forceResume": "Force resume"
   }
 }

@@ -38,6 +38,7 @@ services:
       API_SELF_URL: http://api:3000
       DB_PASSWORD: ${DB_PASSWORD:-beast_dev_password}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
     volumes:
       - ./api/src:/app/src
       - ./keys:/app/keys:ro
@@ -57,6 +58,7 @@ services:
       DATABASE_URL: postgresql://beast:${DB_PASSWORD:-beast_dev_password}@postgres:5432/beast
       NODE_ENV: ${NODE_ENV:-development}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
     volumes:
       - ./keys:/app/keys:ro
       - claude_workspaces:/workspace
@@ -84,6 +86,7 @@ services:
       - "7722:22"
     environment:
       SCANNER_SSH_PUBKEY: ${SCANNER_SSH_PUBKEY:-}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
     volumes:
       - claude_workspaces:/workspace
       - claude_auth:/home/scanner/.claude
@@ -102,6 +105,7 @@ services:
     volumes:
       - claude_workspaces:/workspace
       - /mnt/hgfs/shared:/local-repos:ro
+      - ./custom-rules:/custom-rules:ro
 
 volumes:
   pgdata:

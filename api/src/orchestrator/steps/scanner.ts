@@ -34,7 +34,7 @@ export async function runScanner(ctx: PipelineContext): Promise<{ cost?: number;
   if (parsed.is_error) {
     const msg = String(parsed.result ?? 'unknown error');
     if (msg.includes('Not logged in')) {
-      throw new Error('Claude Code is not authenticated on claude-runner. Run: make auth');
+      throw new Error('Claude Code is not authenticated on claude-runner. Run: make claude-login');
     }
     throw new Error(`Scanner failed: ${msg}`);
   }

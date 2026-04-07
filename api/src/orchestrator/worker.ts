@@ -2,13 +2,18 @@ import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { scans, repositories, scanEvents, type Scan } from '../db/schema.ts';
 import { runPipeline } from './pipeline.ts';
+import { isWorkerPaused, resumeWorker } from '../routes/worker-status.ts';
+import { runQuickClaudeCheck } from '../routes/claude-status.ts';
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let rateLimitCheckTimer: ReturnType<typeof setInterval> | null = null;
 const POLL_INTERVAL = Number(process.env.WORKER_POLL_INTERVAL_MS) || 5000;
+const RATE_LIMIT_CHECK_INTERVAL = 10 * 60 * 1000; // 10 minutes
 let running = false;
 
 export async function pollForWork(): Promise<void> {
   if (running) return; // one scan at a time
+  if (isWorkerPaused()) return; // paused (e.g. rate limit)
   running = true;
   let picked: Scan | null = null;
 
@@ -143,12 +148,33 @@ export async function startScanWorker(): Promise<void> {
 
   pollTimer = setInterval(pollForWork, POLL_INTERVAL);
   console.log(`[worker] DB-driven scan worker started (poll every ${POLL_INTERVAL}ms)`);
+
+  // Background check: when paused due to rate limit, ping Claude every 10min to detect recovery
+  rateLimitCheckTimer = setInterval(async () => {
+    if (!isWorkerPaused()) return;
+    console.log('[worker] Rate limit pause active — pinging Claude to check recovery...');
+    try {
+      const { stdout } = await runQuickClaudeCheck();
+      if (stdout.includes('"is_error":false')) {
+        console.log('[worker] Claude responded successfully — resuming queue');
+        resumeWorker();
+      } else {
+        console.log('[worker] Claude still limited — staying paused');
+      }
+    } catch (err) {
+      console.log('[worker] Claude ping failed — staying paused:', err instanceof Error ? err.message : err);
+    }
+  }, RATE_LIMIT_CHECK_INTERVAL);
 }
 
 export function stopScanWorker(): void {
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
-    console.log('[worker] Scan worker stopped');
   }
+  if (rateLimitCheckTimer) {
+    clearInterval(rateLimitCheckTimer);
+    rateLimitCheckTimer = null;
+  }
+  console.log('[worker] Scan worker stopped');
 }

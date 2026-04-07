@@ -44,5 +44,5 @@ First user to register becomes admin.
 | Dashboard      | 8000 |
 | API            | 3000 |
 | PostgreSQL     | 5432 |
-| claude-runner  | 2222 (SSH) |
+| claude-runner  | 7722 (SSH) |
 | security-tools | 2223 (SSH) |

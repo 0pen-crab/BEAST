@@ -27,6 +27,7 @@ function shouldSkipAuth(method: string, url: string): boolean {
   const path = url.split('?')[0];
   if (SKIP_AUTH.has(`${method} ${path}`)) return true;
   if (path.startsWith('/api/webhooks/')) return true;
+  if (path === '/api/worker/pause') return true;
   if (path.startsWith('/api-docs')) return true;
   return false;
 }
