@@ -10,7 +10,7 @@ export interface ClaudeStatusResponse {
 }
 
 let cachedResult: { status: ClaudeStatus; message?: string; timestamp: number } | null = null;
-const CACHE_TTL_MS = 60_000; // 1 minute
+const CACHE_TTL_MS = 0;
 
 /** Clear cached result (for tests) */
 export function clearClaudeStatusCache(): void {
@@ -35,11 +35,11 @@ export function runQuickClaudeCheck(): Promise<{ stdout: string; stderr: string 
 
     conn
       .on('ready', () => {
-        conn.exec('echo "hi" | claude -p --max-turns 1 --output-format stream-json', (err, stream) => {
+        conn.exec('echo "hi" | claude -p --max-turns 1 --output-format stream-json --verbose', (err, stream) => {
           if (err) { settled = true; clearTimeout(maxTimer); conn.end(); reject(err); return; }
           stream.on('data', (d: Buffer) => {
             stdout += d.toString();
-            if (stdout.includes('"type":"result"')) {
+            if (stdout.includes('"type":"result"') && stdout.includes('"is_error":')) {
               if (!settled) { settled = true; clearTimeout(maxTimer); conn.end(); resolve({ stdout, stderr }); }
             }
           });
@@ -65,13 +65,13 @@ export async function checkClaudeStatus(): Promise<ClaudeStatusResponse> {
     const { stdout, stderr } = await runQuickClaudeCheck();
     const output = stdout + stderr;
 
-    if (output.includes('Not logged in')) {
-      cachedResult = { status: 'not_authenticated', timestamp: Date.now() };
-      return { status: 'not_authenticated' };
+    if (output.includes('"is_error":false')) {
+      cachedResult = { status: 'authenticated', timestamp: Date.now() };
+      return { status: 'authenticated' };
     }
 
-    cachedResult = { status: 'authenticated', timestamp: Date.now() };
-    return { status: 'authenticated' };
+    cachedResult = { status: 'not_authenticated', timestamp: Date.now() };
+    return { status: 'not_authenticated' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     cachedResult = { status: 'unreachable', message: msg, timestamp: Date.now() };

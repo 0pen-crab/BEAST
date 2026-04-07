@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "StopFailure": [
+      {
+        "matcher": "rate_limit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/beast/on-rate-limit.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

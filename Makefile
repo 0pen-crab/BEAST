@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: install auth test logs delete
+.PHONY: install update claude-login claude-logout test logs delete
 
 install:
 	@echo "Setting up SSH keys..."
@@ -31,16 +31,70 @@ install:
 	else \
 		echo "  Encryption key already exists (keeping existing)"; \
 	fi
+	@if ! grep -q "^INTERNAL_TOKEN=" .env 2>/dev/null; then \
+		ITOKEN=$$(openssl rand -hex 16); \
+		echo "INTERNAL_TOKEN=$$ITOKEN" >> .env; \
+		echo "  Internal API token generated"; \
+	else \
+		echo "  Internal API token already exists (keeping existing)"; \
+	fi
 	@echo ""
 	@echo "Building and starting containers..."
 	@docker compose up -d --build
 	@echo ""
 	@echo "=== BEAST Installation Complete ==="
 	@echo "  1. Open http://localhost:8000"
-	@echo "  2. Run 'make auth' to authenticate Claude Code scanner"
+	@echo "  2. Run 'make claude-login' to authenticate Claude Code scanner"
 
-auth:
-	@docker exec -it -u scanner -e HOME=/home/scanner $$(docker compose ps -q claude-runner) claude login
+update:
+	@echo "=== BEAST Update ==="
+	@echo ""
+	@echo "Pulling latest changes..."
+	@git pull
+	@echo ""
+	@# Ensure any new env vars exist (won't overwrite existing)
+	@if ! grep -q "^INTERNAL_TOKEN=" .env 2>/dev/null; then \
+		ITOKEN=$$(openssl rand -hex 16); \
+		echo "INTERNAL_TOKEN=$$ITOKEN" >> .env; \
+		echo "  Added new env var: INTERNAL_TOKEN"; \
+	fi
+	@echo "Rebuilding containers..."
+	@docker compose build
+	@echo ""
+	@echo "Restarting services..."
+	@docker compose up -d
+	@echo ""
+	@echo "Waiting for API to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then \
+			echo "  API is ready"; \
+			break; \
+		fi; \
+		sleep 2; \
+	done
+	@echo ""
+	@echo "=== Update Complete ==="
+	@echo "  Migrations run automatically on API startup."
+	@echo "  Data, volumes, and Claude auth preserved."
+
+claude-login:
+	@echo "Checking Claude Code authentication..."
+	@RESPONSE=$$(docker exec -u scanner -e HOME=/home/scanner $$(docker compose ps -q claude-runner) \
+		sh -c 'echo "hi" | claude -p --max-turns 1 2>&1'); \
+	if echo "$$RESPONSE" | grep -qi "not logged in\|authentication\|login"; then \
+		echo "Not authenticated — starting login flow..."; \
+		docker exec -it -u scanner -e HOME=/home/scanner $$(docker compose ps -q claude-runner) claude login; \
+	elif [ -n "$$RESPONSE" ]; then \
+		echo "Claude Code is already authenticated."; \
+	else \
+		echo "Not authenticated — starting login flow..."; \
+		docker exec -it -u scanner -e HOME=/home/scanner $$(docker compose ps -q claude-runner) claude login; \
+	fi
+
+claude-logout:
+	@echo "Logging out Claude Code from scanner..."
+	@docker exec -u scanner -e HOME=/home/scanner $$(docker compose ps -q claude-runner) claude auth logout
+	@echo "Done. Run 'make claude-login' to log in again."
 
 test:
 	./test.sh

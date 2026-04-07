@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Next-instance behavior — set before each test
 let nextBehavior: 'ok' | 'not-logged-in' | 'conn-error' = 'ok';
 let nextStdout = '';
 let connectCount = 0;
@@ -46,9 +45,9 @@ describe('checkClaudeStatus', () => {
     connectCount = 0;
   });
 
-  it('returns authenticated when Claude responds', async () => {
+  it('returns authenticated when Claude responds with is_error:false', async () => {
     nextBehavior = 'ok';
-    nextStdout = '{"type":"result","result":"hi"}';
+    nextStdout = '{"type":"result","is_error":false,"result":"hi"}';
     const result = await checkClaudeStatus();
     expect(result.status).toBe('authenticated');
   });
@@ -60,6 +59,13 @@ describe('checkClaudeStatus', () => {
     expect(result.status).toBe('not_authenticated');
   });
 
+  it('returns not_authenticated when result has is_error:true', async () => {
+    nextBehavior = 'ok';
+    nextStdout = '{"type":"result","is_error":true,"result":"Not logged in"}';
+    const result = await checkClaudeStatus();
+    expect(result.status).toBe('not_authenticated');
+  });
+
   it('returns unreachable on SSH connection error', async () => {
     nextBehavior = 'conn-error';
     const result = await checkClaudeStatus();
@@ -67,11 +73,18 @@ describe('checkClaudeStatus', () => {
     expect(result.message).toBe('ECONNREFUSED');
   });
 
-  it('caches result for subsequent calls', async () => {
+  it('returns not_authenticated on empty output', async () => {
     nextBehavior = 'ok';
-    nextStdout = '{"type":"result"}';
+    nextStdout = '';
+    const result = await checkClaudeStatus();
+    expect(result.status).toBe('not_authenticated');
+  });
+
+  it('fetches fresh result on every call', async () => {
+    nextBehavior = 'ok';
+    nextStdout = '{"type":"result","is_error":false}';
     await checkClaudeStatus();
     await checkClaudeStatus();
-    expect(connectCount).toBe(1);
+    expect(connectCount).toBe(2);
   });
 });
