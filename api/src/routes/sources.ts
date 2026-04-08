@@ -606,7 +606,7 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
-  // POST /api/repos/upload — multipart zip upload (supports multiple repos)
+  // POST /api/repos/upload — multipart archive upload (.zip, .tar, .tar.gz)
   app.post('/repos/upload', {}, async (request, reply) => {
     const data = await request.file();
     if (!data) return reply.status(400).send({ error: 'No file uploaded' });
@@ -618,27 +618,38 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
     const wsId = Number(workspaceId);
     await authorize(request, wsId, 'workspace_admin');
 
+    // Detect archive type from filename
+    const filename = data.filename.toLowerCase();
+    let archiveType: 'zip' | 'tar' | 'tar.gz';
+    if (filename.endsWith('.zip')) archiveType = 'zip';
+    else if (filename.endsWith('.tar.gz') || filename.endsWith('.tgz')) archiveType = 'tar.gz';
+    else if (filename.endsWith('.tar')) archiveType = 'tar';
+    else return reply.status(400).send({ error: 'Unsupported archive format. Use .zip, .tar, or .tar.gz' });
+
     const { randomUUID } = await import('crypto');
-    const { mkdirSync, writeFileSync, readdirSync, statSync, existsSync } = await import('fs');
+    const { mkdirSync, createWriteStream, readdirSync, statSync, existsSync } = await import('fs');
     const { join, relative, basename } = await import('path');
     const { execSync } = await import('child_process');
+    const { pipeline } = await import('stream/promises');
 
     const uploadId = randomUUID();
     const uploadDir = join('/workspace', 'uploads', uploadId);
     mkdirSync(uploadDir, { recursive: true });
 
-    // Save zip file
-    const chunks: Buffer[] = [];
-    for await (const chunk of data.file) {
-      chunks.push(chunk);
-    }
-    const zipPath = join(uploadDir, data.filename);
-    writeFileSync(zipPath, Buffer.concat(chunks));
+    // Stream archive file to disk (avoids loading entire file into memory)
+    const archivePath = join(uploadDir, data.filename);
+    await pipeline(data.file, createWriteStream(archivePath));
 
-    // Extract
+    // Extract using the right tool for the archive type
     const extractDir = join(uploadDir, 'extracted');
     mkdirSync(extractDir, { recursive: true });
-    execSync(`unzip -q "${zipPath}" -d "${extractDir}"`);
+    if (archiveType === 'zip') {
+      execSync(`unzip -q "${archivePath}" -d "${extractDir}"`);
+    } else if (archiveType === 'tar.gz') {
+      execSync(`tar -xzf "${archivePath}" -C "${extractDir}"`);
+    } else {
+      execSync(`tar -xf "${archivePath}" -C "${extractDir}"`);
+    }
 
     // Recursive walk: find all directories containing .git
     function findGitRepos(dir: string): string[] {

@@ -17,6 +17,11 @@ mkdir -p /home/scanner/.claude
 chown -R scanner:scanner /home/scanner/.claude
 echo "[entrypoint] Claude auth directory ready at /home/scanner/.claude"
 
+# Install Claude Code hooks (rate limit detection)
+cp /opt/beast/settings.json /home/scanner/.claude/settings.json
+chown scanner:scanner /home/scanner/.claude/settings.json
+echo "[entrypoint] Claude Code hooks installed"
+
 # Check if Claude Code is authenticated (OAuth tokens present)
 if [ -d "/home/scanner/.claude" ] && find /home/scanner/.claude -name "*.json" -maxdepth 2 2>/dev/null | grep -q .; then
   echo "[entrypoint] Claude Code OAuth credentials found"

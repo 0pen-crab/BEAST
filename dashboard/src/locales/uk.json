@@ -277,11 +277,11 @@
     "source": "Джерело",
     "addRepo": "Додати більше репозиторіїв",
     "addRepoPublicUrl": "Публічний URL",
-    "addRepoUpload": "Завантажити ZIP",
+    "addRepoUpload": "Завантажити архів",
     "addRepoFromSource": "З джерела",
     "pasteUrl": "Вставте URL репозиторію",
     "uploadZip": "Завантажити архів репозиторію",
-    "dropZipHere": "Перетягніть .zip файл сюди або натисніть для вибору",
+    "dropZipHere": "Перетягніть .zip, .tar або .tar.gz файл сюди або натисніть для вибору",
     "addButton": "Додати",
     "uploading": "Завантаження...",
     "language": "Мова",
@@ -537,10 +537,12 @@
     "aiTriage": "AI тріаж та звітність",
     "aiTriageDesc": "Аналізує всі знахідки, пріоритезує за критичністю та бізнес-впливом, генерує консолідований звіт безпеки.",
     "claudeStatus": "Статус Claude Code",
+    "claudeChecking": "Перевірка статусу Claude Code...",
     "claudeAuthenticated": "Автентифіковано",
     "claudeNotAuthenticated": "Не автентифіковано",
+    "claudeRateLimited": "Ліміт вичерпано",
     "claudeUnreachable": "Недоступний",
-    "claudeAuthHint": "Виконайте <code>make auth</code> в кореневій директорії проєкту для автентифікації Claude Code.",
+    "claudeAuthHint": "Виконайте <code>make claude-login</code> в кореневій директорії проєкту для автентифікації Claude Code.",
     "claudeUnreachableHint": "Контейнер claude-runner не відповідає. Перевірте, чи він запущений.",
     "enabled": "Увімкнено",
     "disabled": "Вимкнено"
@@ -638,5 +640,10 @@
     "mustChangePassword": "Ви повинні змінити пароль перед продовженням",
     "passwordMismatch": "Паролі не збігаються",
     "passwordTooShort": "Пароль повинен бути не менше 6 символів"
+  },
+  "worker": {
+    "rateLimitPaused": "Черга сканів призупинена — досягнуто ліміт Claude AI",
+    "rateLimitDetail": "Черга автоматично відновиться коли ліміти скинуться",
+    "rateLimitResetsIn": "Відновиться через {{time}}"
   }
 }

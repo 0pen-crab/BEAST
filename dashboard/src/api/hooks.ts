@@ -986,7 +986,7 @@ export function useDisconnectTool(workspaceId: number | undefined) {
 // ── Claude Status ────────────────────────────────────────────
 
 export interface ClaudeStatusResponse {
-  status: 'authenticated' | 'not_authenticated' | 'unreachable';
+  status: 'authenticated' | 'not_authenticated' | 'unreachable' | 'rate_limited';
   message?: string;
 }
 
@@ -994,8 +994,32 @@ export function useClaudeStatus() {
   return useQuery({
     queryKey: ['claude-status'],
     queryFn: () => fetchApi<ClaudeStatusResponse>('/api/claude-status'),
-    staleTime: 60_000,
-    refetchInterval: 120_000,
+    staleTime: 0,
+  });
+}
+
+// ── Worker Status ───────────────────────────────────────────
+
+export interface WorkerStatusResponse {
+  paused: boolean;
+  reason?: string;
+  resumesAt?: string;
+  pausedAt?: string;
+}
+
+export function useWorkerStatus() {
+  return useQuery({
+    queryKey: ['worker-status'],
+    queryFn: () => fetchApi<WorkerStatusResponse>('/api/worker-status'),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useResumeWorker() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => mutateApi('/api/worker/resume', { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['worker-status'] }),
   });
 }
 

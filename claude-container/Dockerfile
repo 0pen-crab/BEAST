@@ -31,10 +31,12 @@ RUN npm install -g @anthropic-ai/claude-code
 RUN mkdir -p /workspace /prompts && \
     chown -R scanner:scanner /workspace /prompts
 
-# Copy entrypoint and prompts
+# Copy entrypoint, prompts, and hooks
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY prompts/ /prompts/
+COPY hooks/ /opt/beast/
+RUN chmod +x /opt/beast/*.sh
 
 EXPOSE 22
 

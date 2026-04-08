@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, type SQL } from 'drizzle-orm';
+import { eq, and, asc, desc, sql, type SQL } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { scans, type Scan } from '../db/schema.ts';
 
@@ -48,9 +48,10 @@ export async function listScans(
   const [countResult] = await db.select({ count: sql<number>`count(*)::int` })
     .from(scans).where(whereClause);
 
+  const order = status === 'queued' ? asc(scans.createdAt) : desc(scans.createdAt);
   const results = await db.select().from(scans)
     .where(whereClause)
-    .orderBy(desc(scans.createdAt))
+    .orderBy(order)
     .limit(limit)
     .offset(offset);
 
