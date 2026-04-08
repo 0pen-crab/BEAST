@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { Client } from 'ssh2';
 import { getClaudeRunnerConfig } from '../orchestrator/ssh.ts';
 
-export type ClaudeStatus = 'authenticated' | 'not_authenticated' | 'unreachable';
+export type ClaudeStatus = 'authenticated' | 'not_authenticated' | 'unreachable' | 'rate_limited';
 
 export interface ClaudeStatusResponse {
   status: ClaudeStatus;
@@ -31,7 +31,7 @@ export function runQuickClaudeCheck(): Promise<{ stdout: string; stderr: string 
 
     const maxTimer = setTimeout(() => {
       if (!settled) { settled = true; conn.end(); reject(new Error('Timeout')); }
-    }, 15_000);
+    }, 45_000);
 
     conn
       .on('ready', () => {
@@ -68,6 +68,12 @@ export async function checkClaudeStatus(): Promise<ClaudeStatusResponse> {
     if (output.includes('"is_error":false')) {
       cachedResult = { status: 'authenticated', timestamp: Date.now() };
       return { status: 'authenticated' };
+    }
+
+    // error":"rate_limit" = Claude is authenticated but hit usage limits
+    if (output.includes('"error":"rate_limit"')) {
+      cachedResult = { status: 'rate_limited', timestamp: Date.now() };
+      return { status: 'rate_limited' };
     }
 
     cachedResult = { status: 'not_authenticated', timestamp: Date.now() };

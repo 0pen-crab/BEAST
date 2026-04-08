@@ -540,6 +540,7 @@
     "claudeChecking": "Перевірка статусу Claude Code...",
     "claudeAuthenticated": "Автентифіковано",
     "claudeNotAuthenticated": "Не автентифіковано",
+    "claudeRateLimited": "Ліміт вичерпано",
     "claudeUnreachable": "Недоступний",
     "claudeAuthHint": "Виконайте <code>make claude-login</code> в кореневій директорії проєкту для автентифікації Claude Code.",
     "claudeUnreachableHint": "Контейнер claude-runner не відповідає. Перевірте, чи він запущений.",
@@ -643,6 +644,6 @@
   "worker": {
     "rateLimitPaused": "Черга сканів призупинена — досягнуто ліміт Claude AI",
     "rateLimitDetail": "Черга автоматично відновиться коли ліміти скинуться",
-    "forceResume": "Відновити примусово"
+    "rateLimitResetsIn": "Відновиться через {{time}}"
   }
 }

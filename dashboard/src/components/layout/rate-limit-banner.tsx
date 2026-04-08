@@ -1,10 +1,20 @@
-import { useWorkerStatus, useResumeWorker } from '@/api/hooks';
+import { useWorkerStatus } from '@/api/hooks';
 import { useTranslation } from 'react-i18next';
 import { useWorkspace } from '@/lib/workspace';
 
+function formatTimeUntil(isoDate: string): string | null {
+  const target = new Date(isoDate).getTime();
+  if (isNaN(target)) return null;
+  const diff = target - Date.now();
+  if (diff <= 0) return null;
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 export function RateLimitNotice() {
   const { data } = useWorkerStatus();
-  const resume = useResumeWorker();
   const { t } = useTranslation();
   const { currentWorkspace } = useWorkspace();
 
@@ -17,6 +27,8 @@ export function RateLimitNotice() {
   );
   if (!hasAi) return null;
 
+  const timeLeft = data.resumesAt ? formatTimeUntil(data.resumesAt) : null;
+
   return (
     <div className="beast-topbar-alert">
       <div className="beast-topbar-alert-icon">
@@ -28,15 +40,10 @@ export function RateLimitNotice() {
       </div>
       <div className="beast-topbar-alert-body">
         <span className="beast-topbar-alert-title">{t('worker.rateLimitPaused')}</span>
-        <span className="beast-topbar-alert-sub">{t('worker.rateLimitDetail')}</span>
+        <span className="beast-topbar-alert-sub">
+          {t('worker.rateLimitDetail')}{timeLeft && <>. {t('worker.rateLimitResetsIn', { time: timeLeft })}</>}
+        </span>
       </div>
-      <button
-        className="beast-topbar-alert-action"
-        onClick={() => resume.mutate()}
-        disabled={resume.isPending}
-      >
-        {t('worker.forceResume')}
-      </button>
     </div>
   );
 }

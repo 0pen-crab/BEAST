@@ -5,6 +5,7 @@ import {
   type Scan, type ScanStep,
 } from '../db/schema.ts';
 import type { PipelineContext, StepDef } from './pipeline-types.ts';
+import { RateLimitError } from './rate-limit.ts';
 import { runCloneStep } from './steps/clone.ts';
 import { runAnalysisStep } from './steps/analyzer.ts';
 import { runSecToolsStep } from './steps/security-tools.ts';
@@ -230,7 +231,7 @@ export async function runPipeline(scan: Scan): Promise<void> {
         entry.map(step =>
           executeStep(step, ctx, accumulated, stepRows)
             .catch(err => {
-              if (step.required) throw err;
+              if (err instanceof RateLimitError || step.required) throw err;
               // Non-required step failure: log and return empty output
               return {} as Record<string, unknown>;
             }),
@@ -244,10 +245,11 @@ export async function runPipeline(scan: Scan): Promise<void> {
         }
       }
 
-      // Check if any required parallel step failed
+      // Check if any parallel step failed fatally (required or rate limit)
       for (let i = 0; i < entry.length; i++) {
-        if (entry[i].required && results[i].status === 'rejected') {
-          throw (results[i] as PromiseRejectedResult).reason;
+        if (results[i].status === 'rejected') {
+          const reason = (results[i] as PromiseRejectedResult).reason;
+          if (reason instanceof RateLimitError || entry[i].required) throw reason;
         }
       }
     } else {
@@ -256,7 +258,7 @@ export async function runPipeline(scan: Scan): Promise<void> {
         const output = await executeStep(entry, ctx, accumulated, stepRows);
         accumulated = { ...accumulated, ...output };
       } catch (err) {
-        if (entry.required) throw err;
+        if (err instanceof RateLimitError || entry.required) throw err;
         // Non-required step failure — continue
       }
     }

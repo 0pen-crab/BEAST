@@ -66,6 +66,13 @@ describe('checkClaudeStatus', () => {
     expect(result.status).toBe('not_authenticated');
   });
 
+  it('returns rate_limited when Claude hits usage limits', async () => {
+    nextBehavior = 'ok';
+    nextStdout = '{"type":"result","is_error":true,"result":"You\'re out of extra usage","error":"rate_limit"}';
+    const result = await checkClaudeStatus();
+    expect(result.status).toBe('rate_limited');
+  });
+
   it('returns unreachable on SSH connection error', async () => {
     nextBehavior = 'conn-error';
     const result = await checkClaudeStatus();

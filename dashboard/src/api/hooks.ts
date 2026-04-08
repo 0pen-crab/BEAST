@@ -986,7 +986,7 @@ export function useDisconnectTool(workspaceId: number | undefined) {
 // ── Claude Status ────────────────────────────────────────────
 
 export interface ClaudeStatusResponse {
-  status: 'authenticated' | 'not_authenticated' | 'unreachable';
+  status: 'authenticated' | 'not_authenticated' | 'unreachable' | 'rate_limited';
   message?: string;
 }
 

@@ -260,9 +260,14 @@ function AiCapabilitiesSection({
   }
 
   const status = claudeStatus?.status ?? 'unreachable';
-  const dotClass = status === 'authenticated' ? 'beast-claude-status-dot-ok' : 'beast-claude-status-dot-error';
-  const valueClass = status === 'authenticated' ? 'beast-claude-status-value-ok' : 'beast-claude-status-value-error';
-  const statusLabel = status === 'authenticated' ? t('settings.claudeAuthenticated')
+  const isOk = status === 'authenticated';
+  const isRateLimited = status === 'rate_limited';
+  const dotClass = (isOk || isRateLimited) ? 'beast-claude-status-dot-ok' : 'beast-claude-status-dot-error';
+  const valueClass = isOk ? 'beast-claude-status-value-ok'
+    : isRateLimited ? 'beast-claude-status-value-warn'
+    : 'beast-claude-status-value-error';
+  const statusLabel = isOk ? t('settings.claudeAuthenticated')
+    : isRateLimited ? t('settings.claudeRateLimited')
     : status === 'not_authenticated' ? t('settings.claudeNotAuthenticated')
     : t('settings.claudeUnreachable');
 
@@ -291,7 +296,7 @@ function AiCapabilitiesSection({
         </div>
       </div>
 
-      {!claudeLoading && status !== 'authenticated' && (
+      {!claudeLoading && !isOk && !isRateLimited && (
         <div className="beast-claude-status-hint-block">
           <span
             dangerouslySetInnerHTML={{

@@ -2,8 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { scans, repositories, scanEvents, type Scan } from '../db/schema.ts';
 import { runPipeline } from './pipeline.ts';
-import { isWorkerPaused, resumeWorker } from '../routes/worker-status.ts';
-import { runQuickClaudeCheck } from '../routes/claude-status.ts';
+import { RateLimitError } from './rate-limit.ts';
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let rateLimitCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -11,9 +10,28 @@ const POLL_INTERVAL = Number(process.env.WORKER_POLL_INTERVAL_MS) || 5000;
 const RATE_LIMIT_CHECK_INTERVAL = 10 * 60 * 1000; // 10 minutes
 let running = false;
 
+const API_URL = process.env.API_SELF_URL || 'http://api:3000';
+const INTERNAL_TOKEN = process.env.INTERNAL_TOKEN || '';
+
+async function isWorkerPaused(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_URL}/api/worker-status`);
+    const data = await res.json() as { paused: boolean };
+    return data.paused;
+  } catch { return false; }
+}
+
+async function resumeWorkerViaApi(): Promise<void> {
+  await fetch(`${API_URL}/api/worker/resume`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Internal-Token': INTERNAL_TOKEN },
+    body: '{}',
+  }).catch(() => {});
+}
+
 export async function pollForWork(): Promise<void> {
   if (running) return; // one scan at a time
-  if (isWorkerPaused()) return; // paused (e.g. rate limit)
+  if (await isWorkerPaused()) return; // paused (e.g. rate limit)
   running = true;
   let picked: Scan | null = null;
 
@@ -109,6 +127,26 @@ export async function pollForWork(): Promise<void> {
       }
 
       console.error(`[worker] Scan ${scanId} failed: ${message}`);
+
+      // Re-queue the repo if scan failed due to rate limit
+      if (err instanceof RateLimitError && scan.repositoryId && scan.workspaceId) {
+        try {
+          const [requeued] = await db.insert(scans).values({
+            repoUrl: scan.repoUrl,
+            repoName: scan.repoName,
+            localPath: scan.localPath,
+            branch: scan.branch,
+            repositoryId: scan.repositoryId,
+            workspaceId: scan.workspaceId,
+            scanType: scan.scanType,
+            pullRequestId: scan.pullRequestId,
+            status: 'queued',
+          }).returning({ id: scans.id });
+          console.log(`[worker] Re-queued ${scan.repoName} as scan ${requeued.id} (will run after rate limit resets)`);
+        } catch (reqErr) {
+          console.error(`[worker] Failed to re-queue ${scan.repoName}:`, reqErr instanceof Error ? reqErr.message : reqErr);
+        }
+      }
     }
   } catch (err) {
     // DB connection error or transaction failure — log and continue
@@ -149,20 +187,21 @@ export async function startScanWorker(): Promise<void> {
   pollTimer = setInterval(pollForWork, POLL_INTERVAL);
   console.log(`[worker] DB-driven scan worker started (poll every ${POLL_INTERVAL}ms)`);
 
-  // Background check: when paused due to rate limit, ping Claude every 10min to detect recovery
+  // Background check: when paused due to rate limit, ask API to check Claude every 10min
   rateLimitCheckTimer = setInterval(async () => {
-    if (!isWorkerPaused()) return;
-    console.log('[worker] Rate limit pause active — pinging Claude to check recovery...');
+    if (!(await isWorkerPaused())) return;
+    console.log('[worker] Rate limit pause active — checking Claude status via API...');
     try {
-      const { stdout } = await runQuickClaudeCheck();
-      if (stdout.includes('"is_error":false')) {
-        console.log('[worker] Claude responded successfully — resuming queue');
-        resumeWorker();
+      const res = await fetch(`${API_URL}/api/claude-status`);
+      const data = await res.json() as { status: string };
+      if (data.status === 'authenticated') {
+        console.log('[worker] Claude is back — resuming queue');
+        await resumeWorkerViaApi();
       } else {
-        console.log('[worker] Claude still limited — staying paused');
+        console.log(`[worker] Claude status: ${data.status} — staying paused`);
       }
     } catch (err) {
-      console.log('[worker] Claude ping failed — staying paused:', err instanceof Error ? err.message : err);
+      console.log('[worker] Claude status check failed — staying paused:', err instanceof Error ? err.message : err);
     }
   }, RATE_LIMIT_CHECK_INTERVAL);
 }

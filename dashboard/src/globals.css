@@ -321,11 +321,17 @@ body {
 }
 
 .beast-topbar-alert-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: #fca5a5;
+  color: var(--color-beast-red);
   letter-spacing: 0.01em;
   white-space: nowrap;
+}
+
+.beast-topbar-alert-resets {
+  color: var(--th-text-secondary);
+  font-weight: 400;
+  margin-left: 6px;
 }
 
 .beast-topbar-alert-sub {
@@ -355,6 +361,26 @@ body {
 }
 
 .beast-topbar-alert-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.beast-topbar-alert-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #f87171;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.beast-topbar-alert-link:hover {
+  color: #fca5a5;
+}
+
+.beast-topbar-alert-link:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

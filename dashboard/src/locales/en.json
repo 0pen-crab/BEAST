@@ -540,6 +540,7 @@
     "claudeChecking": "Checking Claude Code Status...",
     "claudeAuthenticated": "Authenticated",
     "claudeNotAuthenticated": "Not authenticated",
+    "claudeRateLimited": "Rate limited",
     "claudeUnreachable": "Unreachable",
     "claudeAuthHint": "Run <code>make claude-login</code> in the project root to authenticate Claude Code.",
     "claudeUnreachableHint": "The claude-runner container is not responding. Check that it is running.",
@@ -643,6 +644,6 @@
   "worker": {
     "rateLimitPaused": "Scan queue paused — Claude AI rate limit reached",
     "rateLimitDetail": "Queue will auto-resume when limits reset",
-    "forceResume": "Force resume"
+    "rateLimitResetsIn": "Resets in {{time}}"
   }
 }

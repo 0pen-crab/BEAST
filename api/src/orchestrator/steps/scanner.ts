@@ -1,4 +1,5 @@
 import { sshExec, getClaudeRunnerConfig, parseStreamJsonResult, SSHTimeoutError } from '../ssh.ts';
+import { checkRateLimitAndPause } from '../rate-limit.ts';
 import type { PipelineContext, StepInput, AiResearchOutput } from '../pipeline-types.ts';
 import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS } from '../pipeline-types.ts';
 import { getLanguageInstruction } from '../prompt-languages.ts';
@@ -36,6 +37,7 @@ export async function runScanner(ctx: PipelineContext): Promise<{ cost?: number;
     if (msg.includes('Not logged in')) {
       throw new Error('Claude Code is not authenticated on claude-runner. Run: make claude-login');
     }
+    checkRateLimitAndPause(result.stdout, msg);
     throw new Error(`Scanner failed: ${msg}`);
   }
 
