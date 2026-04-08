@@ -21,3 +21,6 @@ custom-rules/*.yml
 # Git worktrees
 .worktrees/
 .claude/
+
+# Release notes draft (maintained by hooks, consumed by /release)
+.release/
