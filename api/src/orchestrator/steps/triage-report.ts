@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { eq, and, asc, desc, getTableColumns, sql } from 'drizzle-orm';
 import { sshExec, sshWriteFile, getClaudeRunnerConfig, parseStreamJsonResult, SSHTimeoutError, type SSHExecOptions } from '../ssh.ts';
+import { checkRateLimitAndPause } from '../rate-limit.ts';
 import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS } from '../pipeline-types.ts';
 import type { PipelineContext, StepInput, TriageReportOutput, ResultFile } from '../pipeline-types.ts';
 import { getLanguageInstruction } from '../prompt-languages.ts';
@@ -208,9 +209,11 @@ export async function runTriageAndReport(
       maxTimeoutMs: AI_MAX_TIMEOUT_MS,
     });
     await addScanFile({ scanId: ctx.scanId, fileName: 'triage.log', fileType: 'log-triage', content: sshResult.stdout });
+    checkRateLimitAndPause(sshResult.stdout, '');
   } catch (err) {
     if (err instanceof SSHTimeoutError && err.stdout) {
       await addScanFile({ scanId: ctx.scanId, fileName: 'triage.log', fileType: 'log-triage', content: err.stdout }).catch(() => {});
+      checkRateLimitAndPause(err.stdout, '');
     }
     throw err;
   }

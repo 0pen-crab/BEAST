@@ -307,12 +307,15 @@ fi
 
 # -- Semgrep (SAST) -----------------------------------------------------------
 if is_enabled "semgrep"; then
+  SEMGREP_ARGS=(--config auto --config p/owasp-top-ten --config p/trailofbits --config /rules/apiiro)
+  # Auto-discover custom rules from /custom-rules (mounted volume)
+  if [ -d /custom-rules ] && find /custom-rules \( -name "*.yaml" -o -name "*.yml" \) -print -quit | grep -q .; then
+    echo "[security-tools] Custom semgrep rules found in /custom-rules"
+    SEMGREP_ARGS+=(--config /custom-rules)
+  fi
   run_tool "semgrep" "$RESULTS_DIR/semgrep-results.sarif" \
     semgrep scan \
-      --config auto \
-      --config p/owasp-top-ten \
-      --config p/trailofbits \
-      --config /rules/apiiro \
+      "${SEMGREP_ARGS[@]}" \
       --sarif -o "$RESULTS_DIR/semgrep-results.sarif" "$REPO_PATH"
 else
   TOOL_STATUS["semgrep"]="skipped"; TOOL_EXIT["semgrep"]=""; TOOL_FILE["semgrep"]="null"; TOOL_DURATION["semgrep"]=0

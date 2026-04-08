@@ -406,7 +406,7 @@ export function SourceForm({ workspaceId, onConnected, onCancel }: SourceFormPro
               <span className="text-sm text-th-text-muted">{file ? file.name : t('repos.dropZipHere')}</span>
               <input
                 type="file"
-                accept=".zip"
+                accept=".zip,.tar,.tar.gz,.tgz"
                 className="hidden"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { sql } from 'drizzle-orm';
 import { sshExec, getClaudeRunnerConfig, parseStreamJsonResult, SSHTimeoutError } from '../ssh.ts';
+import { checkRateLimitAndPause, RateLimitError } from '../rate-limit.ts';
 import type { PipelineContext, StepInput, AnalysisOutput } from '../pipeline-types.ts';
 import { addScanFile } from '../entities.ts';
 import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS, SOURCE_EXTENSIONS, EXCLUDED_DIRS } from '../pipeline-types.ts';
@@ -50,8 +51,9 @@ export async function runAnalyzer(ctx: PipelineContext): Promise<{ cost?: number
   if (parsed.is_error) {
     const msg = String(parsed.result ?? 'unknown error');
     if (msg.includes('Not logged in')) {
-      throw new Error('Claude Code is not authenticated on claude-runner. Run: make auth');
+      throw new Error('Claude Code is not authenticated on claude-runner. Run: make claude-login');
     }
+    checkRateLimitAndPause(result.stdout, msg);
     throw new Error(`Analyzer failed: ${msg}`);
   }
 
@@ -286,6 +288,7 @@ export async function runAnalysisStep({ ctx }: StepInput): Promise<AnalysisOutpu
       await addScanFile({ scanId: ctx.scanId, fileName: 'analysis.log', fileType: 'log-analysis', content: analyzerResult.log });
     }
   } catch (err) {
+    if (err instanceof RateLimitError) throw err;
     aiAvailable = false;
     if (err instanceof SSHTimeoutError && err.stdout) {
       await addScanFile({ scanId: ctx.scanId, fileName: 'analysis.log', fileType: 'log-analysis', content: err.stdout }).catch(() => {});
