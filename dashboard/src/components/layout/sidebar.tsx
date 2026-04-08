@@ -87,7 +87,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
         {/* Footer */}
         <div className="border-t border-white/10 px-4 py-3">
-          <p className="text-[10px] text-[#616061]">BEAST v0.1.0</p>
+          <p className="text-[10px] text-[#616061]">BEAST v{__APP_VERSION__}</p>
         </div>
       </div>
 
