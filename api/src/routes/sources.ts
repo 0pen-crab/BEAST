@@ -129,6 +129,7 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(1);
 
       let source: typeof existing[0];
+      let createdSource = false;
       if (existing.length > 0) {
         if (!repoSlug) {
           // Org-level duplicate — reject
@@ -145,6 +146,7 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
           orgName: orgName || undefined,
           orgType: orgType ?? undefined,
         });
+        createdSource = true;
       }
 
       // Create credential if token provided
@@ -226,13 +228,22 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         }
       } catch (err: any) {
         if (err.message === 'RATE_LIMITED') {
-          // Clean up the source we just created
-          await db.delete(repositories).where(eq(repositories.sourceId, source.id));
-          await deleteSource(source.id);
+          if (createdSource) await deleteSource(source.id);
           return reply.status(429).send({ error: 'RATE_LIMITED', provider });
         }
         console.error('Repo discovery failed:', err.message);
         discoveryError = err.message;
+      }
+
+      // Single-repo: discovery failure is fatal — no repos can be auto-imported.
+      // Roll back the orphan source and return the error.
+      if (repoSlug && discoveryError) {
+        if (createdSource) await deleteSource(source.id);
+        return reply.status(422).send({
+          error: `Could not fetch repository: ${discoveryError}`,
+          code: 'DISCOVERY_FAILED',
+          provider,
+        });
       }
 
       // Auto-import single repos inline (avoids a separate import call that hits rate limits)

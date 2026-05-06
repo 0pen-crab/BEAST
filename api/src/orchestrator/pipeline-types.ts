@@ -87,7 +87,6 @@ export type StepFn = (input: StepInput) => Promise<Record<string, any>>;
 export interface StepDef {
   name: string;
   run: StepFn;
-  required: boolean;
 }
 
 // ── Typed step outputs ──

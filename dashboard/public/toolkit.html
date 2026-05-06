@@ -1404,6 +1404,28 @@ h1.toolkit-title {
 <div class="divider"></div>
 
 <!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="section" id="notifications">
+  <h2 class="section-title">Notifications <span class="new-tag">New</span></h2>
+  <p class="section-desc">Fixed top-right toasts for transient feedback (e.g. backend health).</p>
+
+  <div class="col">
+    <div class="beast-notification beast-notification-error" style="position: static;">
+      <div class="beast-notification-content">
+        <div class="beast-notification-title" data-en="Backend unreachable" data-uk="Бекенд недоступний">Backend unreachable</div>
+        <div class="beast-notification-detail" data-en="API health check failed. Check that the API container is running." data-uk="Перевірка стану API не пройшла. Переконайтесь, що контейнер API запущений.">API health check failed. Check that the API container is running.</div>
+        <div class="beast-notification-actions">
+          <button class="beast-btn beast-btn-outline beast-btn-sm" data-en="Retry" data-uk="Повторити">Retry</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Wrap many in .beast-notification-stack (position:fixed, top-right). -->
+  <!-- .beast-notification + .beast-notification-error -->
+</div>
+
+<div class="divider"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
 <div class="section" id="empty">
   <h2 class="section-title">Empty States</h2>
   <p class="section-desc">Shown when no data is available.</p>

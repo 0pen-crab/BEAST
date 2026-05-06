@@ -243,7 +243,7 @@ describe('runPipeline', () => {
     expect(mockRunTriageStep).toHaveBeenCalledTimes(1);
   });
 
-  it('rethrows on clone error (required step)', async () => {
+  it('rethrows on clone error', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunCloneStep.mockRejectedValueOnce(new Error('clone failed'));
@@ -251,7 +251,7 @@ describe('runPipeline', () => {
     await expect(runPipeline(makeScan())).rejects.toThrow('clone failed');
   });
 
-  it('rethrows on import error (required step)', async () => {
+  it('rethrows on import error', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunImportStep.mockRejectedValueOnce(new Error('import failed'));
@@ -259,37 +259,31 @@ describe('runPipeline', () => {
     await expect(runPipeline(makeScan())).rejects.toThrow('import failed');
   });
 
-  it('continues when optional analysis step fails', async () => {
+  it('fails the scan when analysis step throws', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunAnalysisStep.mockRejectedValueOnce(new Error('analyzer down'));
 
-    // Should not throw — analysis is optional
-    await runPipeline(makeScan());
-
-    // Subsequent steps still called
-    expect(mockRunSecToolsStep).toHaveBeenCalled();
-    expect(mockRunImportStep).toHaveBeenCalled();
+    await expect(runPipeline(makeScan())).rejects.toThrow('analyzer down');
+    // Steps after the failure must not run
+    expect(mockRunImportStep).not.toHaveBeenCalled();
   });
 
-  it('continues when optional security-tools step fails', async () => {
+  it('fails the scan when security-tools step throws', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
-    mockRunSecToolsStep.mockRejectedValueOnce(new Error('tools crashed'));
+    mockRunSecToolsStep.mockRejectedValueOnce(new Error('All configured authentication methods failed'));
 
-    await runPipeline(makeScan());
-
-    expect(mockRunImportStep).toHaveBeenCalled();
-    expect(mockRunTriageStep).toHaveBeenCalled();
+    await expect(runPipeline(makeScan())).rejects.toThrow('authentication methods failed');
+    expect(mockRunImportStep).not.toHaveBeenCalled();
   });
 
-  it('continues when optional triage step fails', async () => {
+  it('fails the scan when triage step throws', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunTriageStep.mockRejectedValueOnce(new Error('triage failed'));
 
-    // Should not throw — triage is optional
-    await runPipeline(makeScan());
+    await expect(runPipeline(makeScan())).rejects.toThrow('triage failed');
   });
 
   it('accumulates step outputs and passes to subsequent steps', async () => {
@@ -389,17 +383,16 @@ describe('runPipeline', () => {
     expect(mockDb.values).toHaveBeenCalled();
   });
 
-  it('parallel steps both run even if one fails (non-required)', async () => {
+  it('parallel group: both steps run to completion, then pipeline fails on the rejection', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunSecToolsStep.mockRejectedValueOnce(new Error('sec-tools error'));
 
-    await runPipeline(makeScan());
-
-    // ai-research should still have been called
+    await expect(runPipeline(makeScan())).rejects.toThrow('sec-tools error');
+    // ai-research was started in parallel and runs to completion (allSettled)
     expect(mockRunAiResearchStep).toHaveBeenCalledTimes(1);
-    // import should still run after parallel group
-    expect(mockRunImportStep).toHaveBeenCalledTimes(1);
+    // Subsequent sequential steps must NOT run after the parallel group fails
+    expect(mockRunImportStep).not.toHaveBeenCalled();
   });
 });
 

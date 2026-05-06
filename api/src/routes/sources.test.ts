@@ -227,6 +227,61 @@ describe('Sources API', () => {
       expect(body.discovery_error).toBe('GitHub API error: 401');
     });
 
+    it('returns 422 and deletes orphan source when single-repo discovery fails', async () => {
+      mockDbSelectEmpty();
+      (parseGitUrl as any).mockReturnValue({
+        provider: 'github',
+        orgName: 'myorg',
+        repoSlug: 'private-repo',
+        baseUrl: 'https://api.github.com',
+      });
+
+      const mockClient = {
+        detectOrgType: vi.fn(),
+        getRepo: vi.fn().mockRejectedValue(new Error('GitHub API error: 404')),
+      };
+      (createClient as any).mockReturnValue(mockClient);
+      (createSource as any).mockResolvedValue({ id: 99, workspaceId: 1, provider: 'github', orgName: 'myorg' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/sources',
+        payload: { workspace_id: 1, url: 'https://github.com/myorg/private-repo' },
+      });
+
+      expect(res.statusCode).toBe(422);
+      const body = res.json();
+      expect(body.error).toContain('GitHub API error: 404');
+      expect(body.code).toBe('DISCOVERY_FAILED');
+      expect(deleteSource).toHaveBeenCalledWith(99);
+    });
+
+    it('returns 429 when single-repo discovery hits RATE_LIMITED', async () => {
+      mockDbSelectEmpty();
+      (parseGitUrl as any).mockReturnValue({
+        provider: 'github',
+        orgName: 'myorg',
+        repoSlug: 'myrepo',
+        baseUrl: 'https://api.github.com',
+      });
+
+      const mockClient = {
+        detectOrgType: vi.fn(),
+        getRepo: vi.fn().mockRejectedValue(new Error('RATE_LIMITED')),
+      };
+      (createClient as any).mockReturnValue(mockClient);
+      (createSource as any).mockResolvedValue({ id: 100, workspaceId: 1, provider: 'github', orgName: 'myorg' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/sources',
+        payload: { workspace_id: 1, url: 'https://github.com/myorg/myrepo' },
+      });
+
+      expect(res.statusCode).toBe(429);
+      expect(deleteSource).toHaveBeenCalledWith(100);
+    });
+
     it('discovers single repo when URL has repo slug', async () => {
       mockDbSelectEmpty();
       (parseGitUrl as any).mockReturnValue({

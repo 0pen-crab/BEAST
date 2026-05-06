@@ -3,6 +3,7 @@ import { db } from './db/index.ts';
 import { startScanWorker, stopScanWorker } from './orchestrator/worker.ts';
 import { startSyncWorker, stopSyncWorker } from './orchestrator/sync-worker.ts';
 import { startFeedbackWorker, stopFeedbackWorker } from './orchestrator/feedback-worker.ts';
+import { runInfraCheck } from './orchestrator/infra-check.ts';
 
 async function main() {
   console.log('[worker-main] Starting BEAST workers...');
@@ -17,6 +18,11 @@ async function main() {
       throw err;
     }
   }
+
+  // Boot-time infra connectivity check. Failure is logged to console + scan_events
+  // (Events tab) so a broken SCANNER_SSH_PUBKEY surfaces immediately instead of
+  // poisoning every scan with "All configured authentication methods failed".
+  await runInfraCheck();
 
   await startScanWorker();
   startSyncWorker();

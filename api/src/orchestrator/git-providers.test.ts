@@ -170,6 +170,72 @@ describe('git-providers', () => {
       vi.unstubAllGlobals();
     });
 
+    it('getRepo throws RATE_LIMITED on 403', async () => {
+      const { GitHubClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => '{"message":"API rate limit exceeded"}',
+      } as any);
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitHubClient('https://api.github.com');
+      await expect(client.getRepo('myorg', 'myrepo')).rejects.toThrow('RATE_LIMITED');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('getRepo throws RATE_LIMITED on 429', async () => {
+      const { GitHubClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => '',
+      } as any);
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitHubClient('https://api.github.com');
+      await expect(client.getRepo('myorg', 'myrepo')).rejects.toThrow('RATE_LIMITED');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('getRepo throws GitHub API error on 404', async () => {
+      const { GitHubClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => '{"message":"Not Found"}',
+      } as any);
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitHubClient('https://api.github.com');
+      await expect(client.getRepo('myorg', 'missing')).rejects.toThrow(/404/);
+
+      vi.unstubAllGlobals();
+    });
+
+    it('getRepo logs response body on error', async () => {
+      const { GitHubClient } = await import('./git-providers.ts');
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => '{"message":"You have exceeded a secondary rate limit"}',
+      } as any);
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitHubClient('https://api.github.com');
+      await expect(client.getRepo('myorg', 'myrepo')).rejects.toThrow();
+
+      const logged = consoleSpy.mock.calls.flat().join(' ');
+      expect(logged).toContain('secondary rate limit');
+      expect(logged).toContain('myorg/myrepo');
+
+      consoleSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
     it('extracts size, language, and pushed_at metadata', async () => {
       const { GitHubClient } = await import('./git-providers.ts');
       const client = new GitHubClient('https://api.github.com');

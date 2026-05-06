@@ -1262,6 +1262,63 @@ body {
   color: var(--th-text);
 }
 
+/* ── Notifications (fixed, top-right) ── */
+.beast-notification-stack {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  pointer-events: none;
+}
+
+.beast-notification {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--th-border);
+  background: var(--th-card);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+}
+
+.beast-notification-error {
+  border-color: var(--color-beast-red);
+  background: color-mix(in srgb, var(--color-beast-red) 10%, var(--th-card));
+  color: #fca5a5;
+}
+
+.beast-notification-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.beast-notification-title {
+  font-weight: 600;
+  color: var(--th-text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+}
+
+.beast-notification-detail {
+  color: var(--th-text-muted);
+  font-size: 12px;
+}
+
+.beast-notification-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 /* ── Inline confirm ── */
 .beast-inline-confirm {
   display: flex;
