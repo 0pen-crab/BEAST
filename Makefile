@@ -16,14 +16,11 @@ install:
 		cp .env.example .env; \
 		echo "  Created .env from .env.example"; \
 	fi
+	@# Always rewrite SCANNER_SSH_PUBKEY to the current public key.
+	@# Portable (no `sed -i` — BSD/GNU diverge): drop existing line, append fresh.
 	@PUBKEY=$$(cat keys/beast-scanner.pub); \
-	if grep -q "^SCANNER_SSH_PUBKEY=" .env 2>/dev/null; then \
-		sed -i "s|^SCANNER_SSH_PUBKEY=.*|SCANNER_SSH_PUBKEY=$$PUBKEY|" .env; \
-	else \
-		echo "" >> .env; \
-		echo "SCANNER_SSH_PUBKEY=$$PUBKEY" >> .env; \
-	fi; \
-	echo "  SSH public key written to .env"
+	{ grep -v '^SCANNER_SSH_PUBKEY=' .env 2>/dev/null || true; echo "SCANNER_SSH_PUBKEY=$$PUBKEY"; } > .env.tmp && mv .env.tmp .env
+	@echo "  SSH public key written to .env"
 	@if ! grep -q "^ENCRYPTION_KEY=" .env 2>/dev/null; then \
 		EKEY=$$(openssl rand -hex 32); \
 		echo "ENCRYPTION_KEY=$$EKEY" >> .env; \
@@ -39,8 +36,41 @@ install:
 		echo "  Internal API token already exists (keeping existing)"; \
 	fi
 	@echo ""
+	@echo "Verifying .env values..."
+	@for var in SCANNER_SSH_PUBKEY ENCRYPTION_KEY INTERNAL_TOKEN; do \
+		val=$$(grep "^$$var=" .env | head -1 | cut -d= -f2-); \
+		if [ -z "$$val" ]; then \
+			echo "  ERROR: $$var is empty in .env — refusing to continue"; \
+			exit 1; \
+		fi; \
+		echo "  $$var: ok"; \
+	done
+	@echo ""
 	@echo "Building and starting containers..."
 	@docker compose up -d --build
+	@echo ""
+	@echo "Verifying SSH connectivity (host -> security-tools:2223, claude-runner:7722)..."
+	@for entry in security-tools:2223 claude-runner:7722; do \
+		host=$${entry%:*}; port=$${entry#*:}; ok=0; \
+		for i in 1 2 3 4 5 6 7 8; do \
+			if ssh -i keys/beast-scanner -p $$port \
+				-o StrictHostKeyChecking=no \
+				-o UserKnownHostsFile=/dev/null \
+				-o ConnectTimeout=3 \
+				-o BatchMode=yes \
+				scanner@localhost 'echo ok' >/dev/null 2>&1; then \
+				ok=1; break; \
+			fi; \
+			sleep 2; \
+		done; \
+		if [ $$ok -eq 1 ]; then \
+			echo "  $$host: ok"; \
+		else \
+			echo "  ERROR: SSH to $$host (localhost:$$port) failed after 8 attempts"; \
+			echo "  Hint: docker compose logs $$host"; \
+			exit 1; \
+		fi; \
+	done
 	@echo ""
 	@echo "=== BEAST Installation Complete ==="
 	@echo "  1. Open http://localhost:8000"

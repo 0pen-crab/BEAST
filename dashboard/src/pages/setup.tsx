@@ -28,7 +28,7 @@ export function SetupPage() {
         else setChecking(false);
       })
       .catch((err) => {
-        console.error('[setup] Setup status check failed:', err);
+        console.error('[setup] setup-status check failed:', err);
         setChecking(false);
       });
   }, [navigate]);

@@ -27,7 +27,7 @@ export function LoginPage() {
         if (data.needsSetup) navigate('/setup', { replace: true });
       })
       .catch((err) => {
-        console.error('[login] Setup status check failed:', err);
+        console.error('[login] setup-status check failed:', err);
       });
   }, [navigate]);
 

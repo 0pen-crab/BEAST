@@ -5,7 +5,6 @@ import {
   type Scan, type ScanStep,
 } from '../db/schema.ts';
 import type { PipelineContext, StepDef } from './pipeline-types.ts';
-import { RateLimitError } from './rate-limit.ts';
 import { runCloneStep } from './steps/clone.ts';
 import { runAnalysisStep } from './steps/analyzer.ts';
 import { runSecToolsStep } from './steps/security-tools.ts';
@@ -19,30 +18,34 @@ export type { PipelineContext } from './pipeline-types.ts';
 // ── Step definitions ─────────────────────────────────────────
 // Array = parallel group. Steps run sequentially unless grouped.
 
+// Steps run sequentially. A nested array runs as a parallel group. Any step
+// that throws fails the whole scan — steps that have nothing to do MUST
+// return successfully without throwing (e.g. security-tools when no tools
+// are enabled).
 const STEPS: (StepDef | StepDef[])[] = [
-  { name: 'clone',          run: runCloneStep,      required: true },
-  { name: 'analysis',       run: runAnalysisStep,   required: false },
+  { name: 'clone',          run: runCloneStep      },
+  { name: 'analysis',       run: runAnalysisStep   },
   [
-    { name: 'security-tools', run: runSecToolsStep,   required: false },
-    { name: 'ai-research',    run: runAiResearchStep, required: false },
+    { name: 'security-tools', run: runSecToolsStep   },
+    { name: 'ai-research',    run: runAiResearchStep },
   ],
-  { name: 'import',         run: runImportStep,      required: true },
-  { name: 'triage-report',  run: runTriageStep,      required: false },
+  { name: 'import',         run: runImportStep     },
+  { name: 'triage-report',  run: runTriageStep     },
 ];
 
 // Flat list for step row creation (preserves order)
-function flatSteps(): { name: string; order: number; required: boolean }[] {
+function flatSteps(): { name: string; order: number }[] {
   let order = 0;
-  const result: { name: string; order: number; required: boolean }[] = [];
+  const result: { name: string; order: number }[] = [];
   for (const entry of STEPS) {
     if (Array.isArray(entry)) {
       for (const s of entry) {
         order++;
-        result.push({ name: s.name, order, required: s.required });
+        result.push({ name: s.name, order });
       }
     } else {
       order++;
-      result.push({ name: entry.name, order, required: entry.required });
+      result.push({ name: entry.name, order });
     }
   }
   return result;
@@ -226,41 +229,24 @@ export async function runPipeline(scan: Scan): Promise<void> {
     if (await checkCancelled(scanId)) throw new Error('Scan cancelled by user');
 
     if (Array.isArray(entry)) {
-      // Parallel group — run all steps concurrently
+      // Parallel group — run all to completion, then fail if any did.
+      // allSettled (not Promise.all) so we don't leave the others orphaned
+      // when one rejects.
       const results = await Promise.allSettled(
-        entry.map(step =>
-          executeStep(step, ctx, accumulated, stepRows)
-            .catch(err => {
-              if (err instanceof RateLimitError || step.required) throw err;
-              // Non-required step failure: log and return empty output
-              return {} as Record<string, unknown>;
-            }),
-        ),
+        entry.map(step => executeStep(step, ctx, accumulated, stepRows)),
       );
 
-      // Merge successful outputs into accumulated
       for (const r of results) {
         if (r.status === 'fulfilled' && r.value) {
           accumulated = { ...accumulated, ...r.value };
         }
       }
 
-      // Check if any parallel step failed fatally (required or rate limit)
-      for (let i = 0; i < entry.length; i++) {
-        if (results[i].status === 'rejected') {
-          const reason = (results[i] as PromiseRejectedResult).reason;
-          if (reason instanceof RateLimitError || entry[i].required) throw reason;
-        }
-      }
+      const firstRejection = results.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+      if (firstRejection) throw firstRejection.reason;
     } else {
-      // Sequential step
-      try {
-        const output = await executeStep(entry, ctx, accumulated, stepRows);
-        accumulated = { ...accumulated, ...output };
-      } catch (err) {
-        if (err instanceof RateLimitError || entry.required) throw err;
-        // Non-required step failure — continue
-      }
+      const output = await executeStep(entry, ctx, accumulated, stepRows);
+      accumulated = { ...accumulated, ...output };
     }
   }
 

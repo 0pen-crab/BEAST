@@ -18,6 +18,12 @@
   "topbar": {
     "signOut": "Sign out"
   },
+  "health": {
+    "title": "Backend unreachable",
+    "degradedTitle": "Infrastructure issue",
+    "detail": "API health check failed. Check that the API container is running.",
+    "retry": "Retry"
+  },
   "workspace": {
     "select": "Select workspace",
     "namePlaceholder": "Workspace name",
@@ -233,7 +239,6 @@
     "commit": "Commit",
     "defaultBranch": "Default branch",
     "latest": "Latest",
-    "localPathHint": "Relative to shared folder (/mnt/hgfs/shared/)",
     "scanQueued": "Scan queued successfully.",
     "startScan": "Start Scan",
     "submitting": "Submitting..."

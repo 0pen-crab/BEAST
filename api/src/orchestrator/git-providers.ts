@@ -195,7 +195,12 @@ export class GitHubClient {
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
     const res = await fetch(`${this.baseUrl}/repos/${owner}/${repoSlug}`, { headers });
-    if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[GitHub] getRepo ${owner}/${repoSlug} failed: ${res.status} ${body.slice(0, 500)}`);
+      if (res.status === 403 || res.status === 429) throw new Error('RATE_LIMITED');
+      throw new Error(`GitHub API error: ${res.status}`);
+    }
     const r = await res.json();
 
     return {

@@ -90,7 +90,6 @@ services:
     volumes:
       - claude_workspaces:/workspace
       - claude_auth:/home/scanner/.claude
-      - /mnt/hgfs/shared:/local-repos:ro
 
   security-tools:
     build:
@@ -104,7 +103,6 @@ services:
       SCANNER_SSH_PUBKEY: ${SCANNER_SSH_PUBKEY:-}
     volumes:
       - claude_workspaces:/workspace
-      - /mnt/hgfs/shared:/local-repos:ro
       - ./custom-rules:/custom-rules:ro
 
 volumes:

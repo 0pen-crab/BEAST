@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { ProtectedRoute } from '@/components/protected-route';
+import { HealthNotification } from '@/components/health-notification';
 import { LoginPage } from '@/pages/login';
 import { SetupPage } from '@/pages/setup';
 import { AppLayout } from '@/components/layout/app-layout';
@@ -37,6 +38,7 @@ import { PipelineTestPage } from '@/pages/pipeline-test';
 export function App() {
   return (
     <BrowserRouter>
+      <HealthNotification />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
