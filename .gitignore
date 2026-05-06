@@ -18,6 +18,9 @@ test-results/
 custom-rules/*.yaml
 custom-rules/*.yml
 
+# IDE
+.idea/
+
 # Git worktrees
 .worktrees/
 .claude/
