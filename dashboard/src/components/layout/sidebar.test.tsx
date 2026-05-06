@@ -89,7 +89,7 @@ describe('Sidebar', () => {
 
   it('renders version footer', () => {
     renderWithProviders(<Sidebar {...defaultProps} />);
-    expect(screen.getByText('BEAST v0.1.0')).toBeInTheDocument();
+    expect(screen.getByText(`BEAST v${__APP_VERSION__}`)).toBeInTheDocument();
   });
 
   it('renders workspace switcher with current workspace name', () => {

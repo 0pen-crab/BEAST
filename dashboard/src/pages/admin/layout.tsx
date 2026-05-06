@@ -97,7 +97,7 @@ export function AdminLayout() {
 
           {/* Footer */}
           <div className="beast-sidebar-divider px-4 py-3">
-            <p className="beast-sidebar-footer">BEAST v0.1.0</p>
+            <p className="beast-sidebar-footer">BEAST v{__APP_VERSION__}</p>
           </div>
         </div>
 

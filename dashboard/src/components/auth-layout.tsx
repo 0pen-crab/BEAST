@@ -382,7 +382,7 @@ export function AuthLayout({ children, title }: AuthLayoutProps) {
             {/* Footer */}
             <div className="mt-auto pt-16 animate-fade-up" style={{ animationDelay: '0.3s' }}>
               <p className="text-[10px] tracking-[0.2em] uppercase text-gray-700">
-                v0.1.0
+                v{__APP_VERSION__}
               </p>
             </div>
           </div>
