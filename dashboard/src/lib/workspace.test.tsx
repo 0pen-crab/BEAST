@@ -22,6 +22,12 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     name: 'Default',
     description: null,
     defaultLanguage: 'en',
+    aiAnalysisEnabled: true,
+    aiScanningEnabled: true,
+    aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     createdAt: '2026-01-01T00:00:00Z',
     ...overrides,
   };

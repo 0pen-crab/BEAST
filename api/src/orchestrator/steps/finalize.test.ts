@@ -131,6 +131,9 @@ describe('ingestContributorStats', () => {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   } as PipelineContext);
 

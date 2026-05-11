@@ -6,6 +6,7 @@ import { findings, tests, scans, repositories, workspaces } from '../db/schema.t
 import { authorize } from '../lib/authorize.ts';
 import { sshExec, sshWriteFile, sshReadFile, getClaudeRunnerConfig, parseStreamJsonResult, SSHTimeoutError } from '../orchestrator/ssh.ts';
 import { getLanguageInstruction } from '../orchestrator/prompt-languages.ts';
+import { HARDCODED_MODELS } from '../orchestrator/ai-models.ts';
 import crypto from 'node:crypto';
 
 // ── In-memory job store ──────────────────────────────────────
@@ -119,7 +120,7 @@ async function runHighlightsAnalysis(jobId: string, csv: string, lang: string): 
     '- Do NOT write anything else — just read the input CSV and write the curated CSV',
   ].filter(Boolean).join('\n');
 
-  const command = `echo ${JSON.stringify(prompt)} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions`;
+  const command = `echo ${JSON.stringify(prompt)} | claude -p --model ${HARDCODED_MODELS.highlights} --verbose --output-format stream-json --dangerously-skip-permissions`;
 
   const result = await sshExec(config, command, {
     inactivityTimeoutMs: HIGHLIGHTS_INACTIVITY_MS,

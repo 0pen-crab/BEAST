@@ -34,6 +34,7 @@ vi.mock('react-router', async () => {
   return {
     ...actual,
     useNavigate: vi.fn(() => vi.fn()),
+    useParams: vi.fn(() => ({})),
   };
 });
 
@@ -57,7 +58,7 @@ vi.mock('@/api/hooks', () => ({
 
 vi.mock('@/lib/workspace', () => ({
   useWorkspace: vi.fn(() => ({
-    currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, createdAt: '2026-01-01' },
+    currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, aiModelAnalyzer: 'sonnet', aiModelScanner: 'opus', aiModelTriage: 'opus', createdAt: '2026-01-01' },
     workspaces: [{ id: 1, name: 'Test Workspace' }],
     switchWorkspace: vi.fn(),
     isLoading: false,
@@ -68,11 +69,16 @@ vi.mock('@/lib/workspace', () => ({
 
 const { useWorkspace } = await import('@/lib/workspace');
 const { canWrite } = await import('@/lib/permissions');
+const { useParams } = await import('react-router');
+
+function mockSection(section: 'ai' | 'tools' | undefined) {
+  vi.mocked(useParams).mockReturnValue(section ? { section } : {});
+}
 
 describe('SettingsPage', () => {
   beforeEach(() => {
     vi.mocked(useWorkspace).mockReturnValue({
-      currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, createdAt: '2026-01-01' },
+      currentWorkspace: { id: 1, name: 'Test Workspace', description: 'A test workspace', defaultLanguage: 'en', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, aiModelAnalyzer: 'sonnet', aiModelScanner: 'opus', aiModelTriage: 'opus', createdAt: '2026-01-01' },
       workspaces: [{ id: 1, name: 'Test Workspace' }],
       switchWorkspace: vi.fn(),
       isLoading: false,
@@ -80,6 +86,7 @@ describe('SettingsPage', () => {
       refetchWorkspaces: vi.fn(),
     } as any);
     vi.mocked(canWrite).mockReturnValue(true);
+    mockSection(undefined);
   });
 
   it('renders page title and subtitle', () => {
@@ -195,6 +202,7 @@ describe('SettingsPage', () => {
   });
 
   it('renders security tools section', () => {
+    mockSection('tools');
     renderWithProviders(<SettingsPage />);
 
     expect(screen.getByText('settings.securityTools')).toBeInTheDocument();
@@ -219,6 +227,7 @@ describe('SettingsPage', () => {
       isLoading: false,
     } as any);
 
+    mockSection('tools');
     renderWithProviders(<SettingsPage />);
 
     expect(screen.getByText('Gitleaks')).toBeInTheDocument();
@@ -226,6 +235,7 @@ describe('SettingsPage', () => {
 
   it('security tools section hidden for non-admin users', () => {
     vi.mocked(canWrite).mockReturnValue(false);
+    mockSection('tools');
 
     renderWithProviders(<SettingsPage />);
 
@@ -235,6 +245,7 @@ describe('SettingsPage', () => {
   // ── AI Capabilities Section ──
 
   it('renders three AI technique cards', () => {
+    mockSection('ai');
     renderWithProviders(<SettingsPage />);
 
     expect(screen.getByText('settings.aiAnalysis')).toBeInTheDocument();
@@ -243,6 +254,7 @@ describe('SettingsPage', () => {
   });
 
   it('renders AI technique descriptions', () => {
+    mockSection('ai');
     renderWithProviders(<SettingsPage />);
 
     expect(screen.getByText('settings.aiAnalysisDesc')).toBeInTheDocument();
@@ -251,6 +263,7 @@ describe('SettingsPage', () => {
   });
 
   it('shows Claude status indicator', () => {
+    mockSection('ai');
     renderWithProviders(<SettingsPage />);
 
     expect(screen.getByText('settings.claudeStatus:')).toBeInTheDocument();
@@ -263,6 +276,7 @@ describe('SettingsPage', () => {
       data: { status: 'not_authenticated' },
       isLoading: false,
     } as any);
+    mockSection('ai');
 
     renderWithProviders(<SettingsPage />);
 
@@ -270,15 +284,17 @@ describe('SettingsPage', () => {
   });
 
   it('shows toggle switches for each AI technique', () => {
+    mockSection('ai');
     renderWithProviders(<SettingsPage />);
 
     const toggles = document.querySelectorAll('.beast-toggle');
-    // At least 3 toggles for the AI techniques (there may be more from tool cards)
+    // At least 3 toggles for the AI techniques
     expect(toggles.length).toBeGreaterThanOrEqual(3);
   });
 
   it('AI section hidden for non-admin users', () => {
     vi.mocked(canWrite).mockReturnValue(false);
+    mockSection('ai');
 
     renderWithProviders(<SettingsPage />);
 
@@ -289,6 +305,7 @@ describe('SettingsPage', () => {
     const mockMutate = vi.fn();
     const { useUpdateAiSettings } = await import('@/api/hooks');
     vi.mocked(useUpdateAiSettings).mockReturnValue({ mutate: mockMutate, isPending: false } as any);
+    mockSection('ai');
 
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
@@ -302,5 +319,71 @@ describe('SettingsPage', () => {
       { ai_analysis_enabled: false },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  // ── Scan Depth Section ──
+
+  it('renders scan depth preset cards in AI section', () => {
+    mockSection('ai');
+    renderWithProviders(<SettingsPage />);
+
+    expect(screen.getByText('settings.scanDepth.title')).toBeInTheDocument();
+    expect(screen.getByText('settings.scanDepth.quick.label')).toBeInTheDocument();
+    expect(screen.getByText('settings.scanDepth.standard.label')).toBeInTheDocument();
+    expect(screen.getByText('settings.scanDepth.deep.label')).toBeInTheDocument();
+  });
+
+  it('standard preset is selected by default', () => {
+    mockSection('ai');
+    renderWithProviders(<SettingsPage />);
+
+    const standard = screen.getByText('settings.scanDepth.standard.label').closest('.beast-preset-tab');
+    expect(standard).toHaveClass('beast-preset-tab-active');
+  });
+
+  it('clicking preset card changes selection', async () => {
+    mockSection('ai');
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    const deepCard = screen.getByText('settings.scanDepth.deep.label').closest('.beast-preset-tab')!;
+    await user.click(deepCard);
+
+    expect(deepCard).toHaveClass('beast-preset-tab-active');
+  });
+
+  it('persists scan_depth via updateAiSettings when preset clicked', async () => {
+    const mockMutate = vi.fn();
+    const { useUpdateAiSettings } = await import('@/api/hooks');
+    vi.mocked(useUpdateAiSettings).mockReturnValue({ mutate: mockMutate, isPending: false } as any);
+    mockSection('ai');
+
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    const deepCard = screen.getByText('settings.scanDepth.deep.label').closest('.beast-preset-tab')!;
+    await user.click(deepCard);
+
+    expect(mockMutate).toHaveBeenCalledWith(
+      { scan_depth: 100 },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+    );
+  });
+
+  it('reflects workspace.scanDepth on initial render', () => {
+    vi.mocked(useWorkspace).mockReturnValue({
+      currentWorkspace: { id: 1, name: 'Test Workspace', description: null, defaultLanguage: 'en', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, aiModelAnalyzer: 'sonnet', aiModelScanner: 'opus', aiModelTriage: 'opus', scanDepth: 100, createdAt: '2026-01-01' },
+      workspaces: [{ id: 1, name: 'Test Workspace' }],
+      switchWorkspace: vi.fn(),
+      isLoading: false,
+      needsOnboarding: false,
+      refetchWorkspaces: vi.fn(),
+    } as any);
+    mockSection('ai');
+
+    renderWithProviders(<SettingsPage />);
+
+    const deep = screen.getByText('settings.scanDepth.deep.label').closest('.beast-preset-tab');
+    expect(deep).toHaveClass('beast-preset-tab-active');
   });
 });

@@ -638,7 +638,7 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
     else return reply.status(400).send({ error: 'Unsupported archive format. Use .zip, .tar, or .tar.gz' });
 
     const { randomUUID } = await import('crypto');
-    const { mkdirSync, createWriteStream, readdirSync, statSync, existsSync } = await import('fs');
+    const { mkdirSync, createWriteStream, readdirSync, statSync, existsSync, rmSync } = await import('fs');
     const { join, relative, basename } = await import('path');
     const { execSync } = await import('child_process');
     const { pipeline } = await import('stream/promises');
@@ -660,6 +660,14 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       execSync(`tar -xzf "${archivePath}" -C "${extractDir}"`);
     } else {
       execSync(`tar -xf "${archivePath}" -C "${extractDir}"`);
+    }
+
+    // macOS Finder injects __MACOSX/ alongside the real tree when zipping. Remove
+    // it before walking — otherwise the scanner picks AppleDouble metadata as a
+    // "repo" and produces 0 findings on the actual code.
+    const macosxDir = join(extractDir, '__MACOSX');
+    if (existsSync(macosxDir)) {
+      rmSync(macosxDir, { recursive: true, force: true });
     }
 
     // Recursive walk: find all directories containing .git

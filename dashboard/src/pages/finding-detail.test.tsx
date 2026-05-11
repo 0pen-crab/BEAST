@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test-utils';
@@ -88,6 +88,20 @@ const mockFinding = {
   scanId: 'scan-abc-123',
 };
 
+const mockDuplicates: Array<{
+  id: number;
+  tool: string;
+  title: string;
+  severity: 'High' | 'Critical';
+  filePath: string | null;
+  line: number | null;
+  codeSnippet: string | null;
+  secretValue: string | null;
+  category: string | null;
+  vulnIdFromTool: string | null;
+  status: string;
+}> = [];
+
 vi.mock('@/api/hooks', () => ({
   useFinding: vi.fn(() => ({
     data: mockFinding,
@@ -97,6 +111,10 @@ vi.mock('@/api/hooks', () => ({
     data: [
       { id: 1, findingId: 42, author: 'admin', noteType: 'comment', content: 'Test note', createdAt: '2026-01-05T12:00:00Z' },
     ],
+    isLoading: false,
+  })),
+  useFindingDuplicates: vi.fn(() => ({
+    data: mockDuplicates,
     isLoading: false,
   })),
   useUpdateFinding: vi.fn(() => ({
@@ -146,7 +164,8 @@ describe('FindingDetailPage', () => {
     expect(screen.getByRole('button', { name: /false positive/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /fixed/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /accepted/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /duplicate/i })).toBeInTheDocument();
+    // 'Duplicate' deliberately omitted — only AI triage sets that status (needs duplicate_of FK)
+    expect(screen.queryByRole('button', { name: /^duplicate$/i })).not.toBeInTheDocument();
   });
 
   // --- Meta row ---
@@ -241,5 +260,132 @@ describe('FindingDetailPage', () => {
     });
     renderWithProviders(<FindingDetailPage />);
     expect(screen.getByText(/not found/i)).toBeInTheDocument();
+  });
+
+  // --- Duplicate-of banner (when this finding IS a duplicate) ---
+  describe('Duplicate-of banner', () => {
+    beforeEach(async () => {
+      const hooks = await import('@/api/hooks');
+      (hooks.useFindingDuplicates as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false });
+    });
+
+    it('does not render banner when finding is not a duplicate', async () => {
+      const hooks = await import('@/api/hooks');
+      (hooks.useFinding as ReturnType<typeof vi.fn>).mockReturnValue({
+        data: { ...mockFinding, status: 'open', duplicateOf: null },
+        isLoading: false,
+      });
+      renderWithProviders(<FindingDetailPage />);
+      expect(screen.queryByText(/Duplicate of/i)).not.toBeInTheDocument();
+    });
+
+    it('renders banner with link to survivor when finding is duplicate', async () => {
+      const hooks = await import('@/api/hooks');
+      (hooks.useFinding as ReturnType<typeof vi.fn>).mockReturnValue({
+        data: {
+          ...mockFinding,
+          status: 'duplicate',
+          duplicateOf: 999,
+          duplicateOfFinding: {
+            id: 999,
+            title: 'Hardcoded Oracle credentials',
+            tool: 'beast',
+            filePath: 'src/db.cs',
+            line: 21,
+            severity: 'High' as const,
+          },
+        },
+        isLoading: false,
+      });
+      renderWithProviders(<FindingDetailPage />);
+      const link = screen.getByText(/#999/).closest('a');
+      expect(link).toHaveAttribute('href', '/findings/999');
+      expect(screen.getByText(/Hardcoded Oracle credentials/i)).toBeInTheDocument();
+      expect(screen.getByText('src/db.cs:21')).toBeInTheDocument();
+    });
+  });
+
+  // --- Duplicates section ---
+  describe('Duplicates section', () => {
+    beforeEach(async () => {
+      const hooks = await import('@/api/hooks');
+      (hooks.useFinding as ReturnType<typeof vi.fn>).mockReturnValue({
+        data: mockFinding,
+        isLoading: false,
+      });
+    });
+
+    it('does not render section when there are no duplicates', () => {
+      renderWithProviders(<FindingDetailPage />);
+      // Section header text should not appear
+      expect(screen.queryByText(/findings\.detail\.duplicates/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Also found by/i)).not.toBeInTheDocument();
+    });
+
+    it('renders section with duplicate rows when duplicates exist', async () => {
+      const hooks = await import('@/api/hooks');
+      (hooks.useFindingDuplicates as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        data: [
+          {
+            id: 100,
+            tool: 'gitleaks',
+            title: 'Secret detected: generic-api-key',
+            severity: 'High',
+            filePath: 'config/settings.ts',
+            line: 10,
+            codeSnippet: null,
+            secretValue: 'ab**xy',
+            category: 'secrets',
+            vulnIdFromTool: 'generic-api-key',
+            status: 'duplicate',
+          },
+          {
+            id: 101,
+            tool: 'trufflehog',
+            title: 'Verified secret: AWS',
+            severity: 'Critical',
+            filePath: 'config/settings.ts',
+            line: 11,
+            codeSnippet: null,
+            secretValue: null,
+            category: 'secrets',
+            vulnIdFromTool: 'trufflehog-AWS',
+            status: 'duplicate',
+          },
+        ],
+        isLoading: false,
+      });
+      renderWithProviders(<FindingDetailPage />);
+
+      // 'gitleaks' may appear elsewhere (main finding tool); just ensure trufflehog row rendered
+      expect(screen.getByText('trufflehog')).toBeInTheDocument();
+      // ':11' is unique to the duplicate row (main finding is at line 10)
+      expect(screen.getByText('config/settings.ts:11')).toBeInTheDocument();
+    });
+
+    it('each duplicate is a clickable link to its detail page', async () => {
+      const hooks = await import('@/api/hooks');
+      (hooks.useFindingDuplicates as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        data: [
+          {
+            id: 100,
+            tool: 'gitleaks',
+            title: 'Secret detected',
+            severity: 'High',
+            filePath: 'a.ts',
+            line: 5,
+            codeSnippet: null,
+            secretValue: null,
+            category: 'secrets',
+            vulnIdFromTool: 'x',
+            status: 'duplicate',
+          },
+        ],
+        isLoading: false,
+      });
+      renderWithProviders(<FindingDetailPage />);
+      const link = screen.getByText('a.ts:5').closest('a');
+      expect(link).toHaveAttribute('href', '/findings/100');
+    });
   });
 });

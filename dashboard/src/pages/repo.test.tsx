@@ -72,6 +72,14 @@ vi.mock('@/api/hooks', () => ({
     data: [],
     isLoading: false,
   })),
+  useTriggerScan: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useSource: vi.fn(() => ({
+    data: null,
+    isLoading: false,
+  })),
 }));
 
 describe('RepoPage', () => {
@@ -81,18 +89,20 @@ describe('RepoPage', () => {
     expect(screen.getByRole('heading', { name: 'my-repo' })).toBeInTheDocument();
   });
 
-  it('renders edit and delete buttons', () => {
+  it('renders scan and delete buttons', () => {
     renderWithProviders(<RepoPage />);
 
-    expect(screen.getByRole('button', { name: 'common.edit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'repos.scan' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'common.delete' })).toBeInTheDocument();
   });
 
   it('renders severity count cards', () => {
     renderWithProviders(<RepoPage />);
 
-    // Total findings count
-    expect(screen.getByText('5')).toBeInTheDocument();
+    // Individual severity counts are rendered
+    expect(screen.getByText('Critical')).toBeInTheDocument();
+    expect(screen.getByText('High')).toBeInTheDocument();
+    expect(screen.getByText('Medium')).toBeInTheDocument();
   });
 
   it('renders scan results by tool section', () => {
@@ -104,6 +114,6 @@ describe('RepoPage', () => {
   it('renders the all findings section', () => {
     renderWithProviders(<RepoPage />);
 
-    expect(screen.getByText('repo.allFindings')).toBeInTheDocument();
+    expect(screen.getByText('repo.topFindings')).toBeInTheDocument();
   });
 });

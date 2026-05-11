@@ -99,6 +99,9 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   };
 }
@@ -192,10 +195,10 @@ describe('TOOL_MAP', () => {
       'trivy-secrets', 'trivy-sca', 'trivy-iac',
       'jf-audit', 'semgrep', 'osv-scanner',
       'checkov', 'gitguardian', 'snyk-sca', 'snyk-code', 'snyk-iac',
-      'bearer', 'presidio', 'semgrep-pii',
+      'presidio', 'semgrep-pii',
     ];
     expect(Object.keys(TOOL_MAP)).toEqual(expect.arrayContaining(expectedKeys));
-    expect(Object.keys(TOOL_MAP)).toHaveLength(17);
+    expect(Object.keys(TOOL_MAP)).toHaveLength(16);
   });
 });
 
@@ -212,7 +215,6 @@ describe('TOOL_CATEGORY_MAP', () => {
 
   it('maps PII tools to pii category', async () => {
     const { TOOL_CATEGORY_MAP } = await import('./import-results.ts');
-    expect(TOOL_CATEGORY_MAP['bearer']).toBe('pii');
     expect(TOOL_CATEGORY_MAP['presidio']).toBe('pii');
     expect(TOOL_CATEGORY_MAP['semgrep-pii']).toBe('pii');
   });
@@ -957,6 +959,71 @@ describe('deduplicateAssessments', () => {
 });
 
 // ── deduplicateFeedbackText ──────────────────────────────────────
+
+describe('extractCodeSnippet', () => {
+  it('extracts 15 lines (7 above + target + 7 below)', async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(lines.join('\n'));
+
+    const { extractCodeSnippet } = await import('./import-results.ts');
+    const result = extractCodeSnippet('/repo', 'file.ts', 15);
+
+    expect(result).toBeDefined();
+    // Should contain line 8 (7 above target 15) through line 22 (7 below target 15)
+    const resultLines = result!.split('\n');
+    expect(resultLines).toHaveLength(15);
+    // Target line (15) should be marked with >
+    const markerLine = resultLines.find(l => l.startsWith('>'));
+    expect(markerLine).toContain('line 15');
+  });
+
+  it('handles target near start of file', async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(lines.join('\n'));
+
+    const { extractCodeSnippet } = await import('./import-results.ts');
+    const result = extractCodeSnippet('/repo', 'file.ts', 3);
+
+    expect(result).toBeDefined();
+    // Can't go 7 above line 3, so starts from line 1
+    const resultLines = result!.split('\n');
+    // Should include lines 1-10 (line 3 target, 2 above, 7 below)
+    expect(resultLines.length).toBeGreaterThanOrEqual(10);
+    expect(resultLines[0]).toContain('line 1');
+  });
+
+  it('handles target near end of file', async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(lines.join('\n'));
+
+    const { extractCodeSnippet } = await import('./import-results.ts');
+    const result = extractCodeSnippet('/repo', 'file.ts', 19);
+
+    expect(result).toBeDefined();
+    const resultLines = result!.split('\n');
+    // Should include up to line 20 (end of file)
+    expect(resultLines[resultLines.length - 1]).toContain('line 20');
+  });
+
+  it('returns undefined for missing file', async () => {
+    mockExistsSync.mockReturnValue(false);
+
+    const { extractCodeSnippet } = await import('./import-results.ts');
+    const result = extractCodeSnippet('/repo', 'missing.ts', 5);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when line is null', async () => {
+    const { extractCodeSnippet } = await import('./import-results.ts');
+    const result = extractCodeSnippet('/repo', 'file.ts', null);
+
+    expect(result).toBeUndefined();
+  });
+});
 
 describe('deduplicateFeedbackText', () => {
   it('removes duplicated sections', async () => {

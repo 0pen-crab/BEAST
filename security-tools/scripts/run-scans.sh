@@ -63,7 +63,6 @@ write_empty_result() {
     *.json)
       case "$key" in
         trivy-*) echo '{"Results":[]}' > "$outfile" ;;
-        bearer) echo '{}' > "$outfile" ;;
         *) echo '[]' > "$outfile" ;;
       esac
       ;;
@@ -307,7 +306,7 @@ fi
 
 # -- Semgrep (SAST) -----------------------------------------------------------
 if is_enabled "semgrep"; then
-  SEMGREP_ARGS=(--config auto --config p/owasp-top-ten --config p/trailofbits --config /rules/apiiro)
+  SEMGREP_ARGS=(--config auto --config p/owasp-top-ten --config p/trailofbits)
   # Auto-discover custom rules from /custom-rules (mounted volume)
   if [ -d /custom-rules ] && find /custom-rules \( -name "*.yaml" -o -name "*.yml" \) -print -quit | grep -q .; then
     echo "[security-tools] Custom semgrep rules found in /custom-rules"
@@ -391,14 +390,6 @@ else
   TOOL_STATUS["snyk-iac"]="skipped"; TOOL_EXIT["snyk-iac"]=""; TOOL_FILE["snyk-iac"]="null"; TOOL_DURATION["snyk-iac"]=0
 fi
 
-# -- Bearer (PII — sensitive data flows) --------------------------------------
-if is_enabled "bearer"; then
-  run_tool "bearer" "$RESULTS_DIR/bearer-results.json" \
-    bearer scan "$REPO_PATH" --report dataflow --format json --output "$RESULTS_DIR/bearer-results.json" --quiet
-else
-  TOOL_STATUS["bearer"]="skipped"; TOOL_EXIT["bearer"]=""; TOOL_FILE["bearer"]="null"; TOOL_DURATION["bearer"]=0
-fi
-
 # -- Presidio (PII — NLP-based personal data detection) -----------------------
 if is_enabled "presidio"; then
   run_tool "presidio" "$RESULTS_DIR/presidio-results.sarif" \
@@ -419,7 +410,7 @@ echo "[security-tools] All scans complete"
 
 # -- Build JSON summary (last line of stdout) ------------------------------
 TOOLS_JSON=()
-for key in gitleaks trufflehog trivy-secrets trivy-sca trivy-iac jf-audit semgrep osv-scanner checkov gitguardian snyk-sca snyk-code snyk-iac bearer presidio semgrep-pii; do
+for key in gitleaks trufflehog trivy-secrets trivy-sca trivy-iac jf-audit semgrep osv-scanner checkov gitguardian snyk-sca snyk-code snyk-iac presidio semgrep-pii; do
   if [ -n "${TOOL_STATUS[$key]+x}" ]; then
     status="${TOOL_STATUS[$key]}"
     exit_code="${TOOL_EXIT[$key]}"

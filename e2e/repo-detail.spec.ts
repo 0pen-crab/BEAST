@@ -4,7 +4,6 @@ import { ensureLoggedIn } from './helpers';
 test.describe('Repo Detail Page', () => {
   test.beforeEach(async ({ page }) => {
     await ensureLoggedIn(page);
-    // Navigate to first available repo
     await page.goto('/repos');
     const repoLink = page.locator('a[href^="/repos/"]').first();
     if (await repoLink.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -14,8 +13,7 @@ test.describe('Repo Detail Page', () => {
   });
 
   test('displays repo name and status badge', async ({ page }) => {
-    if (!page.url().match(/\/repos\/\d+/)) return; // skip if no repos
-    // Repo name should be in a heading
+    if (!page.url().match(/\/repos\/\d+/)) return;
     await expect(page.locator('h1')).toBeVisible();
     await expect(page.locator('h1')).not.toBeEmpty();
   });
@@ -32,33 +30,39 @@ test.describe('Repo Detail Page', () => {
     expect(found).toBeGreaterThan(0);
   });
 
-  test('edit button opens edit dialog', async ({ page }) => {
+  test('edit button opens dialog with name and description fields', async ({ page }) => {
     if (!page.url().match(/\/repos\/\d+/)) return;
     const editBtn = page.getByRole('button', { name: /edit/i });
     if (await editBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await editBtn.click();
-      // Should see form inputs for name/description in the edit dialog
       await expect(page.locator('input[type="text"]').first()).toBeVisible();
       await expect(page.locator('textarea').first()).toBeVisible();
     }
   });
 
-  test('findings table shows with filters', async ({ page }) => {
+  test('edit dialog can be cancelled without saving', async ({ page }) => {
     if (!page.url().match(/\/repos\/\d+/)) return;
-    // Look for the "All Findings" heading
-    const findingsHeading = page.getByText(/all findings/i);
-    if (await findingsHeading.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-      // Filter controls section should be visible with "Filters" label
-      await expect(page.getByText(/filters/i).first()).toBeVisible({ timeout: 3000 });
+    const editBtn = page.getByRole('button', { name: /edit/i });
+    if (await editBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await editBtn.click();
+      await expect(page.locator('input[type="text"]').first()).toBeVisible();
+      // Click cancel
+      const cancelBtn = page.getByRole('button', { name: /cancel/i });
+      if (await cancelBtn.isVisible()) {
+        await cancelBtn.click();
+        await page.waitForTimeout(300);
+      }
     }
   });
 
-  test('tool cards are visible if tests exist', async ({ page }) => {
+  test('scan results by tool section is visible', async ({ page }) => {
     if (!page.url().match(/\/repos\/\d+/)) return;
-    // The section heading "Scan results by tool" should be visible
     const toolHeading = page.getByText(/scan results by tool/i);
     await expect(toolHeading).toBeVisible({ timeout: 5000 });
-    // Tool cards show tool display names: BEAST, Gitleaks, Trufflehog, Trivy, JFrog Xray
+  });
+
+  test('tool cards show known security tools', async ({ page }) => {
+    if (!page.url().match(/\/repos\/\d+/)) return;
     const toolNames = ['BEAST', 'Gitleaks', 'Trivy', 'Trufflehog', 'JFrog Xray'];
     let found = 0;
     for (const tool of toolNames) {
@@ -66,19 +70,28 @@ test.describe('Repo Detail Page', () => {
         found++;
       }
     }
-    // All 5 tool cards should render (even inactive ones show the name)
     expect(found).toBeGreaterThanOrEqual(1);
   });
 
-  test('delete button shows confirmation dialog', async ({ page }) => {
+  test('findings section shows with filters', async ({ page }) => {
+    if (!page.url().match(/\/repos\/\d+/)) return;
+    const findingsHeading = page.getByText(/all findings/i);
+    if (await findingsHeading.first().isVisible({ timeout: 5000 }).catch(() => false)) {
+      await expect(page.getByText(/filters/i).first()).toBeVisible({ timeout: 3000 });
+    }
+  });
+
+  test('delete button shows confirmation and cancel works', async ({ page }) => {
     if (!page.url().match(/\/repos\/\d+/)) return;
     const deleteBtn = page.getByRole('button', { name: /delete/i }).first();
     if (await deleteBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await deleteBtn.click();
-      // Confirmation dialog should appear with warning text
+      // Confirmation dialog
       await expect(page.getByText(/cannot be undone|all their data/i)).toBeVisible({ timeout: 3000 });
-      // Cancel to avoid actually deleting
+      // Cancel — do NOT delete
       await page.getByRole('button', { name: /cancel/i }).click();
+      // Should still be on repo page
+      await expect(page).toHaveURL(/\/repos\/\d+/);
     }
   });
 });

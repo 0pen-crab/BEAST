@@ -25,6 +25,11 @@ vi.mock('@/lib/theme', () => ({
   })),
 }));
 
+// Mock rate-limit-banner (uses useWorkspace internally)
+vi.mock('./rate-limit-banner', () => ({
+  RateLimitNotice: () => null,
+}));
+
 // Mock permissions
 vi.mock('@/lib/permissions', () => ({
   isSuperAdmin: vi.fn((role: string) => role === 'super_admin'),

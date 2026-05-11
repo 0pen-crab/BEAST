@@ -173,7 +173,7 @@ export function RepoPage() {
         )}
 
             {/* Reports (Profile + Audit) */}
-            <RepoReports repositoryId={productId} />
+            <RepoReports repositoryId={productId} repoName={repo?.name} />
 
             {/* Tool cards by category */}
             <div className="beast-stack-md">
@@ -387,11 +387,39 @@ function estimateReadingTime(content: string): number {
   return Math.max(1, Math.ceil(words / 220));
 }
 
-function ReportReader({ title, icon, content, updatedAt, onClose }: {
+function slugify(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildReportFileName(repoName: string | undefined, kind: 'profile' | 'audit'): string {
+  const base = repoName ? slugify(repoName) : 'repository';
+  const suffix = kind === 'profile' ? 'profile' : 'security-audit';
+  return `${base || 'repository'}-${suffix}.md`;
+}
+
+function downloadMarkdown(fileName: string, content: string): void {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function ReportReader({ title, icon, content, updatedAt, fileName, onClose }: {
   title: string;
   icon: React.ReactNode;
   content: string;
   updatedAt: string;
+  fileName: string;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -417,10 +445,20 @@ function ReportReader({ title, icon, content, updatedAt, onClose }: {
               {t('repo.generated')} {formatDate(updatedAt)} &middot; {estimateReadingTime(content)} min read
             </span>
           </div>
-          <button className="beast-reader-close" onClick={onClose}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
-            ESC
-          </button>
+          <div className="beast-reader-actions">
+            <button
+              className="beast-reader-action"
+              onClick={() => downloadMarkdown(fileName, content)}
+              title={fileName}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+              {t('repo.downloadMd', 'Download .md')}
+            </button>
+            <button className="beast-reader-close" onClick={onClose}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              ESC
+            </button>
+          </div>
         </div>
         <div className="beast-reader-body">
           <div className="beast-reader-content">
@@ -452,7 +490,7 @@ const ArrowIcon = () => (
   </svg>
 );
 
-function RepoReports({ repositoryId }: { repositoryId: number }) {
+function RepoReports({ repositoryId, repoName }: { repositoryId: number; repoName?: string }) {
   const { t } = useTranslation();
   const { data: reports, isLoading } = useRepoReports(repositoryId);
   const [reader, setReader] = useState<'profile' | 'audit' | null>(null);
@@ -528,6 +566,7 @@ function RepoReports({ repositoryId }: { repositoryId: number }) {
           icon={cards.find(c => c.key === reader)!.icon}
           content={readerData.content}
           updatedAt={readerData.updated_at}
+          fileName={buildReportFileName(repoName, reader)}
           onClose={() => setReader(null)}
         />,
         document.body,

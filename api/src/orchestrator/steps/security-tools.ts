@@ -4,6 +4,7 @@ import type { PipelineContext, StepInput, SecurityToolsOutput, ToolResult } from
 import { getSecret } from '../../lib/vault.ts';
 import { getWorkspaceTools } from '../entities.ts';
 import { getToolByKey } from '../../lib/tool-registry.ts';
+import { logScanEvent } from '../pipeline.ts';
 
 export interface ToolWarning {
   tool: string;
@@ -52,7 +53,7 @@ export async function runSecurityTools(ctx: PipelineContext): Promise<SecurityTo
   const enabledStr = enabledKeys.join(',');
   const cmd = `/scripts/run-scans.sh ${ctx.resultsDir} ${ctx.repoPath} "${enabledStr}" "${envFilePath}"`;
   console.log(`[security-tools] SSH command: ${cmd}`);
-  const result = await sshExec(sshConfig, cmd);
+  const result = await sshExec(sshConfig, cmd, { signal: ctx.cancelSignal });
   console.log(`[security-tools] SSH exit=${result.code}, stdout=${result.stdout.length} chars, stderr=${result.stderr.length} chars`);
   if (result.stderr) console.log(`[security-tools] stderr: ${result.stderr.slice(0, 500)}`);
 
@@ -112,6 +113,21 @@ export async function runSecToolsStep({ ctx, prev }: StepInput): Promise<Securit
       findingsCount: (i.findings_count as number) || 0,
       error: i.error as string | undefined,
     };
+
+    // Surface tool failures as scan events so they show up in the dashboard
+    // events tab — silent failures (osv-scanner timeouts, semgrep crashes etc.)
+    // were invisible before and just produced 0 findings without explanation.
+    if (status === 'failed') {
+      await logScanEvent(
+        ctx.scanId,
+        'security-tools',
+        'warning',
+        `${tool} failed: ${(i.error as string) || 'unknown error'}`,
+        { tool, durationMs: toolResults[tool].durationMs, raw: i },
+        ctx.repoName,
+        ctx.workspaceId,
+      );
+    }
   }
 
   return {

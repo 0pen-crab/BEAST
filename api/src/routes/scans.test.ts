@@ -304,19 +304,31 @@ describe('POST /scans', () => {
 // ── GET /scans/:id ───────────────────────────────────────────
 
 describe('GET /scans/:id', () => {
-  it('returns scan by id with steps', async () => {
+  it('returns scan by id with steps and module progress', async () => {
     const scan = { id: 'abc-123', status: 'completed', repoName: 'my-repo', workspaceId: 1 };
     mockGetScan.mockResolvedValueOnce(scan);
 
-    // Mock scanSteps query: db.select().from(scanSteps).where(...).orderBy(...)
+    // First select: scan_steps (with .orderBy chain)
+    // Second select: scan_modules (just .where chain)
     const steps = [{ id: 1, stepName: 'clone', status: 'completed' }];
-    mockDb.select.mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockResolvedValue(steps),
+    const modules = [
+      { status: 'completed' },
+      { status: 'completed' },
+      { status: 'pending' },
+    ];
+    mockDb.select
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockResolvedValue(steps),
+          }),
         }),
-      }),
-    });
+      })
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(modules),
+        }),
+      });
 
     const res = await app.inject({
       method: 'GET',
@@ -324,7 +336,35 @@ describe('GET /scans/:id', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ...scan, steps });
+    expect(res.json()).toEqual({
+      ...scan,
+      steps,
+      moduleProgress: { total: 3, completed: 2 },
+    });
+  });
+
+  it('returns moduleProgress {0,0} when scan has no modules', async () => {
+    const scan = { id: 'abc-123', status: 'queued', repoName: 'my-repo', workspaceId: 1 };
+    mockGetScan.mockResolvedValueOnce(scan);
+
+    mockDb.select
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      })
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      });
+
+    const res = await app.inject({ method: 'GET', url: '/scans/abc-123' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().moduleProgress).toEqual({ total: 0, completed: 0 });
   });
 
   it('returns 404 when scan not found', async () => {
@@ -429,6 +469,51 @@ describe('DELETE /scans/:id', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ deleted: true });
     expect(mockDb.delete).toHaveBeenCalled();
+  });
+});
+
+// ── POST /scans/:id/resume ──────────────────────────────────
+
+describe('POST /scans/:id/resume', () => {
+  it('returns 404 when scan not found', async () => {
+    mockGetScan.mockResolvedValueOnce(null);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/scans/nonexistent/resume',
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe('Scan not found');
+  });
+
+  it('returns 409 when scan is not paused', async () => {
+    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'completed', workspaceId: 1 });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/scans/abc/resume',
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toContain('Only paused scans');
+  });
+
+  it('clears resumes_at and returns 200 for paused scan', async () => {
+    mockGetScan.mockResolvedValueOnce({ id: 'abc', status: 'paused', workspaceId: 1, resumesAt: new Date() });
+    const setFn = vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue([]),
+    });
+    mockDb.update.mockReturnValue({ set: setFn });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/scans/abc/resume',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ resumed: true });
+    expect(setFn).toHaveBeenCalledWith({ resumesAt: null, error: null });
   });
 });
 

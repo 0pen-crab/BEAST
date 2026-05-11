@@ -868,6 +868,45 @@ describe('riskAcceptFinding', () => {
   });
 });
 
+describe('duplicateFinding', () => {
+  it('updates status to duplicate and writes duplicate_of FK when provided', async () => {
+    const row = { id: 7, status: 'duplicate', duplicate_of: 42 };
+    const setFn = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([row]),
+      }),
+    });
+    mockDb.update.mockReturnValue({ set: setFn });
+
+    const { duplicateFinding } = await entities();
+    const result = await duplicateFinding(7, 'Same as #42', 42);
+
+    expect(result).toEqual(row);
+    expect(setFn).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'duplicate',
+      duplicateOf: 42,
+      riskAcceptedReason: 'Same as #42',
+    }));
+  });
+
+  it('omits duplicate_of when not provided (legacy callers)', async () => {
+    const row = { id: 8, status: 'duplicate' };
+    const setFn = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([row]),
+      }),
+    });
+    mockDb.update.mockReturnValue({ set: setFn });
+
+    const { duplicateFinding } = await entities();
+    await duplicateFinding(8, 'reason');
+
+    const calledWith = setFn.mock.calls[0][0];
+    expect(calledWith.status).toBe('duplicate');
+    expect('duplicateOf' in calledWith).toBe(false);
+  });
+});
+
 // ── Finding Notes ──────────────────────────────────────────────────
 
 describe('addFindingNote', () => {

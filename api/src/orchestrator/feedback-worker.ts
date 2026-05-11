@@ -3,6 +3,7 @@ import { db } from '../db/index.ts';
 import { contributors, contributorAssessments, workspaces } from '../db/schema.ts';
 import { sshExec, sshWriteFile, getClaudeRunnerConfig, parseStreamJsonResult } from './ssh.ts';
 import { getLanguageInstruction } from './prompt-languages.ts';
+import { HARDCODED_MODELS } from './ai-models.ts';
 
 const POLL_INTERVAL = 5_000; // 5 seconds
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -111,7 +112,7 @@ export async function compileFeedback(contributorId: number): Promise<void> {
     // Write prompt to file via SFTP to avoid shell escaping issues with long prompts
     const promptPath = `/tmp/feedback-prompt-${contributorId}.txt`;
     await sshWriteFile(getClaudeRunnerConfig(), promptPath, prompt);
-    const command = `cat ${promptPath} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions && rm -f ${promptPath}`;
+    const command = `cat ${promptPath} | claude -p --model ${HARDCODED_MODELS.feedback} --verbose --output-format stream-json --dangerously-skip-permissions && rm -f ${promptPath}`;
     const result = await sshExec(getClaudeRunnerConfig(), command);
     const { result: parsed } = parseStreamJsonResult(result.stdout);
     if (parsed.is_error) throw new Error(String(parsed.result));

@@ -363,7 +363,7 @@ describe('runPipeline', () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockDb.where.mockImplementation(() => {
-      return Promise.resolve([{ status: 'running', defaultLanguage: 'uk', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true }]);
+      return Promise.resolve([{ status: 'running', defaultLanguage: 'uk', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, aiModelAnalyzer: 'sonnet', aiModelScanner: 'opus', aiModelTriage: 'opus' }]);
     });
 
     await runPipeline(makeScan({ workspaceId: 5 }));
@@ -393,6 +393,58 @@ describe('runPipeline', () => {
     expect(mockRunAiResearchStep).toHaveBeenCalledTimes(1);
     // Subsequent sequential steps must NOT run after the parallel group fails
     expect(mockRunImportStep).not.toHaveBeenCalled();
+  });
+
+  // ── Resume / pause behavior ──────────────────────────────────
+
+  it('skips steps already marked completed (resume scenario)', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    // Simulate existing completed steps for clone + analysis (resume)
+    // Pipeline first does: select existingSteps -> mockDb.where (return completed steps)
+    // Then for each completed step: select output -> also via mockDb.where
+    // checkCancelled also reads via mockDb.where; we need a flexible mock.
+    let callCount = 0;
+    mockDb.where.mockImplementation(() => {
+      callCount++;
+      // First call: existingSteps select (return all 6 steps with clone+analysis completed)
+      if (callCount === 1) {
+        return Promise.resolve([
+          { id: 1, scanId: 'scan-1', stepName: 'clone', stepOrder: 1, status: 'completed', output: { repoPath: '/repo', cloneUrl: '', branch: '', commitHash: '' } },
+          { id: 2, scanId: 'scan-1', stepName: 'analysis', stepOrder: 2, status: 'completed', output: { aiAvailable: true, profileGenerated: true, contributorsAssessed: 0, metadataPath: '' } },
+          { id: 3, scanId: 'scan-1', stepName: 'security-tools', stepOrder: 3, status: 'pending' },
+          { id: 4, scanId: 'scan-1', stepName: 'ai-research', stepOrder: 4, status: 'pending' },
+          { id: 5, scanId: 'scan-1', stepName: 'import', stepOrder: 5, status: 'pending' },
+          { id: 6, scanId: 'scan-1', stepName: 'triage-report', stepOrder: 6, status: 'pending' },
+        ]);
+      }
+      // Other reads (checkCancelled, loadOutput, etc) — pretend running
+      return Promise.resolve([{ status: 'running' }]);
+    });
+
+    await runPipeline(makeScan());
+
+    // clone + analysis must NOT have been re-executed
+    expect(mockRunCloneStep).not.toHaveBeenCalled();
+    expect(mockRunAnalysisStep).not.toHaveBeenCalled();
+
+    // pending steps must run
+    expect(mockRunSecToolsStep).toHaveBeenCalledTimes(1);
+    expect(mockRunAiResearchStep).toHaveBeenCalledTimes(1);
+    expect(mockRunImportStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows ScanPausedError without marking step failed', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+    const { ScanPausedError } = await import('./rate-limit.ts');
+
+    mockRunAiResearchStep.mockRejectedValueOnce(new ScanPausedError('Claude rate limit', '2026-05-04T20:00:00Z'));
+
+    await expect(runPipeline(makeScan())).rejects.toBeInstanceOf(ScanPausedError);
+
+    // import + triage must NOT run because pipeline aborts on paused error
+    expect(mockRunImportStep).not.toHaveBeenCalled();
+    expect(mockRunTriageStep).not.toHaveBeenCalled();
   });
 });
 
@@ -457,7 +509,7 @@ describe('buildContext', () => {
   it('resolves workspace language', async () => {
     const { buildContext } = await import('./pipeline.ts');
 
-    mockDb.where.mockResolvedValueOnce([{ defaultLanguage: 'uk', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true }]);
+    mockDb.where.mockResolvedValueOnce([{ defaultLanguage: 'uk', aiAnalysisEnabled: true, aiScanningEnabled: true, aiTriageEnabled: true, aiModelAnalyzer: 'sonnet', aiModelScanner: 'opus', aiModelTriage: 'opus' }]);
 
     const ctx = await buildContext(makeScan({ workspaceId: 5 }));
 
@@ -472,6 +524,9 @@ describe('buildContext', () => {
       aiAnalysisEnabled: false,
       aiScanningEnabled: false,
       aiTriageEnabled: true,
+      aiModelAnalyzer: 'sonnet',
+      aiModelScanner: 'opus',
+      aiModelTriage: 'opus',
     }]);
 
     const ctx = await buildContext(makeScan({ workspaceId: 5 }));
@@ -479,6 +534,9 @@ describe('buildContext', () => {
     expect(ctx.aiAnalysisEnabled).toBe(false);
     expect(ctx.aiScanningEnabled).toBe(false);
     expect(ctx.aiTriageEnabled).toBe(true);
+    expect(ctx.aiModelAnalyzer).toBe('sonnet');
+    expect(ctx.aiModelScanner).toBe('opus');
+    expect(ctx.aiModelTriage).toBe('opus');
   });
 
   it('defaults AI flags to true when no workspace', async () => {
@@ -489,5 +547,8 @@ describe('buildContext', () => {
     expect(ctx.aiAnalysisEnabled).toBe(true);
     expect(ctx.aiScanningEnabled).toBe(true);
     expect(ctx.aiTriageEnabled).toBe(true);
+    expect(ctx.aiModelAnalyzer).toBe('sonnet');
+    expect(ctx.aiModelScanner).toBe('opus');
+    expect(ctx.aiModelTriage).toBe('opus');
   });
 });

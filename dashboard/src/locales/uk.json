@@ -10,6 +10,11 @@
     "teams": "Команди",
     "members": "Учасники",
     "settings": "Налаштування",
+    "settingsSections": {
+      "general": "Загальні",
+      "ai": "AI Налаштування",
+      "tools": "Інструменти"
+    },
     "export": "Експорт"
   },
   "brand": {
@@ -86,6 +91,7 @@
     "completed": "завершено",
     "running": "виконується",
     "queued": "в черзі",
+    "paused": "на паузі",
     "failed": "помилка",
     "Resolved": "Вирішено"
   },
@@ -208,6 +214,15 @@
     "inQueue": "В черзі",
     "completed": "Завершено",
     "failed": "Помилки",
+    "paused": "На паузі",
+    "pausedBanner": "Сканування призупинено",
+    "pausedReason": "Досягнуто ліміт запитів Claude AI. Сканування продовжиться автоматично.",
+    "resumesAt": "Продовження о",
+    "resumesIn": "Продовження через",
+    "snipeProgress": "Sniper-модулі",
+    "modulesCompleted": "{{completed}} з {{total}} завершено",
+    "resumeNow": "Продовжити зараз",
+    "resuming": "Продовжуємо...",
     "avgDuration": "Сер. тривалість",
     "now": "зараз",
     "remaining": "залишилось",
@@ -326,7 +341,8 @@
     "generated": "Згенеровано",
     "noReportAvailable": "Звіт недоступний",
     "overview": "Огляд",
-    "triagedByAi": "Тріаж AI, Прийнято"
+    "triagedByAi": "Тріаж AI, Прийнято",
+    "downloadMd": "Завантажити .md"
   },
   "findings": {
     "title": "Знахідки",
@@ -349,6 +365,8 @@
       "description": "Опис",
       "location": "Розташування",
       "notes": "Нотатки",
+      "duplicates": "Також знайдено",
+      "duplicateOf": "Дублікат знахідки",
       "properties": "Властивості",
       "setStatus": "Встановити статус:",
       "addNote": "Додати",
@@ -541,6 +559,7 @@
     "aiScanningDesc": "Claude Code сканує вихідний код на вразливості безпеки, небезпечні патерни та потенційні експлойти за допомогою AI.",
     "aiTriage": "AI тріаж та звітність",
     "aiTriageDesc": "Аналізує всі знахідки, пріоритезує за критичністю та бізнес-впливом, генерує консолідований звіт безпеки.",
+    "aiModel": "Модель",
     "claudeStatus": "Статус Claude Code",
     "claudeChecking": "Перевірка статусу Claude Code...",
     "claudeAuthenticated": "Автентифіковано",
@@ -550,7 +569,39 @@
     "claudeAuthHint": "Виконайте <code>make claude-login</code> в кореневій директорії проєкту для автентифікації Claude Code.",
     "claudeUnreachableHint": "Контейнер claude-runner не відповідає. Перевірте, чи він запущений.",
     "enabled": "Увімкнено",
-    "disabled": "Вимкнено"
+    "disabled": "Вимкнено",
+    "scanDepth": {
+      "title": "Глибина сканування",
+      "subtitle": "Виберіть наскільки глибоко AI має досліджувати код",
+      "filesPerAgent": "Файлів на агента",
+      "findings": "Знахідки",
+      "previewLabel": "Приблизна оцінка часу та витрат на скан репозиторіїв",
+      "cost": {
+        "api": "Тариф API"
+      },
+      "quick": {
+        "label": "QUICK",
+        "tag": "Для малих репозиторіїв або базового аналізу"
+      },
+      "standard": {
+        "label": "STANDARD",
+        "tag": "Помірна швидкість. Надійне покриття"
+      },
+      "deep": {
+        "label": "DEEP",
+        "tag": "Повільно. Дорого. Максимум знахідок"
+      },
+      "sizes": {
+        "small": "МАЛИЙ РЕПО",
+        "medium": "СЕРЕДНІЙ РЕПО",
+        "large": "ВЕЛИКИЙ РЕПО"
+      },
+      "sizeDesc": {
+        "small": "CLI-утиліта, пакет, мікросервіс",
+        "medium": "Типовий SaaS продукт, full-stack додаток",
+        "large": "Enterprise monorepo, платформа середнього розміру"
+      }
+    }
   },
   "pipeline": {
     "clone": "Клонування репозиторію",

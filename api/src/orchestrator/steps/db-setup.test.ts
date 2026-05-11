@@ -54,6 +54,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   } as any;
 }

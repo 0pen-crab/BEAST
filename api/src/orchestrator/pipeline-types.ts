@@ -73,6 +73,16 @@ export interface PipelineContext {
   aiAnalysisEnabled: boolean;
   aiScanningEnabled: boolean;
   aiTriageEnabled: boolean;
+  /** AI model keys per step — read from workspaces table */
+  aiModelAnalyzer: string;
+  aiModelScanner: string;
+  aiModelTriage: string;
+  /** Target files-per-Sniper-module from workspace settings (1500/500/100). */
+  scanDepth?: number;
+  /** Cancellation signal — fired when user cancels the scan via API. Propagated
+   *  to every SSH/HTTP call so long-running operations abort within seconds
+   *  instead of waiting for natural completion. */
+  cancelSignal?: AbortSignal;
 }
 
 // ── Step interface ──
@@ -87,6 +97,17 @@ export type StepFn = (input: StepInput) => Promise<Record<string, any>>;
 export interface StepDef {
   name: string;
   run: StepFn;
+  required: boolean;
+}
+
+// ── AI usage tracking (extracted from Claude Code stream-json result) ──
+export interface AiUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  costUSD: number;
 }
 
 // ── Typed step outputs ──
@@ -102,6 +123,7 @@ export interface AnalysisOutput {
   profileGenerated: boolean;
   contributorsAssessed: number;
   metadataPath: string;
+  aiUsage?: AiUsage;
 }
 
 export interface ToolResult {
@@ -121,6 +143,7 @@ export interface AiResearchOutput {
   skipped: boolean;
   durationMs: number;
   cost?: number;
+  aiUsage?: AiUsage;
 }
 
 export interface ImportOutput {
@@ -140,6 +163,7 @@ export interface TriageReportOutput {
   reportsGenerated: boolean;
   assessmentsEnhanced: number;
   durationMs: number;
+  aiUsage?: AiUsage;
 }
 
 // ── Result file interface (previously duplicated in 3 files) ──

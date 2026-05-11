@@ -1,10 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import {
   scans, scanSteps, scanEvents, workspaces,
   type Scan, type ScanStep,
 } from '../db/schema.ts';
 import type { PipelineContext, StepDef } from './pipeline-types.ts';
+import { ScanPausedError } from './rate-limit.ts';
 import { runCloneStep } from './steps/clone.ts';
 import { runAnalysisStep } from './steps/analyzer.ts';
 import { runSecToolsStep } from './steps/security-tools.ts';
@@ -23,29 +24,29 @@ export type { PipelineContext } from './pipeline-types.ts';
 // return successfully without throwing (e.g. security-tools when no tools
 // are enabled).
 const STEPS: (StepDef | StepDef[])[] = [
-  { name: 'clone',          run: runCloneStep      },
-  { name: 'analysis',       run: runAnalysisStep   },
+  { name: 'clone',          run: runCloneStep,      required: true },
+  { name: 'analysis',       run: runAnalysisStep,   required: false },
   [
-    { name: 'security-tools', run: runSecToolsStep   },
-    { name: 'ai-research',    run: runAiResearchStep },
+    { name: 'security-tools', run: runSecToolsStep,   required: false },
+    { name: 'ai-research',    run: runAiResearchStep, required: false },
   ],
-  { name: 'import',         run: runImportStep     },
-  { name: 'triage-report',  run: runTriageStep     },
+  { name: 'import',         run: runImportStep,      required: true },
+  { name: 'triage-report',  run: runTriageStep,      required: false },
 ];
 
 // Flat list for step row creation (preserves order)
-function flatSteps(): { name: string; order: number }[] {
+function flatSteps(): { name: string; order: number; required: boolean }[] {
   let order = 0;
-  const result: { name: string; order: number }[] = [];
+  const result: { name: string; order: number; required: boolean }[] = [];
   for (const entry of STEPS) {
     if (Array.isArray(entry)) {
       for (const s of entry) {
         order++;
-        result.push({ name: s.name, order });
+        result.push({ name: s.name, order, required: s.required });
       }
     } else {
       order++;
-      result.push({ name: entry.name, order });
+      result.push({ name: entry.name, order, required: entry.required });
     }
   }
   return result;
@@ -120,12 +121,16 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
   const workDir = `/workspace/${repoName}/${scan.id}`;
   const toolsDir = `${workDir}/tools_results`;
   const agentDir = `${workDir}/agent_files`;
-  const profilePath = `${agentDir}/repo-profile.md`;
+  const profilePath = `/workspace/${repoName}/repo-profile.md`;
 
   let reportLanguage = 'en';
   let aiAnalysisEnabled = true;
   let aiScanningEnabled = true;
   let aiTriageEnabled = true;
+  let aiModelAnalyzer = 'sonnet';
+  let aiModelScanner = 'opus';
+  let aiModelTriage = 'opus';
+  let scanDepth = 500;
 
   if (scan.workspaceId) {
     const [ws] = await db.select({
@@ -133,6 +138,10 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
       aiAnalysisEnabled: workspaces.aiAnalysisEnabled,
       aiScanningEnabled: workspaces.aiScanningEnabled,
       aiTriageEnabled: workspaces.aiTriageEnabled,
+      aiModelAnalyzer: workspaces.aiModelAnalyzer,
+      aiModelScanner: workspaces.aiModelScanner,
+      aiModelTriage: workspaces.aiModelTriage,
+      scanDepth: workspaces.scanDepth,
     })
       .from(workspaces)
       .where(eq(workspaces.id, scan.workspaceId));
@@ -141,6 +150,10 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
       aiAnalysisEnabled = ws.aiAnalysisEnabled;
       aiScanningEnabled = ws.aiScanningEnabled;
       aiTriageEnabled = ws.aiTriageEnabled;
+      aiModelAnalyzer = ws.aiModelAnalyzer;
+      aiModelScanner = ws.aiModelScanner;
+      aiModelTriage = ws.aiModelTriage;
+      if (ws.scanDepth) scanDepth = ws.scanDepth;
     }
   }
 
@@ -165,6 +178,10 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
     aiAnalysisEnabled,
     aiScanningEnabled,
     aiTriageEnabled,
+    aiModelAnalyzer,
+    aiModelScanner,
+    aiModelTriage,
+    scanDepth,
   };
 }
 
@@ -192,11 +209,17 @@ async function executeStep(
     return output;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await updateStepStatus(stepId, 'failed', {
-      completedAt: new Date(),
-      error: msg,
-    });
-    await logScanEvent(ctx.scanId, step.name, 'error', `${step.name} failed: ${msg}`, {}, ctx.repoName, ctx.workspaceId);
+    if (err instanceof ScanPausedError) {
+      // Pause is recoverable — leave step in 'pending' so resume re-runs it
+      await updateStepStatus(stepId, 'pending', { error: msg });
+      await logScanEvent(ctx.scanId, step.name, 'warning', `${step.name} paused: ${msg}`, {}, ctx.repoName, ctx.workspaceId);
+    } else {
+      await updateStepStatus(stepId, 'failed', {
+        completedAt: new Date(),
+        error: msg,
+      });
+      await logScanEvent(ctx.scanId, step.name, 'error', `${step.name} failed: ${msg}`, {}, ctx.repoName, ctx.workspaceId);
+    }
     throw err;
   }
 }
@@ -207,33 +230,98 @@ export async function runPipeline(scan: Scan): Promise<void> {
   const ctx = await buildContext(scan);
   const scanId = scan.id;
 
-  // Create all step rows as 'pending'
+  // Cancellation: an AbortController whose signal we propagate through ctx to
+  // every SSH/HTTP call. A poller checks the DB every 10s and aborts the
+  // controller as soon as the user cancels via UI — long-running SSH sessions
+  // (e.g. 30-min Sniper invocations) tear down within seconds instead of
+  // running to natural completion.
+  const cancelController = new AbortController();
+  ctx.cancelSignal = cancelController.signal;
+  const cancelPoller = setInterval(async () => {
+    try {
+      if (await checkCancelled(scanId) && !cancelController.signal.aborted) {
+        cancelController.abort();
+        console.log(`[pipeline] Scan ${scanId} cancellation detected — aborting in-flight operations`);
+      }
+    } catch (err) {
+      console.error(`[pipeline] cancel-poller error:`, err instanceof Error ? err.message : err);
+    }
+  }, 10_000);
+
+  try {
+    return await runPipelineInner(scan, ctx, scanId);
+  } finally {
+    clearInterval(cancelPoller);
+  }
+}
+
+async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string): Promise<void> {
+
+  // Idempotent: load existing scan_steps (for resume) or create them on first run.
+  const existingSteps = await db.select().from(scanSteps).where(eq(scanSteps.scanId, scanId));
+  const stepRows: { id: number; name: string; status: string }[] = [];
+
   const defs = flatSteps();
-  const stepRows: { id: number; name: string }[] = [];
   for (const def of defs) {
-    const [row] = await db.insert(scanSteps).values({
-      scanId,
-      stepName: def.name,
-      stepOrder: def.order,
-      status: 'pending',
-    }).returning({ id: scanSteps.id });
-    stepRows.push({ id: row.id, name: def.name });
+    const existing = existingSteps.find(s => s.stepName === def.name);
+    if (existing) {
+      stepRows.push({ id: existing.id, name: def.name, status: existing.status });
+    } else {
+      const [row] = await db.insert(scanSteps).values({
+        scanId,
+        stepName: def.name,
+        stepOrder: def.order,
+        status: 'pending',
+      }).returning({ id: scanSteps.id });
+      stepRows.push({ id: row.id, name: def.name, status: 'pending' });
+    }
   }
 
-  await logScanEvent(scanId, null, 'info', `Scan started for ${ctx.repoName}`, {}, ctx.repoName, ctx.workspaceId);
+  const isResume = existingSteps.length > 0;
+  await logScanEvent(
+    scanId, null, 'info',
+    isResume ? `Scan resumed for ${ctx.repoName}` : `Scan started for ${ctx.repoName}`,
+    {}, ctx.repoName, ctx.workspaceId,
+  );
 
-  // Accumulated state — each step's output merges into this
+  function isCompleted(stepName: string): boolean {
+    return stepRows.find(s => s.name === stepName)?.status === 'completed';
+  }
+  async function loadOutput(stepName: string): Promise<Record<string, unknown>> {
+    const id = stepRows.find(s => s.name === stepName)?.id;
+    if (!id) return {};
+    const [row] = await db.select({ output: scanSteps.output }).from(scanSteps).where(eq(scanSteps.id, id));
+    return (row?.output as Record<string, unknown>) ?? {};
+  }
+
+  // Accumulated state — each step's output merges into this. On resume, hydrate
+  // from previously-completed steps so subsequent steps see prior outputs.
   let accumulated: Record<string, unknown> = {};
+  if (isResume) {
+    for (const def of defs) {
+      if (isCompleted(def.name)) {
+        accumulated = { ...accumulated, ...(await loadOutput(def.name)) };
+      }
+    }
+  }
 
   for (const entry of STEPS) {
     if (await checkCancelled(scanId)) throw new Error('Scan cancelled by user');
 
     if (Array.isArray(entry)) {
-      // Parallel group — run all to completion, then fail if any did.
-      // allSettled (not Promise.all) so we don't leave the others orphaned
-      // when one rejects.
+      // Parallel group — run all steps concurrently. Already-completed steps skipped.
       const results = await Promise.allSettled(
-        entry.map(step => executeStep(step, ctx, accumulated, stepRows)),
+        entry.map(step => {
+          if (isCompleted(step.name)) {
+            return loadOutput(step.name);
+          }
+          return executeStep(step, ctx, accumulated, stepRows.map(r => ({ id: r.id, name: r.name })))
+            .catch(err => {
+              if (err instanceof ScanPausedError || step.required) throw err;
+              // Non-required step failure: log and return empty output
+              return {} as Record<string, unknown>;
+            });
+        }),
       );
 
       for (const r of results) {
@@ -242,11 +330,26 @@ export async function runPipeline(scan: Scan): Promise<void> {
         }
       }
 
-      const firstRejection = results.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
-      if (firstRejection) throw firstRejection.reason;
+      // Check if any parallel step failed fatally (required or paused)
+      for (let i = 0; i < entry.length; i++) {
+        if (results[i].status === 'rejected') {
+          const reason = (results[i] as PromiseRejectedResult).reason;
+          if (reason instanceof ScanPausedError || entry[i].required) throw reason;
+        }
+      }
     } else {
-      const output = await executeStep(entry, ctx, accumulated, stepRows);
-      accumulated = { ...accumulated, ...output };
+      // Sequential step
+      if (isCompleted(entry.name)) {
+        accumulated = { ...accumulated, ...(await loadOutput(entry.name)) };
+        continue;
+      }
+      try {
+        const output = await executeStep(entry, ctx, accumulated, stepRows.map(r => ({ id: r.id, name: r.name })));
+        accumulated = { ...accumulated, ...output };
+      } catch (err) {
+        if (err instanceof ScanPausedError || entry.required) throw err;
+        // Non-required step failure — continue
+      }
     }
   }
 

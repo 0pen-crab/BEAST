@@ -62,6 +62,9 @@ function makeCtx(overrides: Partial<PipelineContext> = {}): PipelineContext {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   } as PipelineContext;
 }

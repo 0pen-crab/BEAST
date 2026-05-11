@@ -1,7 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders } from '@/test-utils';
 import { AppLayout } from './app-layout';
+
+// jsdom doesn't implement scrollTo
+beforeAll(() => {
+  HTMLElement.prototype.scrollTo = vi.fn();
+});
 
 vi.mock('@/lib/auth', () => ({
   useAuth: vi.fn(() => ({

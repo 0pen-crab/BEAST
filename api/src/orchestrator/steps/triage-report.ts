@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises';
 import { eq, and, asc, desc, getTableColumns, sql } from 'drizzle-orm';
-import { sshExec, sshWriteFile, getClaudeRunnerConfig, parseStreamJsonResult, SSHTimeoutError, type SSHExecOptions } from '../ssh.ts';
+import { sshExec, sshWriteFile, getClaudeRunnerConfig, parseStreamJsonResult, extractAiUsage, SSHTimeoutError, type SSHExecOptions } from '../ssh.ts';
 import { checkRateLimitAndPause } from '../rate-limit.ts';
 import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS } from '../pipeline-types.ts';
-import type { PipelineContext, StepInput, TriageReportOutput, ResultFile } from '../pipeline-types.ts';
+import type { PipelineContext, StepInput, TriageReportOutput, ResultFile, AiUsage } from '../pipeline-types.ts';
 import { getLanguageInstruction } from '../prompt-languages.ts';
+import { resolveModelFlag } from '../ai-models.ts';
 import { riskAcceptFinding, falsePositiveFinding, duplicateFinding, addFindingNote, addScanFile } from '../entities.ts';
 import { findOrCreateContributor } from '../../routes/contributors.ts';
 import { storeReports, ingestContributorStats } from './finalize.ts';
@@ -15,6 +16,7 @@ export interface TriageDecision {
   finding_id: number;
   action: 'risk_accept' | 'false_positive' | 'duplicate' | 'keep';
   reason: string;
+  duplicate_of?: number;
   contributor_email?: string;
   contributor_name?: string;
 }
@@ -24,6 +26,7 @@ export interface TriageOutput {
   reportContent: string;
   profileContent: string;
   devAssessments: unknown[];
+  aiUsage?: AiUsage;
 }
 
 async function readFileOrDefault(path: string, fallback: string): Promise<string> {
@@ -130,6 +133,12 @@ export async function prepareTriageInput(
       entry.verified = trufflehogMeta[f.filePath].verified;
       entry.detector = trufflehogMeta[f.filePath].detector;
     }
+    if (f.category === 'secrets' && f.secretValue) {
+      entry.secret_value = f.secretValue;
+    }
+    if (f.codeSnippet) {
+      entry.code_context = f.codeSnippet;
+    }
 
     return entry;
   });
@@ -200,16 +209,21 @@ export async function runTriageAndReport(
   ].filter(Boolean).join('\n');
 
   // Run Claude — it writes output files directly to the shared volume
-  const command = `echo ${JSON.stringify(prompt)} | claude -p --verbose --append-system-prompt-file /prompts/triage-and-report.md --output-format stream-json --dangerously-skip-permissions`;
+  const modelId = resolveModelFlag(ctx.aiModelTriage, 'opus');
+  const command = `echo ${JSON.stringify(prompt)} | claude -p --model ${modelId} --verbose --append-system-prompt-file /prompts/triage-and-report.md --output-format stream-json --dangerously-skip-permissions`;
 
   let sshResult;
+  let aiUsage: AiUsage | undefined;
   try {
     sshResult = await sshExec(getClaudeRunnerConfig(), command, {
       inactivityTimeoutMs: AI_INACTIVITY_TIMEOUT_MS,
       maxTimeoutMs: AI_MAX_TIMEOUT_MS,
+      signal: ctx.cancelSignal,
     });
     await addScanFile({ scanId: ctx.scanId, fileName: 'triage.log', fileType: 'log-triage', content: sshResult.stdout });
     checkRateLimitAndPause(sshResult.stdout, '');
+    const { result: parsed } = parseStreamJsonResult(sshResult.stdout);
+    aiUsage = extractAiUsage(parsed);
   } catch (err) {
     if (err instanceof SSHTimeoutError && err.stdout) {
       await addScanFile({ scanId: ctx.scanId, fileName: 'triage.log', fileType: 'log-triage', content: err.stdout }).catch(() => {});
@@ -244,35 +258,43 @@ export async function runTriageAndReport(
     console.error('[triage] Failed to parse contributor-assessments.json:', err instanceof Error ? err.message : err);
   }
 
-  // Strip embedded contributor-assessments block from profile before storing
-  profileContent = profileContent.replace(/```contributor-assessments[\s\S]*?```/g, '').trim();
-
-  return { decisions, reportContent, profileContent, devAssessments };
+  return { decisions, reportContent, profileContent, devAssessments, aiUsage };
 }
 
-const DISMISS_ACTIONS: Record<string, {
-  apply: (id: number, reason: string) => Promise<unknown>;
-  label: string;
-}> = {
-  risk_accept: { apply: riskAcceptFinding, label: 'Risk accepted' },
-  false_positive: { apply: falsePositiveFinding, label: 'False positive' },
-  duplicate: { apply: duplicateFinding, label: 'Duplicate' },
+const DISPOSE_LABELS: Record<string, string> = {
+  risk_accept: 'Risk accepted',
+  false_positive: 'False positive',
+  duplicate: 'Duplicate',
 };
+
+async function applyDisposition(d: TriageDecision): Promise<void> {
+  switch (d.action) {
+    case 'risk_accept':
+      await riskAcceptFinding(d.finding_id, d.reason);
+      return;
+    case 'false_positive':
+      await falsePositiveFinding(d.finding_id, d.reason);
+      return;
+    case 'duplicate':
+      await duplicateFinding(d.finding_id, d.reason, d.duplicate_of);
+      return;
+  }
+}
 
 export async function applyTriageDecisions(
   decisions: TriageDecision[],
 ): Promise<number> {
   let dismissed = 0;
   for (const d of decisions) {
-    const handler = DISMISS_ACTIONS[d.action];
-    if (!handler) continue;
+    const label = DISPOSE_LABELS[d.action];
+    if (!label) continue;
     try {
-      await handler.apply(d.finding_id, d.reason);
+      await applyDisposition(d);
       await addFindingNote({
         findingId: d.finding_id,
         author: 'beast-triage',
         noteType: 'triage',
-        content: `[Auto-Triage] ${handler.label}: ${d.reason}`,
+        content: `[Auto-Triage] ${label}: ${d.reason}`,
       });
       dismissed++;
     } catch (err) {
@@ -375,5 +397,6 @@ export async function runTriageStep({ ctx, prev }: StepInput): Promise<TriageRep
     reportsGenerated: true,
     assessmentsEnhanced: triageOutput.devAssessments.length,
     durationMs: Date.now() - start,
+    aiUsage: triageOutput.aiUsage,
   };
 }

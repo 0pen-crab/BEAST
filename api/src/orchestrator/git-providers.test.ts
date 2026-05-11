@@ -101,11 +101,11 @@ describe('git-providers', () => {
 
       const mockFetch = vi.fn().mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ login: 'vitfury', type: 'User' }),
+        json: async () => ({ login: 'test-user', type: 'User' }),
       });
       vi.stubGlobal('fetch', mockFetch);
 
-      const result = await client.detectOrgType('vitfury');
+      const result = await client.detectOrgType('test-user');
       expect(result).toBe('user');
 
       vi.unstubAllGlobals();
@@ -116,8 +116,8 @@ describe('git-providers', () => {
       const client = new GitHubClient('https://api.github.com');
 
       const mockRepos = [
-        { id: 1, name: 'repo1', html_url: 'https://github.com/vitfury/repo1', description: 'test', default_branch: 'main' },
-        { id: 2, name: 'repo2', html_url: 'https://github.com/vitfury/repo2', description: null, default_branch: 'master' },
+        { id: 1, name: 'repo1', html_url: 'https://github.com/test-user/repo1', description: 'test', default_branch: 'main' },
+        { id: 2, name: 'repo2', html_url: 'https://github.com/test-user/repo2', description: null, default_branch: 'master' },
       ];
 
       const mockFetch = vi.fn().mockResolvedValueOnce({
@@ -127,12 +127,12 @@ describe('git-providers', () => {
       });
       vi.stubGlobal('fetch', mockFetch);
 
-      const repos = await client.listRepos('vitfury', 'user');
+      const repos = await client.listRepos('test-user', 'user');
       expect(repos).toHaveLength(2);
       expect(repos[0]).toEqual({
         externalId: '1',
         name: 'repo1',
-        url: 'https://github.com/vitfury/repo1',
+        url: 'https://github.com/test-user/repo1',
         description: 'test',
         defaultBranch: 'main',
         sizeBytes: null,
@@ -772,8 +772,8 @@ describe('git-providers', () => {
   describe('stripEmbeddedUsername', () => {
     it('strips username from Bitbucket HTTPS URL', async () => {
       const { stripEmbeddedUsername } = await import('./git-providers.ts');
-      expect(stripEmbeddedUsername('https://vomelchenko1@bitbucket.org/enaminedev/synthflow-ai.git'))
-        .toBe('https://bitbucket.org/enaminedev/synthflow-ai.git');
+      expect(stripEmbeddedUsername('https://test-user@bitbucket.org/test-workspace/sample-repo.git'))
+        .toBe('https://bitbucket.org/test-workspace/sample-repo.git');
     });
 
     it('strips username from GitHub HTTPS URL', async () => {
@@ -880,10 +880,10 @@ describe('git-providers', () => {
             slug: 'my-repo',
             links: {
               clone: [
-                { name: 'https', href: 'https://vomelchenko1@bitbucket.org/enaminedev/my-repo.git' },
-                { name: 'ssh', href: 'git@bitbucket.org:enaminedev/my-repo.git' },
+                { name: 'https', href: 'https://test-user@bitbucket.org/test-workspace/my-repo.git' },
+                { name: 'ssh', href: 'git@bitbucket.org:test-workspace/my-repo.git' },
               ],
-              html: { href: 'https://bitbucket.org/enaminedev/my-repo' },
+              html: { href: 'https://bitbucket.org/test-workspace/my-repo' },
             },
             description: 'test',
             mainbranch: { name: 'main' },
@@ -894,8 +894,8 @@ describe('git-providers', () => {
       vi.stubGlobal('fetch', mockFetch);
 
       const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token', 'user@example.com');
-      const repos = await client.listRepos('enaminedev', 'workspace');
-      expect(repos[0].url).toBe('https://bitbucket.org/enaminedev/my-repo.git');
+      const repos = await client.listRepos('test-workspace', 'workspace');
+      expect(repos[0].url).toBe('https://bitbucket.org/test-workspace/my-repo.git');
     });
   });
 

@@ -358,13 +358,20 @@ export async function falsePositiveFinding(findingId: number, reason: string): P
   return row;
 }
 
-export async function duplicateFinding(findingId: number, reason: string): Promise<Finding> {
+export async function duplicateFinding(
+  findingId: number,
+  reason: string,
+  duplicateOf?: number,
+): Promise<Finding> {
+  const updates: Record<string, unknown> = {
+    status: 'duplicate',
+    riskAcceptedReason: reason,
+    updatedAt: new Date(),
+  };
+  if (duplicateOf !== undefined) updates.duplicateOf = duplicateOf;
+
   const [row] = await db.update(findings)
-    .set({
-      status: 'duplicate',
-      riskAcceptedReason: reason,
-      updatedAt: new Date(),
-    })
+    .set(updates)
     .where(eq(findings.id, findingId))
     .returning();
   return row;

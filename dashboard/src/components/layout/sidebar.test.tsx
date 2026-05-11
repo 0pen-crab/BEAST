@@ -40,7 +40,7 @@ vi.mock('react-i18next', () => ({
       const map: Record<string, string> = {
         'nav.dashboard': 'Dashboard',
         'nav.scans': 'Scans',
-        'nav.repos': 'Repositories',
+        'nav.repositories': 'Repositories',
         'nav.events': 'Events',
         'nav.findings': 'Findings',
         'nav.contributors': 'Contributors',
@@ -140,7 +140,7 @@ describe('Sidebar', () => {
     expect(teamsLink).toHaveAttribute('href', '/teams');
 
     const settingsLink = screen.getByText('Settings').closest('a');
-    expect(settingsLink).toHaveAttribute('href', '/settings');
+    expect(settingsLink).toHaveAttribute('href', '/settings/general');
   });
 
   it('does not show create workspace button for non-super_admin users', async () => {

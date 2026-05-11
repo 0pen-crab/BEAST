@@ -3,8 +3,9 @@ import type { PipelineContext } from '../pipeline-types.ts';
 
 // ── SSH mock ──────────────────────────────────────────────────────────────────
 
-const { mockSshExec, mockGetClaudeRunnerConfig } = vi.hoisted(() => ({
+const { mockSshExec, mockSshReadFile, mockGetClaudeRunnerConfig } = vi.hoisted(() => ({
   mockSshExec: vi.fn(),
+  mockSshReadFile: vi.fn().mockResolvedValue('# Repository Profile\n\nMocked profile content.'),
   mockGetClaudeRunnerConfig: vi.fn().mockReturnValue({
     host: 'claude-runner',
     port: 22,
@@ -17,8 +18,10 @@ vi.mock('../ssh.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../ssh.ts')>();
   return {
     sshExec: mockSshExec,
+    sshReadFile: mockSshReadFile,
     getClaudeRunnerConfig: mockGetClaudeRunnerConfig,
     parseStreamJsonResult: actual.parseStreamJsonResult,
+    extractAiUsage: actual.extractAiUsage,
     SSHTimeoutError: actual.SSHTimeoutError,
   };
 });
@@ -61,8 +64,12 @@ vi.mock('../../db/index.ts', () => ({
 
 // ── entities mock ────────────────────────────────────────────────────────────
 
+const { mockAddScanFile } = vi.hoisted(() => ({
+  mockAddScanFile: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../entities.ts', () => ({
-  addScanFile: vi.fn(),
+  addScanFile: mockAddScanFile,
 }));
 
 // ── findOrCreateContributor mock ──────────────────────────────────────────────
@@ -107,6 +114,9 @@ function makeCtx(overrides: Partial<PipelineContext> = {}): PipelineContext {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   } as PipelineContext;
 }
@@ -151,9 +161,12 @@ describe('runAnalyzer', () => {
     expect(typeof runAnalyzer).toBe('function');
   });
 
-  it('returns cost and duration on success', async () => {
+  it('returns cost, duration, and aiUsage on success', async () => {
     mockSshExec.mockResolvedValueOnce({
-      stdout: JSON.stringify({ total_cost_usd: 0.05, duration_ms: 12000, result: 'done' }),
+      stdout: JSON.stringify({
+        type: 'result', total_cost_usd: 0.05, duration_ms: 12000, result: 'done',
+        modelUsage: { 'claude-sonnet-4-6': { inputTokens: 10, outputTokens: 500, cacheReadInputTokens: 1000, cacheCreationInputTokens: 200, costUSD: 0.05 } },
+      }),
       stderr: '',
       code: 0,
     });
@@ -163,6 +176,14 @@ describe('runAnalyzer', () => {
     expect(result.cost).toBe(0.05);
     expect(result.durationMs).toBe(12000);
     expect(result.log).toBeDefined();
+    expect(result.aiUsage).toEqual({
+      model: 'claude-sonnet-4-6',
+      inputTokens: 10,
+      outputTokens: 500,
+      cacheReadInputTokens: 1000,
+      cacheCreationInputTokens: 200,
+      costUSD: 0.05,
+    });
     expect(mockSshExec.mock.calls[0][1]).toContain('claude -p');
     expect(mockSshExec.mock.calls[0][1]).toContain('analyzer.md');
   });
@@ -219,6 +240,32 @@ describe('runAnalyzer', () => {
 
     const result = await runAnalyzer(makeCtx());
     expect(result.cost).toBe(0.01);
+  });
+
+  it('includes --model flag resolved from ctx.aiModelAnalyzer', async () => {
+    mockSshExec.mockResolvedValueOnce({
+      stdout: JSON.stringify({ total_cost_usd: 0.01, duration_ms: 5000 }),
+      stderr: '',
+      code: 0,
+    });
+
+    await runAnalyzer(makeCtx({ aiModelAnalyzer: 'sonnet' }));
+
+    const command = mockSshExec.mock.calls[0][1];
+    expect(command).toContain('--model claude-sonnet-4-6');
+  });
+
+  it('uses opus model when aiModelAnalyzer is set to opus', async () => {
+    mockSshExec.mockResolvedValueOnce({
+      stdout: JSON.stringify({ total_cost_usd: 0.01, duration_ms: 5000 }),
+      stderr: '',
+      code: 0,
+    });
+
+    await runAnalyzer(makeCtx({ aiModelAnalyzer: 'opus' }));
+
+    const command = mockSshExec.mock.calls[0][1];
+    expect(command).toContain('--model claude-opus-4-6');
   });
 });
 
@@ -519,18 +566,8 @@ describe('runAnalysisStep', () => {
     expect(assessCall).toBeDefined();
   });
 
-  it('returns profileGenerated=false when profile already exists', async () => {
+  it('always returns profileGenerated=true when analyzer runs', async () => {
     setupHappyPath();
-    mockExistsSync.mockReturnValue(true);
-
-    const result = await runAnalysisStep({ ctx: makeCtx(), prev: {} });
-
-    expect(result.profileGenerated).toBe(false);
-  });
-
-  it('returns profileGenerated=true when profile did not exist and analyzer ran', async () => {
-    setupHappyPath();
-    mockExistsSync.mockReturnValue(false);
     mockSshExec.mockResolvedValueOnce({
       stdout: JSON.stringify({ total_cost_usd: 0.02, duration_ms: 8000 }),
       stderr: '',
@@ -557,13 +594,17 @@ describe('runAnalysisStep', () => {
     expect(result.aiAvailable).toBe(false);
   });
 
-  it('does not call runAnalyzer when profile already exists', async () => {
+  it('always calls runAnalyzer regardless of profile existence', async () => {
     setupHappyPath();
-    mockExistsSync.mockReturnValue(true);
+    mockSshExec.mockResolvedValueOnce({
+      stdout: JSON.stringify({ total_cost_usd: 0.01, duration_ms: 5000 }),
+      stderr: '',
+      code: 0,
+    });
 
     await runAnalysisStep({ ctx: makeCtx(), prev: {} });
 
-    expect(mockSshExec).not.toHaveBeenCalled();
+    expect(mockSshExec).toHaveBeenCalled();
   });
 
   it('returns metadataPath pointing to agentDir/repo-metadata.json', async () => {
@@ -572,6 +613,59 @@ describe('runAnalysisStep', () => {
     const result = await runAnalysisStep({ ctx: makeCtx({ agentDir: '/workspace/agent' }), prev: {} });
 
     expect(result.metadataPath).toBe('/workspace/agent/repo-metadata.json');
+  });
+
+  it('persists repository profile content as scan_file with type=profile', async () => {
+    setupHappyPath();
+    mockSshExec.mockResolvedValueOnce({
+      stdout: JSON.stringify({ total_cost_usd: 0.02, duration_ms: 8000 }),
+      stderr: '',
+      code: 0,
+    });
+    mockSshReadFile.mockResolvedValueOnce('# Repo Profile\n\nReal profile content here.');
+
+    await runAnalysisStep({ ctx: makeCtx(), prev: {} });
+
+    const profileSave = mockAddScanFile.mock.calls.find(
+      ([arg]: any[]) => arg?.fileType === 'profile',
+    );
+    expect(profileSave).toBeDefined();
+    expect(profileSave![0]).toEqual(expect.objectContaining({
+      scanId: 'scan-1',
+      fileName: 'repository-profile.md',
+      fileType: 'profile',
+      content: '# Repo Profile\n\nReal profile content here.',
+    }));
+  });
+
+  it('does not persist profile when sshReadFile returns empty', async () => {
+    setupHappyPath();
+    mockSshExec.mockResolvedValueOnce({
+      stdout: JSON.stringify({ total_cost_usd: 0.02, duration_ms: 8000 }),
+      stderr: '',
+      code: 0,
+    });
+    mockSshReadFile.mockResolvedValueOnce('   \n');
+
+    await runAnalysisStep({ ctx: makeCtx(), prev: {} });
+
+    const profileSave = mockAddScanFile.mock.calls.find(
+      ([arg]: any[]) => arg?.fileType === 'profile',
+    );
+    expect(profileSave).toBeUndefined();
+  });
+
+  it('does not throw when sshReadFile fails', async () => {
+    setupHappyPath();
+    mockSshExec.mockResolvedValueOnce({
+      stdout: JSON.stringify({ total_cost_usd: 0.02, duration_ms: 8000 }),
+      stderr: '',
+      code: 0,
+    });
+    mockSshReadFile.mockRejectedValueOnce(new Error('SSH read failed'));
+
+    // Pipeline should still succeed even if profile persist fails
+    await expect(runAnalysisStep({ ctx: makeCtx(), prev: {} })).resolves.toBeDefined();
   });
 
   it('returns contributorsAssessed count matching unassessed contributors', async () => {

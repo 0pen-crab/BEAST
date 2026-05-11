@@ -11,6 +11,10 @@ import { apiFetch } from '@/api/client';
 import { useAuth } from './auth';
 
 
+export type AiModelKey = 'opus' | 'sonnet' | 'haiku';
+
+export type ScanDepth = 1500 | 500 | 100;
+
 export interface Workspace {
   id: number;
   name: string;
@@ -19,6 +23,10 @@ export interface Workspace {
   aiAnalysisEnabled: boolean;
   aiScanningEnabled: boolean;
   aiTriageEnabled: boolean;
+  aiModelAnalyzer: AiModelKey;
+  aiModelScanner: AiModelKey;
+  aiModelTriage: AiModelKey;
+  scanDepth: ScanDepth;
   createdAt: string;
 }
 

@@ -29,7 +29,7 @@ This document describes the end-to-end smoke test that validates core BEAST func
 - Scroll to Sources section
 - Click "Add source"
 - Select "Public" tab
-- Enter URL: `https://github.com/vitfury`
+- Enter URL: `https://github.com/OWASP` (or any public GitHub org/user with intentionally-vulnerable repos)
 - Click "Add"
 - When repo list appears, click "Import all"
 - Should import all repositories from the GitHub profile
@@ -46,7 +46,7 @@ This document describes the end-to-end smoke test that validates core BEAST func
 ### 5. Run Scan
 - Navigate to Scans page
 - Click "New Scan"
-- Enter Repository URL: `https://github.com/vitfury/simple-worker-api.git`
+- Enter Repository URL: `https://github.com/OWASP/NodeGoat.git` (or any small public repo with known vulnerabilities)
 - Click "Start Scan"
 - Should see "Scan queued successfully"
 - Wait for scan to complete (check Queue/Completed/Failed tabs)
@@ -54,7 +54,7 @@ This document describes the end-to-end smoke test that validates core BEAST func
 
 ### 6. Verify Results
 - Navigate to Repos page
-- Click on `simple-worker-api` repository
+- Click on the imported repository
 - Should see scan results, findings, and tool cards
 - Navigate to Findings page
 - Should see any detected findings listed

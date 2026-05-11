@@ -13,7 +13,7 @@ All input/output paths are specified in the prompt.
 Read the findings file at the path specified in the prompt. It contains:
 - `findings`: pre-parsed array (id, title, severity, description, file_path, line, tool, confidence, verified)
 - `repo_name`, `repo_path`, `profile_path`, `results_dir`
-- `baseline_assessments`: existing contributor assessments — enhance the `feedback` field in Phase 2
+- `baseline_assessments`: existing contributor assessments — enhance the `feedback` field in Phase 3
 
 If the findings path is "NONE", skip Phase 1 — write an empty triage output and proceed to Phase 2.
 
@@ -25,11 +25,19 @@ If the findings path is "NONE", skip Phase 1 — write an empty triage output an
 
 ### Step 2: Triage Each Finding
 
-Read the actual source code at the referenced file and line for EVERY finding, then decide:
+Each finding includes a `code_context` snippet (~15 lines around the vulnerability). Use it as your starting point for triage. If the snippet gives you enough context to make a confident decision — great. If you need more context (trace data flow, check imports, verify caller chain) — read the source files as needed.
 
-**`false_positive`** — tool was wrong: pattern matched but not exploitable (parameterized query, auto-escaped output), test/example/seed code, framework-mitigated, or placeholder secret (e.g. `CHANGEME`, `password123`).
+For each finding, decide:
 
-**`duplicate`** — same file + same line range + same vulnerability type as another finding; reference the original finding ID in the reason.
+**`false_positive`** — tool was wrong: pattern matched but not exploitable (parameterized query, auto-escaped output), test/example/seed code, framework-mitigated, or placeholder secret (e.g. `CHANGEME`, `password123`). **Do NOT use this for real findings that overlap with another tool's finding — that is `duplicate`.**
+
+**`duplicate`** — the same real issue is already represented by another finding (typically from a different tool). You MUST set `duplicate_of: <other_finding_id>` to point at the kept finding.
+
+  Two flavors:
+  - **Secrets** (category=secrets, has `secret_value`): mark as duplicate ONLY when **all three match**: identical `secret_value` string, same `file_path`, and `line` differs by at most 1. Different file or different line (>1 apart) = separate finding even if the secret string is the same (the credential was leaked in multiple places). Never use the secret value to merge across files.
+  - **Non-secrets**: mark as duplicate when **same `file_path`, `line` differs by at most 1, and same vulnerability type/CWE**. Do NOT merge findings at different lines in the same file — copy-pasted code at different lines is multiple separate vulnerabilities.
+
+  Pick the higher-quality finding as the survivor (BEAST SARIF > deterministic scanners > generic regex), and `duplicate_of` should point to its id. The duplicate's `status` becomes `duplicate`, the survivor stays `keep`.
 
 **`risk_accept`** — real but acceptable: explicit mitigations already visible nearby, informational pattern with no concrete risk, or risk known and intentionally accepted.
 
@@ -68,72 +76,50 @@ Write JSON to TRIAGE_OUTPUT_PATH:
 {
   "decisions": [
     { "finding_id": 123, "action": "false_positive", "reason": "..." },
-    { "finding_id": 234, "action": "duplicate", "reason": "Same as finding #230" },
+    { "finding_id": 234, "action": "duplicate", "reason": "Same secret as #230 (BEAST caught the same hardcoded password in same file:line)", "duplicate_of": 230 },
     { "finding_id": 345, "action": "risk_accept", "reason": "..." },
     { "finding_id": 456, "action": "keep", "reason": "...", "contributor_email": "dev@example.com", "contributor_name": "Jane Smith" }
   ]
 }
 ```
 
+`duplicate_of` is REQUIRED for every `action: "duplicate"` entry — the integer id of the surviving finding.
+
 Triage EVERY finding. Always write the file even if all are kept.
 
 ---
 
-## Phase 2: Generate Consolidated Report
+## Phase 2: Generate Security Audit Report
 
 Write exactly one markdown file to REPORT_PATH using all context already loaded plus your triage decisions.
 
-```markdown
-# Consolidated Security Analysis Report
+The report is pure analysis — individual findings are already stored in the system and visible on the dashboard. The report's job is to synthesize findings into actionable insights.
 
-**Repository:** {repo name}
-**Branch:** {branch}
-**Date:** {today}
-**Tools Used:** BEAST (Claude), gitleaks, trufflehog, trivy, JFrog Xray
-**Total Findings:** {open_count} open ({risk_accepted_count} risk-accepted)
+```markdown
+# Security Audit
 
 ## Executive Summary
 
-2-3 paragraphs: what this codebase does, overall security posture, most significant risks found, how many findings were triaged as noise vs. kept open.
+2-3 paragraphs covering:
+- What this codebase does and why its security posture matters (e.g. shared library = multiplier effect)
+- Overall security assessment — one clear verdict (satisfactory / needs attention / unsatisfactory / critical)
+- Triage breakdown: how many total findings came in, how many kept open vs. dismissed (false positives, duplicates, risk-accepted), severity distribution of open findings
+- The most significant risk in one sentence
 
-## Architecture Notes
+## Critical Problems
 
-Security observations — what's done well, risky patterns, missing controls.
+Analyze all `keep` findings and group related ones into high-level problems. Each problem combines multiple findings that together form a bigger issue. Name each problem clearly and explain the combined impact.
 
-## Critical & High Findings
+### {Problem number}. {Problem name}
 
-### {title}
-- **Severity:** {severity} | **Confidence:** {confidence}
-- **File:** `{path}:{line}`
-- **CWE:** CWE-{id} | **Detected by:** {tool list}
+Explain what the problem is, which findings contribute to it (reference finding IDs), how they combine to create a larger risk, and what the real-world impact would be. 2-4 sentences.
 
-{Explanation: what the vulnerability is, how it could be exploited, impact}
+If a finding doesn't naturally group with others, it can be its own problem — but still frame it as a problem, not as a raw finding.
 
-## Medium & Low Findings
+Order problems by severity of combined impact, most critical first.
+```
 
-| Severity | File | Line | CWE | Description | Detected By |
-|----------|------|------|-----|-------------|-------------|
-
-## Dismissed Findings
-
-### False Positives
-| Severity | File | Tool | Reason |
-|----------|------|------|--------|
-
-### Duplicates
-| Severity | File | Tool | Duplicate Of | Reason |
-|----------|------|------|-------------|--------|
-
-### Risk Accepted
-| Severity | File | Tool | Reason |
-|----------|------|------|--------|
-
-## Tool Coverage Summary
-
-| Tool | Active | Risk-Accepted | Notable |
-|------|--------|---------------|---------|
-
-## Contributor Security Assessments
+## Phase 3: Generate Contributor Assessments
 
 For each contributor you attributed findings to via git blame in Phase 1, count their `keep` findings by severity. Then for each entry in `baseline_assessments` from the triage input, append a `### Security Findings` section to the `feedback` field:
 - Total attributed open findings and breakdown by severity
@@ -143,7 +129,8 @@ For each contributor you attributed findings to via git blame in Phase 1, count 
 If `baseline_assessments` is empty but you attributed findings to contributors, create new assessment entries for them with just the security findings data.
 
 Write the assessments to `TOOLS_DIR/contributor-assessments.json` as a valid JSON array (no markdown fencing).
-```
+
+---
 
 ### Rules
 
@@ -151,4 +138,4 @@ Write the assessments to `TOOLS_DIR/contributor-assessments.json` as a valid JSO
 - Do NOT drop legitimate findings — every real vulnerability must appear
 - Cross-reference findings between tools to increase confidence
 - Use triage decisions to classify — do NOT re-run false-positive analysis
-- Always write both the report file and the contributor-assessments file
+- Always write the report file, and the contributor-assessments file if there are attributed findings
