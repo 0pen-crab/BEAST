@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from 'react-router';
+import { NavLink, useNavigate, useLocation } from 'react-router';
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
@@ -22,7 +22,12 @@ const navItems = [
   { to: '/contributors', labelKey: 'nav.contributors', icon: ContributorsIcon },
   { to: '/teams', labelKey: 'nav.teams', icon: TeamsIcon },
   { to: '/members', labelKey: 'nav.members', icon: MembersIcon },
-  { to: '/settings', labelKey: 'nav.settings', icon: SettingsIcon },
+];
+
+const settingsSections = [
+  { to: '/settings/general', labelKey: 'nav.settingsSections.general' },
+  { to: '/settings/ai', labelKey: 'nav.settingsSections.ai' },
+  { to: '/settings/tools', labelKey: 'nav.settingsSections.tools' },
 ];
 
 export function Sidebar({ open, onClose }: SidebarProps) {
@@ -83,6 +88,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               )}
             </NavLink>
           ))}
+          <SettingsNavItem onClose={onClose} />
         </nav>
 
         {/* Footer */}
@@ -97,6 +103,87 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         style={{ background: 'linear-gradient(to bottom, #dc2626, #b91c1c, transparent)' }}
       />
     </aside>
+  );
+}
+
+function SettingsNavItem({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
+  const location = useLocation();
+  const onSettingsRoute = location.pathname === '/settings' || location.pathname.startsWith('/settings/');
+  const [manuallyToggled, setManuallyToggled] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const expanded = manuallyToggled ? manualOpen : onSettingsRoute;
+
+  // Reset manual toggle state whenever we land on a settings route
+  useEffect(() => {
+    if (onSettingsRoute) setManuallyToggled(false);
+  }, [onSettingsRoute]);
+
+  function handleParentClick(e: React.MouseEvent) {
+    if (onSettingsRoute) {
+      // On /settings* already — clicking just collapses/expands the submenu
+      e.preventDefault();
+      setManuallyToggled(true);
+      setManualOpen(!expanded);
+    } else {
+      // Not on settings — let the NavLink navigate; submenu auto-expands via route
+      setManuallyToggled(false);
+      onClose();
+    }
+  }
+
+  return (
+    <div>
+      <NavLink
+        to="/settings/general"
+        onClick={handleParentClick}
+        className={cn(
+          'flex items-center gap-2.5 px-3 py-[7px] text-[13px] font-medium transition-colors border-l-2',
+          onSettingsRoute
+            ? 'bg-white/10 text-white border-beast-red'
+            : 'text-[#ababad] hover:bg-white/[0.06] hover:text-white border-transparent',
+        )}
+      >
+        <SettingsIcon />
+        <span className="flex-1">{t('nav.settings')}</span>
+        <CaretRight open={expanded} />
+      </NavLink>
+
+      {expanded && (
+        <div className="beast-subnav">
+          {settingsSections.map((sub) => (
+            <NavLink
+              key={sub.to}
+              to={sub.to}
+              onClick={onClose}
+              className={({ isActive }) =>
+                cn('beast-subnav-item', isActive && 'beast-subnav-item-active')
+              }
+            >
+              {t(sub.labelKey)}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CaretRight({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={cn('shrink-0 text-[#ababad] transition-transform', open && 'rotate-90')}
+    >
+      <path d="M3.5 2.5L6.5 5l-3 2.5" />
+    </svg>
   );
 }
 

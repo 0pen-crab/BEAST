@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { scans, repositories, scanEvents, type Scan } from '../db/schema.ts';
 import { runPipeline } from './pipeline.ts';
-import { RateLimitError } from './rate-limit.ts';
+import { ScanPausedError } from './rate-limit.ts';
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let rateLimitCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -36,12 +36,13 @@ export async function pollForWork(): Promise<void> {
   let picked: Scan | null = null;
 
   try {
-    // Transaction: pick a queued scan + mark it running atomically
-    // We use raw SQL for the FOR UPDATE SKIP LOCKED, then use Drizzle for the update
+    // Transaction: pick a queued scan OR a paused scan whose resumes_at has passed.
+    // Mark it running atomically.
     await db.transaction(async (tx) => {
       const rows = await tx.execute(sql`
         SELECT id FROM scans
         WHERE status = 'queued'
+           OR (status = 'paused' AND (resumes_at IS NULL OR resumes_at <= now()))
         ORDER BY created_at
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -50,9 +51,9 @@ export async function pollForWork(): Promise<void> {
       if (!rows.length) return;
       const scanId = (rows[0] as any).id as string;
 
-      // Mark as running
+      // Mark as running. Clear resumes_at since we're picking it up now.
       const [updated] = await tx.update(scans)
-        .set({ status: 'running', startedAt: new Date() })
+        .set({ status: 'running', startedAt: new Date(), resumesAt: null })
         .where(eq(scans.id, scanId))
         .returning();
 
@@ -94,8 +95,40 @@ export async function pollForWork(): Promise<void> {
       console.log(`[worker] Completed scan ${scanId} in ${durationMs}ms`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const durationMs = Date.now() - startTime;
 
+      if (err instanceof ScanPausedError) {
+        // Scan is recoverable: mark paused with resumes_at, do NOT mark failed,
+        // do NOT re-queue. The poller will pick it up again once resumes_at passes.
+        const resumesAt = err.resumesAt ? new Date(err.resumesAt) : null;
+        await db.update(scans)
+          .set({ status: 'paused', resumesAt, error: message })
+          .where(eq(scans.id, scanId));
+
+        if (scan.repositoryId) {
+          await db.update(repositories)
+            .set({ status: 'analyzing', updatedAt: new Date() })
+            .where(eq(repositories.id, scan.repositoryId));
+        }
+
+        try {
+          await db.insert(scanEvents).values({
+            scanId,
+            level: 'warning',
+            source: 'pipeline',
+            message: `Scan paused: ${message}`,
+            details: { resumesAt: err.resumesAt, reason: err.reason },
+            repoName: scan.repoName,
+            workspaceId: scan.workspaceId,
+          });
+        } catch (eventErr) {
+          console.error(`[worker] Failed to log paused event for ${scanId}:`, eventErr instanceof Error ? eventErr.message : eventErr);
+        }
+
+        console.log(`[worker] Scan ${scanId} paused${resumesAt ? ` until ${resumesAt.toISOString()}` : ''}: ${message}`);
+        return;
+      }
+
+      const durationMs = Date.now() - startTime;
       await db.update(scans)
         .set({
           status: 'failed',
@@ -111,7 +144,6 @@ export async function pollForWork(): Promise<void> {
           .where(eq(repositories.id, scan.repositoryId));
       }
 
-      // Log pipeline failure as a scan event
       try {
         await db.insert(scanEvents).values({
           scanId,
@@ -127,26 +159,6 @@ export async function pollForWork(): Promise<void> {
       }
 
       console.error(`[worker] Scan ${scanId} failed: ${message}`);
-
-      // Re-queue the repo if scan failed due to rate limit
-      if (err instanceof RateLimitError && scan.repositoryId && scan.workspaceId) {
-        try {
-          const [requeued] = await db.insert(scans).values({
-            repoUrl: scan.repoUrl,
-            repoName: scan.repoName,
-            localPath: scan.localPath,
-            branch: scan.branch,
-            repositoryId: scan.repositoryId,
-            workspaceId: scan.workspaceId,
-            scanType: scan.scanType,
-            pullRequestId: scan.pullRequestId,
-            status: 'queued',
-          }).returning({ id: scans.id });
-          console.log(`[worker] Re-queued ${scan.repoName} as scan ${requeued.id} (will run after rate limit resets)`);
-        } catch (reqErr) {
-          console.error(`[worker] Failed to re-queue ${scan.repoName}:`, reqErr instanceof Error ? reqErr.message : reqErr);
-        }
-      }
     }
   } catch (err) {
     // DB connection error or transaction failure — log and continue
@@ -159,25 +171,28 @@ export async function pollForWork(): Promise<void> {
 export async function startScanWorker(): Promise<void> {
   if (pollTimer) return;
 
-  // Recovery: fail any scans stuck in 'running' from a previous crash
+  // Recovery: scans stuck in 'running' from a previous crash → reset to 'paused'
+  // with resumes_at=now so the poller picks them up immediately. Per-step and
+  // per-module checkpoints in scan_steps / scan_modules let the pipeline resume
+  // from where it left off.
   const stuck = await db.update(scans)
-    .set({ status: 'failed', error: 'Worker restarted while scan was running', completedAt: new Date() })
+    .set({ status: 'paused', resumesAt: new Date(), error: 'Worker restarted while scan was running' })
     .where(eq(scans.status, 'running'))
     .returning({ id: scans.id, repoName: scans.repoName, repositoryId: scans.repositoryId, workspaceId: scans.workspaceId });
 
   if (stuck.length > 0) {
-    console.log(`[worker] Recovered ${stuck.length} stuck scan(s): ${stuck.map(s => s.repoName).join(', ')}`);
+    console.log(`[worker] Recovered ${stuck.length} stuck scan(s) to paused: ${stuck.map(s => s.repoName).join(', ')}`);
     for (const s of stuck) {
       if (s.repositoryId) {
         await db.update(repositories)
-          .set({ status: 'failed', updatedAt: new Date() })
+          .set({ status: 'analyzing', updatedAt: new Date() })
           .where(eq(repositories.id, s.repositoryId));
       }
       await db.insert(scanEvents).values({
         scanId: s.id,
-        level: 'error',
+        level: 'warning',
         source: 'pipeline',
-        message: `Pipeline failed: Worker restarted while scan was running`,
+        message: `Scan paused: worker restarted, will resume`,
         repoName: s.repoName,
         workspaceId: s.workspaceId,
       });

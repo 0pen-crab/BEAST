@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { eq, and, desc, asc, sql, inArray, getTableColumns, type SQL } from 'drizzle-orm';
+import { eq, and, desc, asc, ne, sql, inArray, getTableColumns, type SQL } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { teams, repositories, scans, tests, findings, findingNotes, scanFiles, contributors } from '../db/schema.ts';
 import type { NewTeam, NewRepository } from '../db/schema.ts';
@@ -546,7 +546,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
           test_id: z.coerce.number().positive().optional(),
           limit: z.coerce.number().min(1).max(500).default(50),
           offset: z.coerce.number().min(0).default(0),
-          sort: z.enum(['severity', 'created_at', 'updated_at', 'title', 'tool', 'status', 'cvss_score', 'repository', 'contributor', 'file_path']).default('created_at'),
+          sort: z.enum(['priority', 'severity', 'created_at', 'updated_at', 'title', 'tool', 'status', 'cvss_score', 'repository', 'contributor', 'file_path']).default('priority'),
           dir: z.enum(['asc', 'desc']).default('desc'),
           include_secrets: z.coerce.boolean().default(false),
         }),
@@ -592,9 +592,18 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
 
       const whereClause = conditions.length ? and(...conditions) : undefined;
 
-      // Sorting
+      // Sorting. For severity we order by a logical rank (Critical>High>Med>Low>Info)
+      // instead of alphabetical, so desc = Critical→Info and asc = Info→Critical.
+      const severityRank = sql`CASE LOWER(${findings.severity})
+        WHEN 'critical' THEN 5
+        WHEN 'high' THEN 4
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 2
+        WHEN 'info' THEN 1
+        ELSE 0
+      END`;
       const sortColumns: Record<string, any> = {
-        severity: findings.severity,
+        severity: severityRank,
         created_at: findings.createdAt,
         updated_at: findings.updatedAt,
         title: findings.title,
@@ -605,27 +614,39 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         contributor: sql`(SELECT ${contributors.displayName} FROM ${contributors} WHERE ${contributors.id} = ${findings.contributorId})`,
         file_path: findings.filePath,
       };
-      const sortColumn = sortColumns[sort];
-      const sortDir = dir === 'asc' ? asc(sortColumn) : desc(sortColumn);
+
+      // Default "priority" sort: open status first, then highest severity, then newest.
+      // Used when no explicit sort is requested. Direction is ignored.
+      const orderByClauses = sort === 'priority'
+        ? [
+            sql`(${findings.status} = 'open') DESC`,
+            desc(severityRank),
+            desc(findings.createdAt),
+          ]
+        : [(dir === 'asc' ? asc(sortColumns[sort]) : desc(sortColumns[sort]))];
 
       // Count
       const [countRow] = await db.select({
         count: sql<number>`count(*)`,
       }).from(findings).where(whereClause);
 
-      // Data — include contributor name + repository name + scanId via JOINs
+      // Data — include contributor name + repository name + scanId via JOINs.
+      // duplicateCount = how many CROSS-TOOL findings reference this one as their survivor.
+      // Same-tool dupes (e.g. BEAST re-scan of same vuln) are excluded — they don't add
+      // cross-tool validation, so the badge only counts independent confirmations.
       const rows = await db.select({
         ...getTableColumns(findings),
         contributorName: contributors.displayName,
         repositoryName: repositories.name,
         scanId: scans.id,
+        duplicateCount: sql<number>`(SELECT COUNT(*) FROM findings f2 WHERE f2.duplicate_of = ${findings.id} AND f2.tool <> ${findings.tool})::int`,
       }).from(findings)
         .innerJoin(tests, eq(tests.id, findings.testId))
         .innerJoin(scans, eq(scans.id, tests.scanId))
         .leftJoin(contributors, eq(contributors.id, findings.contributorId))
         .leftJoin(repositories, eq(repositories.id, findings.repositoryId))
         .where(whereClause)
-        .orderBy(sortDir)
+        .orderBy(...orderByClauses)
         .limit(limit)
         .offset(offset);
 
@@ -768,7 +789,31 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         throw new ForbiddenError('Cannot resolve workspace for finding');
       }
 
-      return { ...finding, secretValue: maskSecret(finding.secretValue) };
+      // If this finding is a duplicate, fetch survivor details for the banner
+      let duplicateOfFinding: {
+        id: number; title: string; tool: string;
+        filePath: string | null; line: number | null; severity: string;
+      } | undefined;
+      if (finding.duplicateOf) {
+        const survivor = await db.select({
+          id: findings.id,
+          title: findings.title,
+          tool: findings.tool,
+          filePath: findings.filePath,
+          line: findings.line,
+          severity: findings.severity,
+        }).from(findings)
+          .where(eq(findings.id, finding.duplicateOf))
+          .limit(1);
+        if (survivor[0]) duplicateOfFinding = survivor[0];
+      }
+
+      // Detail page shows the raw secret intentionally — list and duplicates
+      // endpoints keep maskSecret(). All authorized members can see it.
+      return {
+        ...finding,
+        ...(duplicateOfFinding ? { duplicateOfFinding } : {}),
+      };
     },
   );
 
@@ -851,6 +896,55 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
       return db.select().from(findingNotes)
         .where(eq(findingNotes.findingId, id))
         .orderBy(asc(findingNotes.createdAt));
+    },
+  );
+
+  // GET /api/findings/:id/duplicates
+  app.get(
+    '/findings/:id/duplicates',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      // Resolve workspace + survivor's tool via finding → test → scan (also existence check).
+      // Survivor tool is needed to filter out same-tool duplicates from the response —
+      // "Also detected by" only surfaces cross-tool validation.
+      const wsRows = await db.select({ workspaceId: scans.workspaceId, tool: findings.tool })
+        .from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .where(eq(findings.id, id));
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Finding not found' });
+
+      if (wsRows[0].workspaceId) {
+        await authorize(request, wsRows[0].workspaceId, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('Cannot resolve workspace for finding');
+      }
+
+      const survivorTool = wsRows[0].tool;
+      const rows = await db.select({
+        id: findings.id,
+        tool: findings.tool,
+        title: findings.title,
+        severity: findings.severity,
+        filePath: findings.filePath,
+        line: findings.line,
+        codeSnippet: findings.codeSnippet,
+        secretValue: findings.secretValue,
+        category: findings.category,
+        vulnIdFromTool: findings.vulnIdFromTool,
+        status: findings.status,
+      }).from(findings)
+        .where(and(eq(findings.duplicateOf, id), ne(findings.tool, survivorTool)))
+        .orderBy(asc(findings.id));
+
+      return rows.map(r => ({ ...r, secretValue: maskSecret(r.secretValue) }));
     },
   );
 

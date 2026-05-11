@@ -30,6 +30,10 @@ export const workspaces = pgTable('workspaces', {
   aiAnalysisEnabled: boolean('ai_analysis_enabled').notNull().default(true),
   aiScanningEnabled: boolean('ai_scanning_enabled').notNull().default(true),
   aiTriageEnabled: boolean('ai_triage_enabled').notNull().default(true),
+  aiModelAnalyzer: varchar('ai_model_analyzer', { length: 20 }).notNull().default('sonnet'),
+  aiModelScanner: varchar('ai_model_scanner', { length: 20 }).notNull().default('opus'),
+  aiModelTriage: varchar('ai_model_triage', { length: 20 }).notNull().default('opus'),
+  scanDepth: smallint('scan_depth').notNull().default(500),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 });
 
@@ -197,6 +201,7 @@ export const scans = pgTable('scans', {
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
   startedAt: timestamp('started_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
+  resumesAt: timestamp('resumes_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   repositoryId: integer('repository_id').references(() => repositories.id, { onDelete: 'set null' }),
   workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
@@ -207,6 +212,7 @@ export const scans = pgTable('scans', {
   index('idx_scans_created').on(table.createdAt),
   index('idx_scans_repository').on(table.repositoryId),
   index('idx_scans_workspace').on(table.workspaceId),
+  index('idx_scans_resumes_at').on(table.resumesAt),
 ]);
 
 // ── 9b. scan_steps ──────────────────────────────────────────
@@ -226,6 +232,26 @@ export const scanSteps = pgTable('scan_steps', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index('idx_scan_steps_scan_id').on(table.scanId),
+]);
+
+// ── 9c. scan_modules ────────────────────────────────────────
+// One row per AI Sniper module within a scan. Used as checkpoint state for resume.
+
+export const scanModules = pgTable('scan_modules', {
+  id: serial('id').primaryKey(),
+  scanId: uuid('scan_id').notNull().references(() => scans.id, { onDelete: 'cascade' }),
+  moduleIndex: smallint('module_index').notNull(),
+  moduleName: varchar('module_name', { length: 256 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  fileCount: integer('file_count').notNull().default(0),
+  outputPath: text('output_path'),
+  error: text('error'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index('idx_scan_modules_scan_id').on(table.scanId),
+  uniqueIndex('uq_scan_modules_scan_idx').on(table.scanId, table.moduleIndex),
 ]);
 
 // ── pull_requests ─────────────────────────────────────────
@@ -514,6 +540,9 @@ export type NewContributorAssessment = typeof contributorAssessments.$inferInser
 
 export type ScanStep = typeof scanSteps.$inferSelect;
 export type NewScanStep = typeof scanSteps.$inferInsert;
+
+export type ScanModule = typeof scanModules.$inferSelect;
+export type NewScanModule = typeof scanModules.$inferInsert;
 
 export type ScanEvent = typeof scanEvents.$inferSelect;
 export type NewScanEvent = typeof scanEvents.$inferInsert;

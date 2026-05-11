@@ -1,13 +1,22 @@
-export class RateLimitError extends Error {
-  constructor(message: string, public resumesAt?: string) {
+/**
+ * Thrown when a scan must be paused mid-flight (typically due to Claude rate limits).
+ * The worker catches this, sets scan.status='paused' and scan.resumes_at, and the scan
+ * will be picked up again automatically once `resumes_at` passes.
+ */
+export class ScanPausedError extends Error {
+  constructor(message: string, public resumesAt?: string, public reason: string = 'rate_limit') {
     super(message);
-    this.name = 'RateLimitError';
+    this.name = 'ScanPausedError';
   }
 }
 
+/** @deprecated Use ScanPausedError. Kept as alias for any external imports. */
+export const RateLimitError = ScanPausedError;
+
 /**
  * Check if Claude output indicates a rate limit.
- * If so: notify API to pause the queue, then throw RateLimitError to fail the scan.
+ * If so: notify API to pause the worker queue, then throw ScanPausedError so callers
+ * can record per-module checkpoint state and propagate the pause up the stack.
  */
 export function checkRateLimitAndPause(stdout: string, errorMsg: string): void {
   const isRateLimit = stdout.includes('"error":"rate_limit"')
@@ -35,5 +44,9 @@ export function checkRateLimitAndPause(stdout: string, errorMsg: string): void {
     body: JSON.stringify({ reason: 'rate_limit', resumesAt }),
   }).catch(err => console.error('[rate-limit] Failed to notify API:', err.message));
 
-  throw new RateLimitError(`Claude AI rate limit reached${resumesAt ? ` (resets at ${new Date(resumesAt).toLocaleTimeString()})` : ''}`, resumesAt);
+  throw new ScanPausedError(
+    `Claude AI rate limit reached${resumesAt ? ` (resets at ${new Date(resumesAt).toLocaleTimeString()})` : ''}`,
+    resumesAt,
+    'rate_limit',
+  );
 }

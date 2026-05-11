@@ -74,12 +74,35 @@ export interface Finding {
   riskAcceptedReason: string | null;
   fingerprint: string | null;
   duplicateOf: number | null;
+  duplicateOfFinding?: {
+    id: number;
+    title: string;
+    tool: string;
+    filePath: string | null;
+    line: number | null;
+    severity: Severity;
+  };
   createdAt: string;
   updatedAt: string;
   contributorId: number | null;
   contributorName: string | null;
   repositoryName: string | null;
   scanId: string;
+  duplicateCount?: number;
+}
+
+export interface FindingDuplicate {
+  id: number;
+  tool: string;
+  title: string;
+  severity: Severity;
+  filePath: string | null;
+  line: number | null;
+  codeSnippet: string | null;
+  secretValue: string | null;
+  category: string | null;
+  vulnIdFromTool: string | null;
+  status: string;
 }
 
 export interface FindingNote {
@@ -101,6 +124,8 @@ export interface FindingCounts {
   riskAccepted: number;
 }
 
+export type ScanStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed';
+
 export interface ScanStep {
   id: number;
   scanId: string;
@@ -115,9 +140,14 @@ export interface ScanStep {
   completedAt: string | null;
 }
 
+export interface ScanModuleProgress {
+  total: number;
+  completed: number;
+}
+
 export interface ScanDetail {
   id: string;
-  status: 'queued' | 'running' | 'completed' | 'failed';
+  status: ScanStatus;
   repoUrl: string | null;
   repoName: string;
   branch: string | null;
@@ -126,11 +156,13 @@ export interface ScanDetail {
   durationMs: number | null;
   startedAt: string | null;
   completedAt: string | null;
+  resumesAt: string | null;
   createdAt: string;
   repositoryId: number | null;
   workspaceId: number | null;
   scanType: string;
   steps: ScanStep[];
+  moduleProgress: ScanModuleProgress;
 }
 
 export interface ScanEvent {

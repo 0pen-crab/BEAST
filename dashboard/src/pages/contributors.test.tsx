@@ -14,6 +14,7 @@ vi.mock('@/api/hooks', () => ({
   useContributors: vi.fn(() => ({ data: null, isLoading: false })),
   useTeams: vi.fn(() => ({ data: [] })),
   useBulkUpdateContributors: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useMergeContributors: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
 
 vi.mock('@/lib/workspace', () => ({

@@ -8,7 +8,7 @@ describe('TOOLS', () => {
   });
 
   it('each tool has required fields including category', () => {
-    const validCategories: ToolCategory[] = ['secrets', 'sast', 'sca', 'iac'];
+    const validCategories: ToolCategory[] = ['secrets', 'sast', 'sca', 'iac', 'pii'];
     for (const tool of TOOLS) {
       expect(tool.key).toBeTruthy();
       expect(tool.displayName).toBeTruthy();
@@ -114,16 +114,17 @@ describe('getToolByKey', () => {
 });
 
 describe('TOOL_CATEGORIES', () => {
-  it('has exactly 4 categories', () => {
-    expect(TOOL_CATEGORIES).toHaveLength(4);
+  it('has exactly 5 categories', () => {
+    expect(TOOL_CATEGORIES).toHaveLength(5);
   });
 
-  it('contains Code Analysis, Dependencies, Infrastructure, Secrets', () => {
+  it('contains Code Analysis, Dependencies, Infrastructure, Secrets, Personal Data', () => {
     const keys = TOOL_CATEGORIES.map((c) => c.key);
     expect(keys).toContain('sast');
     expect(keys).toContain('sca');
     expect(keys).toContain('iac');
     expect(keys).toContain('secrets');
+    expect(keys).toContain('pii');
   });
 
   it('each category has display name, description, color, and icon', () => {
@@ -180,7 +181,7 @@ describe('getToolsByCategory', () => {
   });
 
   it('all tools belong to exactly one category', () => {
-    const allCategorized = ['secrets', 'sast', 'sca', 'iac'].flatMap(
+    const allCategorized = ['secrets', 'sast', 'sca', 'iac', 'pii'].flatMap(
       (cat) => getToolsByCategory(cat as ToolCategory).map((t) => t.key),
     );
     const toolKeys = TOOLS.map((t) => t.key);

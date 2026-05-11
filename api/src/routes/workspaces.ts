@@ -5,6 +5,8 @@ import { db } from '../db/index.ts';
 import { workspaces, workspaceMembers, type NewWorkspace } from '../db/schema.ts';
 import { authorizeSuperAdmin } from '../lib/authorize.ts';
 import { initDefaultTools } from '../orchestrator/entities.ts';
+import { AI_MODEL_KEYS } from '../orchestrator/ai-models.ts';
+import { SCAN_DEPTH_VALUES, DEFAULT_SCAN_DEPTH } from '../orchestrator/scan-depth.ts';
 
 export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
   // GET /api/workspaces - list all workspaces (filtered by membership for non-super_admin)
@@ -21,6 +23,13 @@ export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
       name: workspaces.name,
       description: workspaces.description,
       defaultLanguage: workspaces.defaultLanguage,
+      aiAnalysisEnabled: workspaces.aiAnalysisEnabled,
+      aiScanningEnabled: workspaces.aiScanningEnabled,
+      aiTriageEnabled: workspaces.aiTriageEnabled,
+      aiModelAnalyzer: workspaces.aiModelAnalyzer,
+      aiModelScanner: workspaces.aiModelScanner,
+      aiModelTriage: workspaces.aiModelTriage,
+      scanDepth: workspaces.scanDepth,
       createdAt: workspaces.createdAt,
     }).from(workspaces)
       .innerJoin(workspaceMembers, eq(workspaces.id, workspaceMembers.workspaceId))
@@ -40,12 +49,16 @@ export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
           ai_analysis_enabled: z.boolean().optional(),
           ai_scanning_enabled: z.boolean().optional(),
           ai_triage_enabled: z.boolean().optional(),
+          ai_model_analyzer: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_scanner: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_triage: z.enum(AI_MODEL_KEYS).optional(),
+          scan_depth: z.union([z.literal(SCAN_DEPTH_VALUES[0]), z.literal(SCAN_DEPTH_VALUES[1]), z.literal(SCAN_DEPTH_VALUES[2])]).optional(),
         }),
       },
     },
     async (request, reply) => {
       authorizeSuperAdmin(request);
-      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled } = request.body;
+      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled, ai_model_analyzer, ai_model_scanner, ai_model_triage, scan_depth } = request.body;
       try {
         const [row] = await db.insert(workspaces).values({
           name,
@@ -54,6 +67,10 @@ export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
           aiAnalysisEnabled: ai_analysis_enabled ?? true,
           aiScanningEnabled: ai_scanning_enabled ?? true,
           aiTriageEnabled: ai_triage_enabled ?? true,
+          aiModelAnalyzer: ai_model_analyzer ?? 'sonnet',
+          aiModelScanner: ai_model_scanner ?? 'opus',
+          aiModelTriage: ai_model_triage ?? 'opus',
+          scanDepth: scan_depth ?? DEFAULT_SCAN_DEPTH,
         }).returning();
         await initDefaultTools(row.id);
         return reply.status(201).send(row);
@@ -80,13 +97,17 @@ export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
           ai_analysis_enabled: z.boolean().optional(),
           ai_scanning_enabled: z.boolean().optional(),
           ai_triage_enabled: z.boolean().optional(),
+          ai_model_analyzer: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_scanner: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_triage: z.enum(AI_MODEL_KEYS).optional(),
+          scan_depth: z.union([z.literal(SCAN_DEPTH_VALUES[0]), z.literal(SCAN_DEPTH_VALUES[1]), z.literal(SCAN_DEPTH_VALUES[2])]).optional(),
         }),
       },
     },
     async (request, reply) => {
       authorizeSuperAdmin(request);
       const { id } = request.params;
-      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled } = request.body;
+      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled, ai_model_analyzer, ai_model_scanner, ai_model_triage, scan_depth } = request.body;
 
       const updates: Partial<NewWorkspace> = {};
       if (name !== undefined) updates.name = name;
@@ -95,6 +116,10 @@ export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
       if (ai_analysis_enabled !== undefined) updates.aiAnalysisEnabled = ai_analysis_enabled;
       if (ai_scanning_enabled !== undefined) updates.aiScanningEnabled = ai_scanning_enabled;
       if (ai_triage_enabled !== undefined) updates.aiTriageEnabled = ai_triage_enabled;
+      if (ai_model_analyzer !== undefined) updates.aiModelAnalyzer = ai_model_analyzer;
+      if (ai_model_scanner !== undefined) updates.aiModelScanner = ai_model_scanner;
+      if (ai_model_triage !== undefined) updates.aiModelTriage = ai_model_triage;
+      if (scan_depth !== undefined) updates.scanDepth = scan_depth;
 
       const rows = await db.update(workspaces)
         .set(updates)

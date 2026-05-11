@@ -20,6 +20,7 @@ vi.mock('../ssh.ts', async (importOriginal) => {
     sshWriteFile: (...args: unknown[]) => mockSshWriteFile(...args),
     getClaudeRunnerConfig: () => mockGetClaudeRunnerConfig(),
     parseStreamJsonResult: actual.parseStreamJsonResult,
+    extractAiUsage: actual.extractAiUsage,
     SSHTimeoutError: actual.SSHTimeoutError,
   };
 });
@@ -134,6 +135,9 @@ describe('prepareTriageInput', () => {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   });
 
@@ -171,6 +175,55 @@ describe('prepareTriageInput', () => {
     expect(decoded.findings).toHaveLength(1);
     expect(decoded.findings[0].id).toBe(1);
     expect(decoded.findings[0].tool).toBe('gitleaks');
+  });
+
+  it('includes code_context from codeSnippet field in findings', async () => {
+    mockDb.orderBy.mockResolvedValueOnce([
+      {
+        id: 1,
+        title: 'SQL Injection',
+        severity: 'High',
+        description: 'Unsanitized input',
+        filePath: 'src/db.ts',
+        line: 10,
+        tool: 'beast',
+        vulnIdFromTool: 'CWE-89',
+        testTool: 'beast',
+        status: 'open',
+        codeSnippet: '>   10 | db.query(userInput)',
+      },
+    ]);
+
+    const { prepareTriageInput } = await import('./triage-report.ts');
+    const result = await prepareTriageInput(makeCtx(), 10, []);
+
+    expect(result).not.toBeNull();
+    const decoded = JSON.parse(Buffer.from(result!, 'base64').toString('utf8'));
+    expect(decoded.findings[0].code_context).toBe('>   10 | db.query(userInput)');
+  });
+
+  it('omits code_context when codeSnippet is null', async () => {
+    mockDb.orderBy.mockResolvedValueOnce([
+      {
+        id: 1,
+        title: 'Secret found',
+        severity: 'High',
+        description: 'A secret',
+        filePath: 'src/config.ts',
+        line: 42,
+        tool: 'gitleaks',
+        vulnIdFromTool: 'generic-api-key',
+        testTool: 'gitleaks',
+        status: 'open',
+        codeSnippet: null,
+      },
+    ]);
+
+    const { prepareTriageInput } = await import('./triage-report.ts');
+    const result = await prepareTriageInput(makeCtx(), 10, []);
+
+    const decoded = JSON.parse(Buffer.from(result!, 'base64').toString('utf8'));
+    expect(decoded.findings[0].code_context).toBeUndefined();
   });
 
   it('queries findings via Drizzle select with join', async () => {
@@ -228,23 +281,35 @@ describe('applyTriageDecisions', () => {
     });
   });
 
-  it('applies duplicate decisions', async () => {
-    mockDuplicateFinding.mockResolvedValue({ id: 3, status: 'duplicate' });
+  it('applies duplicate decisions and forwards duplicate_of FK', async () => {
+    mockDuplicateFinding.mockResolvedValue({ id: 3, status: 'duplicate', duplicate_of: 1 });
     mockAddFindingNote.mockResolvedValue({ id: 1 });
 
     const { applyTriageDecisions } = await import('./triage-report.ts');
     const dismissed = await applyTriageDecisions([
-      { finding_id: 3, action: 'duplicate', reason: 'Same as finding #1' },
+      { finding_id: 3, action: 'duplicate', reason: 'Same as finding #1', duplicate_of: 1 },
     ]);
 
     expect(dismissed).toBe(1);
-    expect(mockDuplicateFinding).toHaveBeenCalledWith(3, 'Same as finding #1');
+    expect(mockDuplicateFinding).toHaveBeenCalledWith(3, 'Same as finding #1', 1);
     expect(mockAddFindingNote).toHaveBeenCalledWith({
       findingId: 3,
       author: 'beast-triage',
       noteType: 'triage',
       content: '[Auto-Triage] Duplicate: Same as finding #1',
     });
+  });
+
+  it('applies duplicate decisions without duplicate_of when missing', async () => {
+    mockDuplicateFinding.mockResolvedValue({ id: 9, status: 'duplicate' });
+    mockAddFindingNote.mockResolvedValue({ id: 1 });
+
+    const { applyTriageDecisions } = await import('./triage-report.ts');
+    await applyTriageDecisions([
+      { finding_id: 9, action: 'duplicate', reason: 'no FK' },
+    ]);
+
+    expect(mockDuplicateFinding).toHaveBeenCalledWith(9, 'no FK', undefined);
   });
 
   it('handles mixed decisions and skips keep', async () => {
@@ -314,6 +379,9 @@ describe('runTriageAndReport', () => {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   });
 
@@ -419,6 +487,21 @@ describe('runTriageAndReport', () => {
     expect(result.profileContent).toBe('');
     expect(result.devAssessments).toEqual([]);
   });
+
+  it('includes --model flag resolved from ctx.aiModelTriage', async () => {
+    mockSshExec.mockResolvedValueOnce({ stdout: '', stderr: '', code: 0 });
+    mockReadFile
+      .mockResolvedValueOnce('{"decisions":[]}')
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce('[]');
+
+    const { runTriageAndReport } = await import('./triage-report.ts');
+    await runTriageAndReport(makeCtx({ aiModelTriage: 'sonnet' }), null);
+
+    const command = mockSshExec.mock.calls[0][1];
+    expect(command).toContain('--model claude-sonnet-4-6');
+  });
 });
 
 // ── runTriageStep ──────────────────────────────────────────────────
@@ -445,6 +528,9 @@ describe('runTriageStep', () => {
     aiAnalysisEnabled: true,
     aiScanningEnabled: true,
     aiTriageEnabled: true,
+    aiModelAnalyzer: 'sonnet',
+    aiModelScanner: 'opus',
+    aiModelTriage: 'opus',
     ...overrides,
   });
 

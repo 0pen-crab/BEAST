@@ -23,29 +23,21 @@ describe('tool-registry', () => {
     expect(keys).toContain('pii');
   });
 
-  it('getToolsByCategory("pii") returns 3 tools', () => {
+  it('getToolsByCategory("pii") returns 2 tools', () => {
     const piiTools = getToolsByCategory('pii');
-    expect(piiTools).toHaveLength(3);
+    expect(piiTools).toHaveLength(2);
     const keys = piiTools.map(t => t.key);
-    expect(keys).toContain('bearer');
     expect(keys).toContain('presidio');
     expect(keys).toContain('semgrep-pii');
   });
 
   it('getAllToolKeys includes PII tool keys', () => {
     const keys = getAllToolKeys();
-    expect(keys).toContain('bearer');
     expect(keys).toContain('presidio');
     expect(keys).toContain('semgrep-pii');
   });
 
   it('getToolByKey returns correct PII tool definitions', () => {
-    const bearer = getToolByKey('bearer');
-    expect(bearer).toBeDefined();
-    expect(bearer!.category).toBe('pii');
-    expect(bearer!.pricing).toBe('free');
-    expect(bearer!.credentials).toHaveLength(0);
-
     const presidio = getToolByKey('presidio');
     expect(presidio).toBeDefined();
     expect(presidio!.category).toBe('pii');
@@ -56,11 +48,10 @@ describe('tool-registry', () => {
     expect(semgrepPii!.runnerArgs).toEqual({ config: 'p/pii' });
   });
 
-  it('all 3 PII tools are recommended', () => {
+  it('PII tools are NOT recommended (off by default — opt-in compliance feature)', () => {
     const recommended = getRecommendedToolKeys();
-    expect(recommended).toContain('bearer');
-    expect(recommended).toContain('presidio');
-    expect(recommended).toContain('semgrep-pii');
+    expect(recommended).not.toContain('presidio');
+    expect(recommended).not.toContain('semgrep-pii');
   });
 
   it('every tool has a unique key', () => {

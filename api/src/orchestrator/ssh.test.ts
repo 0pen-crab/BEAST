@@ -451,6 +451,144 @@ describe('sshWriteFile', () => {
   });
 });
 
+// ── extractAiUsage ────────────────────────────────────────────────────
+
+describe('extractAiUsage', () => {
+  it('returns undefined when no modelUsage', async () => {
+    const { extractAiUsage } = await import('./ssh.ts');
+    expect(extractAiUsage({})).toBeUndefined();
+    expect(extractAiUsage({ modelUsage: {} })).toBeUndefined();
+  });
+
+  it('picks the primary model by highest cost and sums tokens across all models', async () => {
+    const { extractAiUsage } = await import('./ssh.ts');
+    // Real-world shape: Haiku used for routing (cheap), Opus does main work (expensive)
+    const usage = extractAiUsage({
+      modelUsage: {
+        'claude-haiku-4-5-20251001': {
+          inputTokens: 344, outputTokens: 12,
+          cacheReadInputTokens: 0, cacheCreationInputTokens: 0,
+          costUSD: 0.0004,
+        },
+        'claude-opus-4-6': {
+          inputTokens: 2, outputTokens: 4,
+          cacheReadInputTokens: 11809, cacheCreationInputTokens: 5193,
+          costUSD: 0.0385,
+        },
+      },
+    });
+    // Primary = the expensive one (Opus did the work)
+    expect(usage?.model).toBe('claude-opus-4-6');
+    // Aggregated tokens = sum across all models
+    expect(usage?.inputTokens).toBe(346);
+    expect(usage?.outputTokens).toBe(16);
+    expect(usage?.cacheReadInputTokens).toBe(11809);
+    expect(usage?.cacheCreationInputTokens).toBe(5193);
+    expect(usage?.costUSD).toBeCloseTo(0.0389, 4);
+  });
+
+  it('works with single-model usage (backward-compat)', async () => {
+    const { extractAiUsage } = await import('./ssh.ts');
+    const usage = extractAiUsage({
+      modelUsage: {
+        'claude-sonnet-4-6': {
+          inputTokens: 100, outputTokens: 50,
+          cacheReadInputTokens: 1000, cacheCreationInputTokens: 500,
+          costUSD: 0.01,
+        },
+      },
+    });
+    expect(usage?.model).toBe('claude-sonnet-4-6');
+    expect(usage?.inputTokens).toBe(100);
+    expect(usage?.cacheReadInputTokens).toBe(1000);
+  });
+});
+
+// ── Context window tracking helpers ──────────────────────────────────
+
+describe('contextLimitForModel', () => {
+  it('returns 1M for models with [1m] suffix', async () => {
+    const { contextLimitForModel } = await import('./ssh.ts');
+    expect(contextLimitForModel('claude-opus-4-6[1m]')).toBe(1_000_000);
+  });
+
+  it('returns 200K for standard models', async () => {
+    const { contextLimitForModel } = await import('./ssh.ts');
+    expect(contextLimitForModel('claude-sonnet-4-6')).toBe(200_000);
+    expect(contextLimitForModel('claude-haiku-4-5-20251001')).toBe(200_000);
+    expect(contextLimitForModel('claude-opus-4-6')).toBe(200_000);
+  });
+});
+
+describe('buildAgentMetric', () => {
+  it('computes peak window as cacheCreate + input + output (excludes cacheRead billing metric)', async () => {
+    const { buildAgentMetric } = await import('./ssh.ts');
+    const m = buildAgentMetric('recon', {
+      model: 'claude-sonnet-4-6',
+      inputTokens: 10_000,
+      outputTokens: 2_000,
+      cacheReadInputTokens: 50_000,  // deliberately excluded — multiplies by turn count
+      cacheCreationInputTokens: 30_000,
+      costUSD: 0.42,
+    }, 45_000);
+
+    expect(m.agent).toBe('recon');
+    // peak window = cacheCreate(30K) + input(10K) + output(2K) = 42K
+    expect(m.totalContext).toBe(42_000);
+    expect(m.contextLimit).toBe(200_000);
+    expect(m.utilizationPct).toBeCloseTo(21, 1);
+    expect(m.costUSD).toBe(0.42);
+    expect(m.durationMs).toBe(45_000);
+  });
+
+  it('handles 1M context models', async () => {
+    const { buildAgentMetric } = await import('./ssh.ts');
+    const m = buildAgentMetric('sniper:auth', {
+      model: 'claude-opus-4-6[1m]',
+      inputTokens: 100_000,
+      outputTokens: 5_000,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      costUSD: 1.5,
+    }, 60_000);
+
+    expect(m.contextLimit).toBe(1_000_000);
+    // peak window = 0 + 100K + 5K = 105K
+    expect(m.totalContext).toBe(105_000);
+    expect(m.utilizationPct).toBeCloseTo(10.5, 1);
+  });
+});
+
+describe('formatAgentMetric', () => {
+  it('produces a one-line log entry', async () => {
+    const { formatAgentMetric, buildAgentMetric } = await import('./ssh.ts');
+    const m = buildAgentMetric('scout:api', {
+      model: 'claude-sonnet-4-6',
+      inputTokens: 5_000, outputTokens: 1_000,
+      cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.05,
+    }, 10_000);
+
+    const line = formatAgentMetric(m, 'scan-123');
+    expect(line).toContain('[scan-123]');
+    expect(line).toContain('agent=scout:api');
+    expect(line).toContain('model=claude-sonnet-4-6');
+    expect(line).toContain('util=');
+    expect(line).toContain('cost=$0.0500');
+    expect(line).not.toContain('\n');
+  });
+
+  it('omits scanId prefix when not provided', async () => {
+    const { formatAgentMetric, buildAgentMetric } = await import('./ssh.ts');
+    const m = buildAgentMetric('recon', {
+      model: 'claude-sonnet-4-6',
+      inputTokens: 100, outputTokens: 10,
+      cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.001,
+    }, 1000);
+    const line = formatAgentMetric(m);
+    expect(line.startsWith('agent=')).toBe(true);
+  });
+});
+
 // ── Type exports ────────────────────────────────────────────────────
 
 describe('type exports', () => {

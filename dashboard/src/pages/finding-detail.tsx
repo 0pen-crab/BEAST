@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { useFinding, useUpdateFinding, useFindingNotes, useAddFindingNote } from '@/api/hooks';
+import { useFinding, useUpdateFinding, useFindingNotes, useAddFindingNote, useFindingDuplicates } from '@/api/hooks';
+import { CodeSnippet } from '@/components/code-snippet';
 import { SeverityBadge } from '@/components/severity-badge';
 import { StatusBadge } from '@/components/status-badge';
 import { MarkdownContent } from '@/components/markdown-content';
@@ -11,13 +12,13 @@ import { formatDate, formatDateTime } from '@/lib/format';
 import { BreadcrumbNav } from '@/components/breadcrumb-nav';
 import { getToolIcon } from '@/lib/tool-icons';
 
-type StatusAction = 'open' | 'false_positive' | 'fixed' | 'risk_accepted' | 'duplicate';
+type StatusAction = 'open' | 'false_positive' | 'fixed' | 'risk_accepted';
+// 'duplicate' is intentionally excluded — only AI triage sets it (needs duplicate_of FK).
 const statusActions: { key: StatusAction; label: string }[] = [
   { key: 'open', label: 'status.Open' },
   { key: 'false_positive', label: 'status.FalsePositive' },
   { key: 'fixed', label: 'status.Fixed' },
   { key: 'risk_accepted', label: 'status.Accepted' },
-  { key: 'duplicate', label: 'status.Duplicate' },
 ];
 
 function getStatusPayload(action: StatusAction) {
@@ -30,6 +31,7 @@ export function FindingDetailPage() {
   const findingId = Number(id);
   const { data: finding, isLoading } = useFinding(findingId);
   const { data: notes } = useFindingNotes(findingId);
+  const { data: duplicates } = useFindingDuplicates(findingId);
   const updateFinding = useUpdateFinding();
   const addNote = useAddFindingNote();
   const [noteText, setNoteText] = useState('');
@@ -69,6 +71,7 @@ export function FindingDetailPage() {
   }
 
   const notesList = notes && Array.isArray(notes) ? notes : [];
+  const duplicatesList = duplicates && Array.isArray(duplicates) ? duplicates : [];
 
   // Breadcrumb items
   const breadcrumbItems = finding.repositoryName && finding.repositoryId
@@ -86,6 +89,28 @@ export function FindingDetailPage() {
     <ErrorBoundary>
       <div className="beast-stack-md">
         <BreadcrumbNav items={breadcrumbItems} />
+
+        {/* ── Duplicate-of banner ── */}
+        {finding.duplicateOfFinding && (
+          <div className="beast-card beast-duplicate-banner">
+            <span className="beast-label beast-label-inline">{t('findings.detail.duplicateOf', 'Duplicate of')}</span>
+            <Link to={`/findings/${finding.duplicateOfFinding.id}`} className="beast-link">
+              <span className="beast-duplicate-banner-id">#{finding.duplicateOfFinding.id}</span>
+              <span className="beast-duplicate-banner-tool">
+                {getToolIcon(finding.duplicateOfFinding.tool) && (
+                  <img src={getToolIcon(finding.duplicateOfFinding.tool)!} alt="" className="beast-tool-row-icon" />
+                )}
+                {finding.duplicateOfFinding.tool}
+              </span>
+              <span className="beast-duplicate-banner-title">{finding.duplicateOfFinding.title}</span>
+              {finding.duplicateOfFinding.filePath && (
+                <code className="beast-td-code">
+                  {finding.duplicateOfFinding.filePath}{finding.duplicateOfFinding.line != null ? `:${finding.duplicateOfFinding.line}` : ''}
+                </code>
+              )}
+            </Link>
+          </div>
+        )}
 
         {/* ── Header ── */}
         <div className="beast-page-header">
@@ -157,12 +182,14 @@ export function FindingDetailPage() {
                   <div className="beast-section-pad-sm">
                     <code className="beast-td-code">{finding.filePath}{finding.line != null ? `:${finding.line}` : ''}</code>
                     {finding.codeSnippet && (
-                      <pre className="beast-code-snippet">{finding.codeSnippet}</pre>
+                      <div className="beast-code-snippet-mt">
+                        <CodeSnippet snippet={finding.codeSnippet} filePath={finding.filePath} />
+                      </div>
                     )}
                   </div>
                 </>
               )}
-              {finding.secretValue && (
+              {finding.secretValue && (finding.category === 'secrets' || finding.category === 'pii') && (
                 <>
                   <div className="beast-section-header">
                     <span className="beast-label beast-label-inline">{t('findings.detail.secretValue', 'Secret Value')}</span>
@@ -173,6 +200,41 @@ export function FindingDetailPage() {
                 </>
               )}
             </div>
+
+            {/* Duplicates card — same finding caught by other tools */}
+            {duplicatesList.length > 0 && (
+              <div className="beast-card beast-card-flush beast-overflow-hidden">
+                <div className="beast-section-header">
+                  <span className="beast-label beast-label-inline">
+                    {t('findings.detail.duplicates', 'Also detected by')} ({duplicatesList.length})
+                  </span>
+                </div>
+                <div className="beast-section-pad-sm">
+                  {duplicatesList.map((dup) => (
+                    <Link
+                      key={dup.id}
+                      to={`/findings/${dup.id}`}
+                      className="beast-tool-row beast-link"
+                    >
+                      <div className="beast-tool-row-left">
+                        {getToolIcon(dup.tool) && (
+                          <img src={getToolIcon(dup.tool)} alt="" className="beast-tool-row-icon" />
+                        )}
+                        <span className="beast-label beast-label-inline">{dup.tool}</span>
+                        {dup.filePath && (
+                          <code className="beast-td-code">
+                            {dup.filePath}{dup.line != null ? `:${dup.line}` : ''}
+                          </code>
+                        )}
+                      </div>
+                      <div className="beast-tool-row-right">
+                        <SeverityBadge severity={dup.severity} />
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Notes card */}
             <div className="beast-card beast-card-flush beast-overflow-hidden">

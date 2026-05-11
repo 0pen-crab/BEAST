@@ -247,18 +247,6 @@ export const TOOLS: ToolInfo[] = [
     lightBg: 'bg-green-50',
   },
   {
-    key: 'bearer',
-    displayName: 'Bearer',
-    description: 'Sensitive data flow detection in source code (PII)',
-    category: 'pii',
-    color: '#e11d48',
-    bgClass: 'bg-rose-600',
-    textClass: 'text-rose-700',
-    borderClass: 'border-rose-200',
-    iconBg: 'bg-rose-100',
-    lightBg: 'bg-rose-50',
-  },
-  {
     key: 'presidio',
     displayName: 'Presidio',
     description: 'NLP-powered personal data detection (PII)',

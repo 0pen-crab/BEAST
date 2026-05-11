@@ -241,17 +241,8 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
   },
 
   // ── PII ──
-  {
-    key: 'bearer',
-    displayName: 'Bearer',
-    description: 'Detect sensitive data flows — emails, IPs, names, dates of birth, and more — in source code.',
-    category: 'pii',
-    website: 'https://docs.bearer.com',
-    credentials: [],
-    recommended: true,
-    pricing: 'free',
-    runnerKey: 'bearer',
-  },
+  // PII tools are off by default (compliance-driven, opt-in only).
+  // Workspace admins can enable them in Settings → Security Tools when needed.
   {
     key: 'presidio',
     displayName: 'Presidio',
@@ -259,7 +250,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     category: 'pii',
     website: 'https://microsoft.github.io/presidio',
     credentials: [],
-    recommended: true,
+    recommended: false,
     pricing: 'free',
     runnerKey: 'presidio',
   },
@@ -270,7 +261,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     category: 'pii',
     website: 'https://semgrep.dev',
     credentials: [],
-    recommended: true,
+    recommended: false,
     pricing: 'free',
     runnerKey: 'semgrep',
     runnerArgs: { config: 'p/pii' },

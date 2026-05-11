@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ErrorBoundary } from '@/components/error-boundary';
-import { useScans, useScanDetail, useScanStats, useScanLogs, useScanLogContent, useCancelScan, useRemoveScan } from '@/api/hooks';
+import { useScans, useScanDetail, useScanStats, useScanLogs, useScanLogContent, useCancelScan, useRemoveScan, useResumeScan } from '@/api/hooks';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useCurrentWorkspaceRole, canWrite } from '@/lib/permissions';
@@ -126,6 +126,10 @@ function StatsBar() {
       accent: stats.queued > 0 ? 'beast-stat-accent-blue' : undefined,
     },
     {
+      label: t('scans.paused'), value: stats.paused,
+      accent: stats.paused > 0 ? 'beast-stat-accent-amber' : undefined,
+    },
+    {
       label: t('scans.completed'), value: stats.completed,
       sub: stats.total > 0 ? `${Math.round((stats.completed / stats.total) * 100)}%` : undefined,
       accent: 'beast-stat-accent-green',
@@ -142,7 +146,7 @@ function StatsBar() {
   ];
 
   return (
-    <div className="beast-grid-6">
+    <div className="beast-grid-7">
       {cards.map((card) => (
         <div key={card.label} className={cn('beast-stat beast-stat-accent', card.accent)}>
           <p className="beast-stat-label">{card.label}</p>
@@ -158,10 +162,11 @@ function StatsBar() {
 
 function RunningScans({ canEdit }: { canEdit: boolean }) {
   const { t } = useTranslation();
-  const { data } = useScans({ status: 'running', limit: 10 });
+  const { data: runningData } = useScans({ status: 'running', limit: 10 });
+  const { data: pausedData } = useScans({ status: 'paused', limit: 10 });
   const cancelScan = useCancelScan();
-  const running = data?.results ?? [];
-  if (running.length === 0) return null;
+  const active = [...(pausedData?.results ?? []), ...(runningData?.results ?? [])];
+  if (active.length === 0) return null;
 
   return (
     <div>
@@ -170,7 +175,7 @@ function RunningScans({ canEdit }: { canEdit: boolean }) {
         {t('scans.currentlyRunning')}
       </h2>
       <div className="beast-stack-xs">
-        {running.map((scan) => (
+        {active.map((scan) => (
           <RunningScanCard key={scan.id} scan={scan} canEdit={canEdit} onCancel={() => cancelScan.mutate(scan.id)} />
         ))}
       </div>
@@ -179,6 +184,7 @@ function RunningScans({ canEdit }: { canEdit: boolean }) {
 }
 
 function RunningScanCard({ scan, canEdit, onCancel }: { scan: ScanDetail; canEdit: boolean; onCancel: () => void }) {
+  const { t } = useTranslation();
   const { data: detail } = useScanDetail(scan.id);
   const live = detail ?? scan;
   const steps = live.steps ?? [];
@@ -186,13 +192,14 @@ function RunningScanCard({ scan, canEdit, onCancel }: { scan: ScanDetail; canEdi
   const elapsed = useLiveElapsed(live.startedAt);
   const currentStep = steps.find(s => s.status === 'running');
   const completedSteps = steps.filter(s => s.status === 'completed').length;
+  const isPaused = live.status === 'paused';
 
   return (
-    <div className="beast-running-card">
+    <div className={cn('beast-running-card', isPaused && 'beast-running-card-paused')}>
       <div className="beast-running-card-row">
         <div className="beast-flex beast-flex-gap-sm">
           <span className="beast-running-icon">
-            {'\u25B6'}
+            {isPaused ? '\u23F8' : '\u25B6'}
           </span>
           <div>
             <p className="beast-running-name">{live.repoName}</p>
@@ -204,10 +211,10 @@ function RunningScanCard({ scan, canEdit, onCancel }: { scan: ScanDetail; canEdi
         </div>
         <div className="beast-flex beast-flex-gap">
           <div>
-            <p className="beast-running-step">{currentStep?.stepName ?? '...'}</p>
+            <p className="beast-running-step">{currentStep?.stepName ?? (isPaused ? t('scans.paused') : '...')}</p>
             <p className="beast-text-hint">{completedSteps}/{PIPELINE_STAGES.length} steps</p>
           </div>
-          {canEdit && (
+          {canEdit && !isPaused && (
             <button
               onClick={onCancel}
               title="Cancel scan"
@@ -219,12 +226,99 @@ function RunningScanCard({ scan, canEdit, onCancel }: { scan: ScanDetail; canEdi
         </div>
       </div>
 
+      {isPaused && <PauseBanner scan={live} canEdit={canEdit} />}
+
       {/* Pipeline step progress */}
       <div className="beast-running-card-body">
         <PipelineProgress steps={toPipelineSteps(steps)} />
       </div>
     </div>
   );
+}
+
+// \u2500\u2500 Pause banner: shows resumes-at countdown + Sniper module progress \u2500
+
+function PauseBanner({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
+  const { t } = useTranslation();
+  const countdown = useResumeCountdown(scan.resumesAt);
+  const resumeScan = useResumeScan();
+  const { completed, total } = scan.moduleProgress ?? { completed: 0, total: 0 };
+
+  return (
+    <div className="beast-pause-banner">
+      <div className="beast-pause-banner-row">
+        <div className="beast-pause-banner-icon">{'\u23F8'}</div>
+        <div className="beast-pause-banner-text">
+          <p className="beast-pause-banner-title">{t('scans.pausedBanner')}</p>
+          <p className="beast-pause-banner-reason">{scan.error ?? t('scans.pausedReason')}</p>
+        </div>
+        {scan.resumesAt && (
+          <div className="beast-pause-banner-countdown">
+            <p className="beast-pause-banner-countdown-label">
+              {countdown && countdown > 0 ? t('scans.resumesIn') : t('scans.resumesAt')}
+            </p>
+            <p className="beast-pause-banner-countdown-value">
+              {countdown != null && countdown > 0
+                ? formatCountdown(countdown)
+                : new Date(scan.resumesAt).toLocaleTimeString()}
+            </p>
+          </div>
+        )}
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => resumeScan.mutate(scan.id)}
+            disabled={resumeScan.isPending}
+            className="beast-btn beast-btn-warning beast-btn-sm"
+            title={t('scans.resumeNow')}
+          >
+            {resumeScan.isPending ? t('scans.resuming') : t('scans.resumeNow')}
+          </button>
+        )}
+      </div>
+
+      {total > 0 && (
+        <div className="beast-pause-banner-progress">
+          <div className="beast-pause-banner-progress-row">
+            <span className="beast-pause-banner-progress-label">{t('scans.snipeProgress')}</span>
+            <span className="beast-pause-banner-progress-count">
+              {t('scans.modulesCompleted', { completed, total })}
+            </span>
+          </div>
+          <div className="beast-pause-banner-progress-track">
+            <div
+              className="beast-pause-banner-progress-fill"
+              style={{ width: `${total > 0 ? (completed / total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function useResumeCountdown(resumesAt: string | null): number | null {
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!resumesAt) {
+      setSecondsLeft(null);
+      return;
+    }
+    const target = new Date(resumesAt).getTime();
+    const tick = () => setSecondsLeft(Math.max(0, Math.round((target - Date.now()) / 1000)));
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [resumesAt]);
+  return secondsLeft;
+}
+
+function formatCountdown(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m ${seconds % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 
 // ── Scan Table (shared for queued/completed/failed) ────────────
@@ -284,9 +378,13 @@ function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
     : null;
 
   const failedStep = steps.find(s => s.status === 'failed');
-  const statusIcon = live.status === 'completed' ? '\u2713' : live.status === 'failed' ? '\u2717' : '\u2022';
+  const statusIcon = live.status === 'completed' ? '\u2713'
+    : live.status === 'failed' ? '\u2717'
+    : live.status === 'paused' ? '\u23f8'
+    : '\u2022';
   const statusColor = live.status === 'completed' ? 'status-completed'
     : live.status === 'failed' ? 'status-failed'
+    : live.status === 'paused' ? 'status-paused'
     : 'status-running';
 
   const timestamp = live.completedAt ?? live.createdAt;
@@ -313,6 +411,7 @@ function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
             'status-pill',
             live.status === 'queued' && 'status-queued',
             live.status === 'running' && 'status-running',
+            live.status === 'paused' && 'status-paused',
             live.status === 'completed' && 'status-completed',
             live.status === 'failed' && 'status-failed',
           )}>
@@ -473,6 +572,36 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
             </div>
           )}
 
+          {(() => {
+            const aiUsage = (selected.output as Record<string, unknown> | null)?.aiUsage as Record<string, number> | undefined;
+            if (!aiUsage) return null;
+            const totalInput = (aiUsage.inputTokens ?? 0) + (aiUsage.cacheReadInputTokens ?? 0) + (aiUsage.cacheCreationInputTokens ?? 0);
+            return (
+              <div className="beast-stat-row">
+                <div className="beast-stat">
+                  <span className="beast-stat-value">${aiUsage.costUSD?.toFixed(3)}</span>
+                  <span className="beast-stat-label">cost</span>
+                </div>
+                <div className="beast-stat">
+                  <span className="beast-stat-value">{totalInput.toLocaleString()}</span>
+                  <span className="beast-stat-label">input tokens</span>
+                </div>
+                <div className="beast-stat">
+                  <span className="beast-stat-value">{(aiUsage.outputTokens ?? 0).toLocaleString()}</span>
+                  <span className="beast-stat-label">output tokens</span>
+                </div>
+                <div className="beast-stat">
+                  <span className="beast-stat-value">{(aiUsage.cacheReadInputTokens ?? 0).toLocaleString()}</span>
+                  <span className="beast-stat-label">cache read</span>
+                </div>
+                <div className="beast-stat">
+                  <span className="beast-stat-value">{aiUsage.model}</span>
+                  <span className="beast-stat-label">model</span>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="beast-grid-2">
             {selected.input && (
               <div>
@@ -571,14 +700,20 @@ function LogEntry({ entry }: { entry: Record<string, unknown> }) {
   }
 
   if (type === 'result') {
-    const cost = entry.cost_usd ?? entry.total_cost_usd;
     const dur = entry.duration_ms ?? entry.duration_api_ms;
+    const modelUsage = entry.modelUsage as Record<string, Record<string, number>> | undefined;
+    const usage = modelUsage ? Object.values(modelUsage)[0] : undefined;
+    const cost = usage?.costUSD ?? entry.cost_usd ?? entry.total_cost_usd;
     return (
       <div className="beast-log-entry beast-log-result">
         <span className="beast-log-tag">done</span>
         <span className="beast-log-text">
           {entry.is_error ? 'Error' : 'Success'}
           {cost != null && <> &middot; ${Number(cost).toFixed(3)}</>}
+          {usage && <>
+            &middot; {((usage.inputTokens ?? 0) + (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0)).toLocaleString()} in
+            &middot; {(usage.outputTokens ?? 0).toLocaleString()} out
+          </>}
           {dur != null && <> &middot; {formatDuration(Math.round(Number(dur) / 1000))}</>}
         </span>
       </div>

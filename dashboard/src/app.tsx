@@ -57,6 +57,7 @@ export function App() {
             <Route path="findings/:id" element={<FindingDetailPage />} />
             <Route path="members" element={<MembersPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/:section" element={<SettingsPage />} />
           </Route>
           <Route path="onboarding/*" element={<NewWorkspacePage />} />
           <Route path="admin" element={<AdminLayout />}>

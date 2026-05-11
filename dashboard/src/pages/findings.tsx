@@ -17,6 +17,12 @@ import type { Severity, Status, Finding } from '@/api/types';
 
 const PAGE_SIZE = 50;
 
+/** Map display status → i18n key suffix (e.g. "Risk Accepted" → "Accepted") */
+function statusI18nKey(status: string): string {
+  if (status === 'Risk Accepted') return 'Accepted';
+  return status.replace(/\s+/g, '');
+}
+
 /** Show only the filename (last path segment) + line number */
 function shortPath(filePath: string, line: number | null | undefined): string {
   let clean = filePath.replace(/^file:\/\/\/workspace\/[^/]+\/repo\//, '');
@@ -221,7 +227,7 @@ export function FindingsPage() {
 
   // ── ChipFilter config ──────────────────────────────────────
   const severityOptions = SEVERITIES.map((s) => ({ value: s, label: t(`severity.${s}`) }));
-  const statusOptions = STATUSES.map((s) => ({ value: s, label: t(`status.${s.replace(/\s+/g, '')}`) }));
+  const statusOptions = STATUSES.map((s) => ({ value: s, label: t(`status.${statusI18nKey(s)}`) }));
   const repoOptions = (repos ?? []).map((r) => ({ value: String(r.id), label: r.name }));
   const toolOptions = TOOLS.map((tool) => ({ value: tool.key, label: tool.displayName }));
   const duplicateOptions = [
@@ -245,7 +251,7 @@ export function FindingsPage() {
     activeFilters.push({ key: 'severity', value: severityFilter.join(','), label: labels.join(', '), columnLabel: t('findings.severity') });
   }
   if (statusFilter.length > 0) {
-    const labels = statusFilter.map((s) => t(`status.${s.replace(/\s+/g, '')}`));
+    const labels = statusFilter.map((s) => t(`status.${statusI18nKey(s)}`));
     activeFilters.push({ key: 'status', value: statusFilter.join(','), label: labels.join(', '), columnLabel: t('findings.status') });
   }
   if (toolFilter.length > 0) {
@@ -412,6 +418,11 @@ function FindingRow({
         <Link to={`/findings/${finding.id}`} className="beast-td-primary beast-link-red">
           {finding.title}
         </Link>
+        {finding.duplicateCount != null && finding.duplicateCount > 0 && (
+          <span className="beast-badge beast-badge-cross-tool" title={`Confirmed by ${finding.duplicateCount} other tool${finding.duplicateCount > 1 ? 's' : ''}`}>
+            +{finding.duplicateCount}
+          </span>
+        )}
       </td>
       {visibleColumns.has('severity') && (
         <td><SeverityBadge severity={finding.severity} /></td>

@@ -2,12 +2,13 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { sql } from 'drizzle-orm';
-import { sshExec, getClaudeRunnerConfig, parseStreamJsonResult, SSHTimeoutError } from '../ssh.ts';
+import { sshExec, sshReadFile, getClaudeRunnerConfig, parseStreamJsonResult, extractAiUsage, SSHTimeoutError } from '../ssh.ts';
 import { checkRateLimitAndPause, RateLimitError } from '../rate-limit.ts';
-import type { PipelineContext, StepInput, AnalysisOutput } from '../pipeline-types.ts';
+import type { PipelineContext, StepInput, AnalysisOutput, AiUsage } from '../pipeline-types.ts';
 import { addScanFile } from '../entities.ts';
 import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS, SOURCE_EXTENSIONS, EXCLUDED_DIRS } from '../pipeline-types.ts';
 import { getLanguageInstruction } from '../prompt-languages.ts';
+import { resolveModelFlag } from '../ai-models.ts';
 import { db } from '../../db/index.ts';
 import { contributorAssessments } from '../../db/schema.ts';
 import { findOrCreateContributor } from '../../routes/contributors.ts';
@@ -22,7 +23,7 @@ export async function checkProfileExists(ctx: PipelineContext): Promise<boolean>
   return result.stdout.trim() === 'exists';
 }
 
-export async function runAnalyzer(ctx: PipelineContext): Promise<{ cost?: number; durationMs?: number; log: string }> {
+export async function runAnalyzer(ctx: PipelineContext): Promise<{ cost?: number; durationMs?: number; log: string; aiUsage?: AiUsage }> {
   const langLine = getLanguageInstruction(ctx.reportLanguage);
   const prompt = [
     langLine,
@@ -32,18 +33,23 @@ export async function runAnalyzer(ctx: PipelineContext): Promise<{ cost?: number
     `- repo-metadata.json: ${ctx.agentDir}/repo-metadata.json`,
     `- contributors-to-assess.json: ${ctx.agentDir}/contributors-to-assess.json`,
     '',
-    `Output: write profile to ${ctx.profilePath}`,
+    `Output:`,
+    `- Profile: ${ctx.profilePath}`,
+    `- Assessments: ${ctx.agentDir}/contributor-assessments.json`,
     '',
     `Rules:`,
     `- Read repo-metadata.json FIRST — all git statistics are already collected there`,
     `- ALWAYS write the profile file, even for tiny repositories`,
+    `- ALWAYS write the contributor-assessments.json file, even if the array is empty`,
     `- Only assess contributors listed in contributors-to-assess.json`,
   ].filter(Boolean).join('\n');
-  const command = `echo ${JSON.stringify(prompt)} | claude -p --verbose --append-system-prompt-file /prompts/analyzer.md --output-format stream-json --dangerously-skip-permissions`;
+  const modelId = resolveModelFlag(ctx.aiModelAnalyzer, 'sonnet');
+  const command = `echo ${JSON.stringify(prompt)} | claude -p --model ${modelId} --verbose --append-system-prompt-file /prompts/analyzer.md --output-format stream-json --dangerously-skip-permissions`;
 
   const result = await sshExec(getClaudeRunnerConfig(), command, {
     inactivityTimeoutMs: AI_INACTIVITY_TIMEOUT_MS,
     maxTimeoutMs: AI_MAX_TIMEOUT_MS,
+    signal: ctx.cancelSignal,
   });
 
   const { result: parsed, log } = parseStreamJsonResult(result.stdout);
@@ -62,6 +68,7 @@ export async function runAnalyzer(ctx: PipelineContext): Promise<{ cost?: number
     cost: parsed.total_cost_usd as number | undefined,
     durationMs: parsed.duration_ms as number | undefined,
     log,
+    aiUsage: extractAiUsage(parsed),
   };
 }
 
@@ -277,16 +284,13 @@ export async function runAnalysisStep({ ctx }: StepInput): Promise<AnalysisOutpu
     };
   }
 
-  // 3. Check profile exists locally (no SSH!)
-  const profileExists = fs.existsSync(ctx.profilePath);
-
-  // 4. Run analyzer if needed
+  // 3. Run analyzer
   let aiAvailable = true;
+  let aiUsage: AiUsage | undefined;
   try {
-    if (!profileExists) {
-      const analyzerResult = await runAnalyzer(ctx);
-      await addScanFile({ scanId: ctx.scanId, fileName: 'analysis.log', fileType: 'log-analysis', content: analyzerResult.log });
-    }
+    const analyzerResult = await runAnalyzer(ctx);
+    aiUsage = analyzerResult.aiUsage;
+    await addScanFile({ scanId: ctx.scanId, fileName: 'analysis.log', fileType: 'log-analysis', content: analyzerResult.log });
   } catch (err) {
     if (err instanceof RateLimitError) throw err;
     aiAvailable = false;
@@ -295,10 +299,31 @@ export async function runAnalysisStep({ ctx }: StepInput): Promise<AnalysisOutpu
     }
   }
 
+  // 4. Persist the repository profile markdown into scan_files (UI reads it from there).
+  // Profile is written by the analyzer to ${ctx.profilePath} on claude-runner.
+  if (aiAvailable) {
+    try {
+      const profileMd = await sshReadFile(getClaudeRunnerConfig(), ctx.profilePath);
+      if (profileMd && profileMd.trim().length > 0) {
+        await addScanFile({
+          scanId: ctx.scanId,
+          fileName: 'repository-profile.md',
+          fileType: 'profile',
+          content: profileMd,
+        });
+      } else {
+        console.warn(`[analysis] Profile file empty or missing at ${ctx.profilePath}`);
+      }
+    } catch (err) {
+      console.warn(`[analysis] Failed to persist profile from ${ctx.profilePath}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
   return {
     aiAvailable,
-    profileGenerated: !profileExists,
+    profileGenerated: true,
     contributorsAssessed: devsToAssess.length,
     metadataPath,
+    aiUsage,
   };
 }

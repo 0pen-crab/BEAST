@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useLocation } from 'react-router';
+import { useNavigate, useLocation, useParams } from 'react-router';
 import { cn } from '@/lib/utils';
-import { useWorkspace, type Workspace } from '@/lib/workspace';
+import { useWorkspace, type Workspace, type AiModelKey } from '@/lib/workspace';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatDate } from '@/lib/format';
 import { ErrorBoundary } from '@/components/error-boundary';
@@ -32,6 +32,8 @@ import { LanguageSelect } from '@/components/language-select';
 import { useAuth } from '@/lib/auth';
 import { useCurrentWorkspaceRole, canWrite } from '@/lib/permissions';
 
+type SettingsSection = 'general' | 'ai' | 'tools';
+
 export function SettingsPage() {
   const { t } = useTranslation();
   const { currentWorkspace, refetchWorkspaces } = useWorkspace();
@@ -39,11 +41,13 @@ export function SettingsPage() {
   const wsRole = useCurrentWorkspaceRole();
   const canEdit = user ? canWrite(user.role, wsRole ?? undefined) : false;
   const location = useLocation();
+  const { section: sectionParam } = useParams<{ section?: string }>();
+  const section: SettingsSection = (sectionParam === 'ai' || sectionParam === 'tools') ? sectionParam : 'general';
   const sourcesRef = useRef<HTMLDivElement>(null);
   const [highlightSources, setHighlightSources] = useState(false);
 
   useEffect(() => {
-    if (location.hash === '#sources') {
+    if (section === 'general' && location.hash === '#sources') {
       const raf = requestAnimationFrame(() => {
         sourcesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         setHighlightSources(true);
@@ -51,7 +55,7 @@ export function SettingsPage() {
       const timer = setTimeout(() => setHighlightSources(false), 2000);
       return () => { cancelAnimationFrame(raf); clearTimeout(timer); };
     }
-  }, [location.hash]);
+  }, [location.hash, section]);
 
   if (!currentWorkspace) return null;
 
@@ -65,37 +69,45 @@ export function SettingsPage() {
           </p>
         </div>
 
-        <div className="settings-main">
-          <EditSection
-            workspace={currentWorkspace}
-            onUpdated={refetchWorkspaces}
-            readOnly={!canEdit}
-          />
-        </div>
+        {section === 'general' && (
+          <>
+            <div className="settings-main">
+              <EditSection
+                workspace={currentWorkspace}
+                onUpdated={refetchWorkspaces}
+                readOnly={!canEdit}
+              />
+            </div>
 
-        {canEdit && (
-          <div ref={sourcesRef} id="sources" className={cn('settings-main', highlightSources && 'beast-highlight-pulse')}>
-            <SourcesSection workspaceId={currentWorkspace.id} />
-          </div>
+            {canEdit && (
+              <div ref={sourcesRef} id="sources" className={cn('settings-main', highlightSources && 'beast-highlight-pulse')}>
+                <SourcesSection workspaceId={currentWorkspace.id} />
+              </div>
+            )}
+
+            {canEdit && (
+              <DangerZone
+                workspace={currentWorkspace}
+                onDeleted={async () => {
+                  await refetchWorkspaces();
+                }}
+              />
+            )}
+          </>
         )}
 
-        {/* AI Capabilities */}
-        {canEdit && (
-          <AiCapabilitiesSection
-            workspace={currentWorkspace}
-            onUpdated={refetchWorkspaces}
-          />
+        {section === 'ai' && canEdit && (
+          <>
+            <AiCapabilitiesSection
+              workspace={currentWorkspace}
+              onUpdated={refetchWorkspaces}
+            />
+            <ScanDepthSection />
+          </>
         )}
 
-        {canEdit && <SecurityToolsSection workspaceId={currentWorkspace.id} />}
-
-        {canEdit && (
-          <DangerZone
-            workspace={currentWorkspace}
-            onDeleted={async () => {
-              await refetchWorkspaces();
-            }}
-          />
+        {section === 'tools' && canEdit && (
+          <SecurityToolsSection workspaceId={currentWorkspace.id} />
         )}
       </div>
     </ErrorBoundary>
@@ -239,10 +251,16 @@ function EditSection({
 // ── AI Capabilities Section ──────────────────────────────────
 
 const AI_TECHNIQUES = [
-  { key: 'ai_analysis_enabled' as const, wsField: 'aiAnalysisEnabled' as const, titleKey: 'settings.aiAnalysis', descKey: 'settings.aiAnalysisDesc' },
-  { key: 'ai_scanning_enabled' as const, wsField: 'aiScanningEnabled' as const, titleKey: 'settings.aiScanning', descKey: 'settings.aiScanningDesc' },
-  { key: 'ai_triage_enabled' as const, wsField: 'aiTriageEnabled' as const, titleKey: 'settings.aiTriage', descKey: 'settings.aiTriageDesc' },
+  { key: 'ai_analysis_enabled' as const, wsField: 'aiAnalysisEnabled' as const, modelKey: 'ai_model_analyzer' as const, modelWsField: 'aiModelAnalyzer' as const, titleKey: 'settings.aiAnalysis', descKey: 'settings.aiAnalysisDesc' },
+  { key: 'ai_scanning_enabled' as const, wsField: 'aiScanningEnabled' as const, modelKey: 'ai_model_scanner' as const, modelWsField: 'aiModelScanner' as const, titleKey: 'settings.aiScanning', descKey: 'settings.aiScanningDesc' },
+  { key: 'ai_triage_enabled' as const, wsField: 'aiTriageEnabled' as const, modelKey: 'ai_model_triage' as const, modelWsField: 'aiModelTriage' as const, titleKey: 'settings.aiTriage', descKey: 'settings.aiTriageDesc' },
 ] as const;
+
+const AI_MODEL_OPTIONS: { value: AiModelKey; label: string; cost: string }[] = [
+  { value: 'haiku', label: 'Haiku', cost: '$' },
+  { value: 'sonnet', label: 'Sonnet', cost: '$$' },
+  { value: 'opus', label: 'Opus', cost: '$$$' },
+];
 
 function AiCapabilitiesSection({
   workspace,
@@ -257,6 +275,10 @@ function AiCapabilitiesSection({
 
   function handleToggle(key: typeof AI_TECHNIQUES[number]['key'], enabled: boolean) {
     updateAi.mutate({ [key]: enabled }, { onSuccess: onUpdated });
+  }
+
+  function handleModelChange(modelKey: typeof AI_TECHNIQUES[number]['modelKey'], value: AiModelKey) {
+    updateAi.mutate({ [modelKey]: value }, { onSuccess: onUpdated });
   }
 
   const status = claudeStatus?.status ?? 'unreachable';
@@ -311,6 +333,7 @@ function AiCapabilitiesSection({
       <div className="settings-ai-row">
         {AI_TECHNIQUES.map((tech) => {
           const enabled = workspace[tech.wsField];
+          const currentModel = workspace[tech.modelWsField] ?? 'opus';
           return (
             <div key={tech.key} className="beast-ai-card">
               <div className="beast-ai-card-header">
@@ -325,6 +348,21 @@ function AiCapabilitiesSection({
                 </label>
               </div>
               <p className="beast-ai-card-desc">{t(tech.descKey)}</p>
+              <div className="beast-ai-card-model">
+                <label className="beast-label-inline">{t('settings.aiModel')}</label>
+                <select
+                  className="beast-select beast-select-sm"
+                  value={currentModel}
+                  onChange={(e) => handleModelChange(tech.modelKey, e.target.value as AiModelKey)}
+                  disabled={!enabled}
+                >
+                  {AI_MODEL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label} ({opt.cost})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           );
         })}
@@ -805,6 +843,264 @@ function DangerZone({
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ── Scan Depth Section ──────────────────────────────────────
+
+type ScanDepth = 1500 | 500 | 100;
+
+const SCAN_DEPTH_PRESETS: {
+  depth: ScanDepth;
+  labelKey: string;
+  tagKey: string;
+  findingsMult: string;
+  badge?: string;
+  badgeRed?: boolean;
+}[] = [
+  { depth: 1500, labelKey: 'settings.scanDepth.quick.label',    tagKey: 'settings.scanDepth.quick.tag',    findingsMult: '1' },
+  { depth: 500,  labelKey: 'settings.scanDepth.standard.label', tagKey: 'settings.scanDepth.standard.tag', findingsMult: '3',  badge: 'BALANCED' },
+  { depth: 100,  labelKey: 'settings.scanDepth.deep.label',     tagKey: 'settings.scanDepth.deep.tag',     findingsMult: '10', badge: 'BEAST MODE', badgeRed: true },
+];
+
+const REPO_PROFILES: { key: 'small' | 'medium' | 'large'; files: number; hint: string }[] = [
+  { key: 'small',  files: 500,   hint: '~500 files' },
+  { key: 'medium', files: 2500,  hint: '~2,500 files' },
+  { key: 'large',  files: 10000, hint: '~10,000 files' },
+];
+
+const SINGLE_MODULE_THRESHOLD = 2000;
+const MINUTES_PER_MODULE = 4;
+
+function estimateModules(depth: ScanDepth, files: number) {
+  if (files <= SINGLE_MODULE_THRESHOLD && depth >= SINGLE_MODULE_THRESHOLD) return 1;
+  return Math.ceil(files / depth);
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `~${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `~${h}h` : `~${h}h ${m}m`;
+}
+
+function costLevel(usd: number): number {
+  if (usd <= 5)   return 1;
+  if (usd <= 20)  return 2;
+  if (usd <= 50)  return 3;
+  if (usd <= 100) return 4;
+  return 5;
+}
+
+// Full-scan cost (analyzer + scanner + triage + AI research, end-to-end) per
+// (depth × repo profile) combination. Anchored on real BEAST benchmarks:
+//   reference repo = 7,622 INTERESTING files (≈LARGE): B@1500=$10, B@500=$39, B@100=$160.
+// For small repos, QUICK == STANDARD because both run 1 Sniper module with the same
+// files cached — module size doesn't matter when files ≤ depth.
+type RepoSizeKey = typeof REPO_PROFILES[number]['key'];
+const COST_TABLE: Record<ScanDepth, Record<RepoSizeKey, number>> = {
+  1500: { small: 3,  medium: 5,  large: 14  },
+  500:  { small: 3,  medium: 13, large: 50  },
+  100:  { small: 10, medium: 50, large: 210 },
+};
+// Max x20 calibrated against real LARGE+DEEP scan: $210 ≈ 50% of one 5h window.
+// Max x5 = 1/4 of x20 capacity (since x20 is 4× rate-limit of x5).
+const MAX20_USD_PER_WINDOW = 420; // $210 = 50% of window
+const MAX5_USD_PER_WINDOW = 105;  // x20 / 4
+
+function fullScanCost(depth: ScanDepth, profile: RepoSizeKey): number {
+  return COST_TABLE[depth][profile];
+}
+
+function formatApiCost(depth: ScanDepth, profile: RepoSizeKey): string {
+  const cost = fullScanCost(depth, profile);
+  if (cost < 10)  return `~$${cost.toFixed(1)}`;
+  if (cost < 50)  return `~$${Math.round(cost)}`;
+  if (cost < 200) return `~$${Math.round(cost / 5) * 5}`;
+  return `~$${Math.round(cost / 25) * 25}`;
+}
+
+function formatWindowUsage(cost: number, budgetPerWindow: number): string {
+  const ratio = cost / budgetPerWindow;
+  if (ratio < 0.02) return '<2% of 5h window';
+  if (ratio <= 1)   return `~${Math.max(2, Math.round(ratio * 100))}% of 5h window`;
+  if (ratio <= 5)   return `~${ratio.toFixed(1)}× of 5h window`;
+  return `~${Math.round(ratio)}× of 5h window`;
+}
+
+function formatMax5Usage(depth: ScanDepth, profile: RepoSizeKey): string {
+  return formatWindowUsage(fullScanCost(depth, profile), MAX5_USD_PER_WINDOW);
+}
+
+function formatMax20Usage(depth: ScanDepth, profile: RepoSizeKey): string {
+  return formatWindowUsage(fullScanCost(depth, profile), MAX20_USD_PER_WINDOW);
+}
+
+type AnimatedProfile = { modules: number; minutes: number; level: number };
+
+function buildSnapshot(depth: ScanDepth): AnimatedProfile[] {
+  return REPO_PROFILES.map((p) => {
+    const modules = estimateModules(depth, p.files);
+    return {
+      modules,
+      minutes: modules * MINUTES_PER_MODULE,
+      level: costLevel(fullScanCost(depth, p.key)),
+    };
+  });
+}
+
+function ScanDepthSection() {
+  const { t } = useTranslation();
+  const { currentWorkspace, refetchWorkspaces } = useWorkspace();
+  const updateAi = useUpdateAiSettings(currentWorkspace?.id);
+  const persisted = (currentWorkspace?.scanDepth ?? 500) as ScanDepth;
+  const [selected, setSelected] = useState<ScanDepth>(persisted);
+  const [animated, setAnimated] = useState<AnimatedProfile[]>(() => buildSnapshot(persisted));
+
+  // Re-sync local state when workspace changes (switching workspaces)
+  useEffect(() => {
+    setSelected(persisted);
+  }, [persisted]);
+
+  function handleSelect(depth: ScanDepth) {
+    if (depth === selected) return;
+    const previous = selected;
+    setSelected(depth);
+    updateAi.mutate(
+      { scan_depth: depth },
+      {
+        onSuccess: () => {
+          refetchWorkspaces();
+        },
+        onError: () => {
+          setSelected(previous);
+        },
+      },
+    );
+  }
+
+  useEffect(() => {
+    const targets = buildSnapshot(selected);
+    const start = animated.map((a) => ({ ...a }));
+    const duration = 700;
+    const startTime = performance.now();
+    let raf = 0;
+
+    function frame() {
+      const t = Math.min(1, (performance.now() - startTime) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setAnimated(REPO_PROFILES.map((_, i) => ({
+        modules: Math.round(start[i].modules + (targets[i].modules - start[i].modules) * eased),
+        minutes: Math.round(start[i].minutes + (targets[i].minutes - start[i].minutes) * eased),
+        level: start[i].level + (targets[i].level - start[i].level) * eased,
+      })));
+      if (t < 1) raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  return (
+    <div className="beast-card">
+      <h2 className="beast-card-title">{t('settings.scanDepth.title')}</h2>
+      <p className="beast-card-subtitle">{t('settings.scanDepth.subtitle')}</p>
+
+      <div className="beast-preset-tabs">
+        {SCAN_DEPTH_PRESETS.map((p) => (
+          <button
+            key={p.depth}
+            type="button"
+            onClick={() => handleSelect(p.depth)}
+            disabled={updateAi.isPending}
+            className={cn('beast-preset-tab', selected === p.depth && 'beast-preset-tab-active')}
+          >
+            {p.badge && (
+              <div className={cn('beast-preset-tab-badge', p.badgeRed && 'beast-preset-tab-badge-red')}>{p.badge}</div>
+            )}
+            <div className="beast-preset-tab-title">{t(p.labelKey)}</div>
+            <div className="beast-preset-tab-tag">{t(p.tagKey)}</div>
+            <div className="beast-preset-tab-stats">
+              <div className="beast-preset-stat">
+                <div className="beast-preset-stat-label">{t('settings.scanDepth.filesPerAgent')}</div>
+                <div className="beast-preset-stat-val">{p.depth}</div>
+              </div>
+              <div className="beast-preset-stat">
+                <div className="beast-preset-stat-label">{t('settings.scanDepth.findings')}</div>
+                <div className="beast-preset-stat-val beast-preset-stat-val-red">
+                  <span className="beast-preset-stat-prefix">×</span>{p.findingsMult}
+                </div>
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="beast-preset-panel">
+        <div className="beast-preset-panel-label">{t('settings.scanDepth.previewLabel')}</div>
+        <div className="beast-repo-preview-grid">
+          {REPO_PROFILES.map((profile, idx) => {
+              const { minutes, level } = animated[idx];
+              const time = formatDuration(minutes);
+              return (
+                <div key={profile.key} className="beast-repo-preview-card">
+                  <div className="beast-repo-preview-header">
+                    <span className="beast-repo-preview-size">{t(`settings.scanDepth.sizes.${profile.key}`)}</span>
+                    <span className="beast-repo-preview-count">{profile.hint}</span>
+                  </div>
+                  <div className="beast-repo-preview-desc">
+                    {t(`settings.scanDepth.sizeDesc.${profile.key}`)}
+                  </div>
+                  <div className="beast-repo-preview-stats">
+                    <div>
+                      <span className="beast-repo-preview-time">{time}</span>
+                    </div>
+                    <div className="beast-repo-preview-cost-wrap">
+                      <div className="beast-repo-preview-cost">
+                        {[1, 2, 3, 4, 5].map((i) => {
+                          const fill = Math.max(0, Math.min(1, level - (i - 1)));
+                          const bounce = 1 + 0.3 * Math.sin(fill * Math.PI);
+                          return (
+                            <span
+                              key={i}
+                              className="beast-repo-preview-cost-dot beast-repo-preview-cost-on"
+                              style={{
+                                opacity: 0.22 + 0.78 * fill,
+                                transform: `scale(${bounce})`,
+                              }}
+                            >$</span>
+                          );
+                        })}
+                      </div>
+                      <span className="beast-info-icon" tabIndex={0}>
+                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 16v-4" />
+                          <path d="M12 8h.01" />
+                        </svg>
+                        <div className="beast-info-tooltip">
+                          <div className="beast-info-tooltip-row">
+                            <span className="beast-info-tooltip-label">{t('settings.scanDepth.cost.api')}</span>
+                            <span className="beast-info-tooltip-val">{formatApiCost(selected, profile.key)}</span>
+                          </div>
+                          <div className="beast-info-tooltip-row">
+                            <span className="beast-info-tooltip-label">Max x5 plan</span>
+                            <span className="beast-info-tooltip-val">{formatMax5Usage(selected, profile.key)}</span>
+                          </div>
+                          <div className="beast-info-tooltip-row">
+                            <span className="beast-info-tooltip-label">Max x20 plan</span>
+                            <span className="beast-info-tooltip-val">{formatMax20Usage(selected, profile.key)}</span>
+                          </div>
+                        </div>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </div>
     </div>
   );
 }

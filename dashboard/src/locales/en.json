@@ -10,6 +10,11 @@
     "teams": "Teams",
     "members": "Members",
     "settings": "Settings",
+    "settingsSections": {
+      "general": "General",
+      "ai": "AI Preferences",
+      "tools": "Tools"
+    },
     "export": "Export"
   },
   "brand": {
@@ -86,6 +91,7 @@
     "completed": "completed",
     "running": "running",
     "queued": "queued",
+    "paused": "paused",
     "failed": "failed",
     "Resolved": "Resolved"
   },
@@ -208,6 +214,15 @@
     "inQueue": "In Queue",
     "completed": "Completed",
     "failed": "Failed",
+    "paused": "Paused",
+    "pausedBanner": "Scan paused",
+    "pausedReason": "Hit Claude AI rate limit. Will resume automatically.",
+    "resumesAt": "Resumes at",
+    "resumesIn": "Resumes in",
+    "snipeProgress": "Sniper modules",
+    "modulesCompleted": "{{completed}} of {{total}} completed",
+    "resumeNow": "Resume now",
+    "resuming": "Resuming...",
     "avgDuration": "Avg Duration",
     "now": "now",
     "remaining": "remaining",
@@ -326,7 +341,8 @@
     "generated": "Generated",
     "noReportAvailable": "No report available",
     "overview": "Overview",
-    "triagedByAi": "Triaged by AI, Accepted"
+    "triagedByAi": "Triaged by AI, Accepted",
+    "downloadMd": "Download .md"
   },
   "findings": {
     "title": "Findings",
@@ -349,6 +365,8 @@
       "description": "Description",
       "location": "Location",
       "notes": "Notes",
+      "duplicates": "Also detected by",
+      "duplicateOf": "Duplicate of",
       "properties": "Properties",
       "setStatus": "Set status:",
       "addNote": "Add",
@@ -541,6 +559,7 @@
     "aiScanningDesc": "Claude Code scans source code for security vulnerabilities, insecure patterns, and potential exploits using AI-powered reasoning.",
     "aiTriage": "AI Triage & Reporting",
     "aiTriageDesc": "Analyzes all findings, prioritizes them by severity and business impact, and generates a consolidated security report.",
+    "aiModel": "Model",
     "claudeStatus": "Claude Code Status",
     "claudeChecking": "Checking Claude Code Status...",
     "claudeAuthenticated": "Authenticated",
@@ -550,7 +569,39 @@
     "claudeAuthHint": "Run <code>make claude-login</code> in the project root to authenticate Claude Code.",
     "claudeUnreachableHint": "The claude-runner container is not responding. Check that it is running.",
     "enabled": "Enabled",
-    "disabled": "Disabled"
+    "disabled": "Disabled",
+    "scanDepth": {
+      "title": "Scan Depth",
+      "subtitle": "Choose how deep the AI should explore your code",
+      "filesPerAgent": "Files per agent",
+      "findings": "Findings",
+      "previewLabel": "Approximate scan time and cost estimate",
+      "cost": {
+        "api": "API plan"
+      },
+      "quick": {
+        "label": "QUICK",
+        "tag": "For small repos or basic analysis"
+      },
+      "standard": {
+        "label": "STANDARD",
+        "tag": "Moderate speed. Solid coverage"
+      },
+      "deep": {
+        "label": "DEEP",
+        "tag": "Slow. Expensive. Maximum findings"
+      },
+      "sizes": {
+        "small": "SMALL REPO",
+        "medium": "MEDIUM REPO",
+        "large": "LARGE REPO"
+      },
+      "sizeDesc": {
+        "small": "CLI tool, package, micro-service",
+        "medium": "Typical SaaS product, full-stack app",
+        "large": "Enterprise monorepo, mid-size platform"
+      }
+    }
   },
   "pipeline": {
     "clone": "Clone repository",

@@ -166,6 +166,50 @@ describe('POST /workspaces', () => {
 
     expect(res.statusCode).toBe(400);
   });
+
+  it('accepts scan_depth on creation', async () => {
+    const created = { id: 5, name: 'Deep WS', scanDepth: 100 };
+    const mockValues = vi.fn().mockReturnValue({
+      returning: vi.fn().mockResolvedValue([created]),
+    });
+    mockDb.insert.mockReturnValue({ values: mockValues });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces',
+      payload: { name: 'Deep WS', scan_depth: 100 },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(mockValues).toHaveBeenCalledWith(expect.objectContaining({ scanDepth: 100 }));
+  });
+
+  it('defaults scan_depth to 500 when not provided', async () => {
+    const created = { id: 6, name: 'Default WS', scanDepth: 500 };
+    const mockValues = vi.fn().mockReturnValue({
+      returning: vi.fn().mockResolvedValue([created]),
+    });
+    mockDb.insert.mockReturnValue({ values: mockValues });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces',
+      payload: { name: 'Default WS' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(mockValues).toHaveBeenCalledWith(expect.objectContaining({ scanDepth: 500 }));
+  });
+
+  it('rejects scan_depth with invalid value on creation', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces',
+      payload: { name: 'Bad WS', scan_depth: 999 },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 // ── PUT /workspaces/:id ──────────────────────────────────────
@@ -208,6 +252,112 @@ describe('PUT /workspaces/:id', () => {
 
     expect(res.statusCode).toBe(404);
     expect(res.json().error).toBe('Not found');
+  });
+
+  it('accepts ai_model_* fields with valid values', async () => {
+    const updated = { id: 1, name: 'WS', aiModelAnalyzer: 'haiku', aiModelScanner: 'sonnet', aiModelTriage: 'opus' };
+    const mockSet = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([updated]),
+      }),
+    });
+    mockDb.update.mockReturnValue({ set: mockSet });
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/1',
+      payload: {
+        ai_model_analyzer: 'haiku',
+        ai_model_scanner: 'sonnet',
+        ai_model_triage: 'opus',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiModelAnalyzer: 'haiku',
+        aiModelScanner: 'sonnet',
+        aiModelTriage: 'opus',
+      }),
+    );
+  });
+
+  it('rejects invalid ai_model value', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/1',
+      payload: { ai_model_analyzer: 'gpt-4' },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('accepts scan_depth with valid value (1500)', async () => {
+    const updated = { id: 1, name: 'WS', scanDepth: 1500 };
+    const mockSet = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([updated]),
+      }),
+    });
+    mockDb.update.mockReturnValue({ set: mockSet });
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/1',
+      payload: { scan_depth: 1500 },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ scanDepth: 1500 }));
+  });
+
+  it('accepts scan_depth with valid value (500)', async () => {
+    const updated = { id: 1, name: 'WS', scanDepth: 500 };
+    const mockSet = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([updated]),
+      }),
+    });
+    mockDb.update.mockReturnValue({ set: mockSet });
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/1',
+      payload: { scan_depth: 500 },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ scanDepth: 500 }));
+  });
+
+  it('accepts scan_depth with valid value (100)', async () => {
+    const updated = { id: 1, name: 'WS', scanDepth: 100 };
+    const mockSet = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([updated]),
+      }),
+    });
+    mockDb.update.mockReturnValue({ set: mockSet });
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/1',
+      payload: { scan_depth: 100 },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ scanDepth: 100 }));
+  });
+
+  it('rejects scan_depth with invalid value', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/workspaces/1',
+      payload: { scan_depth: 250 },
+    });
+
+    expect(res.statusCode).toBe(400);
   });
 });
 

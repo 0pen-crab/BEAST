@@ -40,6 +40,7 @@ const mockUseFindings = vi.fn(() => ({
         contributorId: 10,
         contributorName: 'John Doe',
         createdAt: '2026-01-10T00:00:00Z',
+        duplicateCount: 2,
       },
       {
         id: 2,
@@ -178,6 +179,18 @@ describe('FindingsPage', () => {
     const remainingToolBtns = screen.queryAllByRole('button', { name: /findings\.tool/ });
     // The filter dropdown might still have "tool" text, but the table header button should be gone
     expect(remainingToolBtns.length).toBe(0);
+  });
+
+  it('shows duplicate count badge when finding has duplicates', () => {
+    renderWithProviders(<FindingsPage />);
+    // SQL Injection finding has duplicateCount=2 → "+2" badge
+    expect(screen.getByText('+2')).toBeInTheDocument();
+  });
+
+  it('does not show badge for finding without duplicates', () => {
+    renderWithProviders(<FindingsPage />);
+    // XSS Vulnerability has no duplicateCount → no "+0" badge
+    expect(screen.queryByText('+0')).not.toBeInTheDocument();
   });
 
   it('uses Pagination component instead of manual prev/next', () => {

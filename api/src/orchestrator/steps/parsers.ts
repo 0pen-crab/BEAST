@@ -43,13 +43,12 @@ export function parseSarif(content: string): ParsedFinding[] {
       const locations = (result.locations ?? []) as Array<{
         physicalLocation?: {
           artifactLocation?: { uri?: string };
-          region?: { startLine?: number; snippet?: { text?: string } };
+          region?: { startLine?: number };
         };
       }>;
       const loc = locations[0]?.physicalLocation;
       const filePath = loc?.artifactLocation?.uri ?? '';
       const line = loc?.region?.startLine ?? null;
-      const snippet = loc?.region?.snippet?.text ?? null;
 
       // Severity: check properties.severity first, then level
       const props = (result.properties ?? {}) as Record<string, string>;
@@ -71,9 +70,9 @@ export function parseSarif(content: string): ParsedFinding[] {
         ?? '';
       const description = message || ruleDesc;
 
-      // Extract matched value: properties.matchedText (presidio) or region snippet
-      const matchedText = props.matchedText || snippet || null;
-
+      // Only the explicit `properties.matchedText` (presidio-style) is treated as a secret.
+      // The region snippet is just the matched code line — for SAST findings (semgrep,
+      // BEAST) it's vulnerable code, not a credential. Code context lives in code_snippet.
       findings.push({
         title: ruleDesc || message || ruleId,
         severity,
@@ -83,7 +82,7 @@ export function parseSarif(content: string): ParsedFinding[] {
         vulnIdFromTool: ruleId,
         cwe,
         cvssScore: null,
-        secretValue: matchedText,
+        secretValue: props.matchedText || null,
       });
     }
   }
@@ -233,56 +232,3 @@ export function parseTrivy(content: string): ParsedFinding[] {
   return findings;
 }
 
-// ── Bearer Parser (dataflow JSON format) ───────────────────────
-
-export function parseBearer(content: string): ParsedFinding[] {
-  const findings: ParsedFinding[] = [];
-  let data: Record<string, unknown>;
-  try {
-    data = JSON.parse(content);
-  } catch {
-    return findings;
-  }
-
-  // Dataflow report: { data_types: [...], risks: [...] }
-  const dataTypes = (data.data_types ?? []) as Array<{
-    name?: string;
-    category_name?: string;
-    category_groups?: string[];
-    detectors?: Array<{
-      name?: string;
-      locations?: Array<{
-        filename?: string;
-        start_line_number?: number;
-        field_name?: string;
-        object_name?: string;
-        subject_name?: string;
-      }>;
-    }>;
-  }>;
-
-  for (const dt of dataTypes) {
-    const typeName = dt.name || 'Unknown';
-    const category = dt.category_name || '';
-    const groups = (dt.category_groups ?? []).join(', ');
-
-    for (const detector of dt.detectors ?? []) {
-      for (const loc of detector.locations ?? []) {
-        const fieldInfo = [loc.object_name, loc.field_name].filter(Boolean).join('.');
-        findings.push({
-          title: `${typeName} in ${fieldInfo || loc.filename || 'unknown'}`,
-          severity: 'Info',
-          description: `Bearer detected ${typeName} (${category}) — ${groups}`,
-          filePath: loc.filename || '',
-          line: loc.start_line_number ?? null,
-          vulnIdFromTool: `bearer-datatype-${typeName.toLowerCase().replace(/\s+/g, '-')}`,
-          cwe: null,
-          cvssScore: null,
-          secretValue: fieldInfo || null,
-        });
-      }
-    }
-  }
-
-  return findings;
-}

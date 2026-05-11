@@ -7,6 +7,7 @@ import type {
   Test,
   Finding,
   FindingNote,
+  FindingDuplicate,
   FindingCounts,
   ScanDetail,
   ScanEvent,
@@ -276,6 +277,14 @@ export function useFindingNotes(findingId: number) {
   return useQuery({
     queryKey: ['findingNotes', findingId],
     queryFn: () => fetchApi<FindingNote[]>(`/api/findings/${findingId}/notes`),
+    enabled: findingId > 0,
+  });
+}
+
+export function useFindingDuplicates(findingId: number) {
+  return useQuery({
+    queryKey: ['findingDuplicates', findingId],
+    queryFn: () => fetchApi<FindingDuplicate[]>(`/api/findings/${findingId}/duplicates`),
     enabled: findingId > 0,
   });
 }
@@ -653,7 +662,7 @@ export function useScans(params?: { status?: string; limit?: number }) {
     enabled: !!wsId,
     refetchInterval: (query) => {
       const data = query.state.data;
-      const hasActive = data?.results.some(s => s.status === 'running' || s.status === 'queued');
+      const hasActive = data?.results.some(s => s.status === 'running' || s.status === 'queued' || s.status === 'paused');
       return hasActive ? 5_000 : false;
     },
   });
@@ -666,7 +675,7 @@ export function useScanDetail(id: string | null) {
     enabled: id !== null,
     refetchInterval: (query) => {
       const d = query.state.data;
-      if (d && (d.status === 'running' || d.status === 'queued')) return 3_000;
+      if (d && (d.status === 'running' || d.status === 'queued' || d.status === 'paused')) return 3_000;
       return false;
     },
   });
@@ -702,7 +711,7 @@ export function useScanStats() {
   return useQuery({
     queryKey: ['scan-stats', wsId],
     queryFn: () => fetchApi<{
-      total: number; queued: number; running: number;
+      total: number; queued: number; running: number; paused: number;
       completed: number; failed: number;
       avg_duration_sec: number | null;
     }>(buildUrl('/api/scans/stats', { workspace_id: wsId })),
@@ -728,6 +737,18 @@ export function useRemoveScan() {
   return useMutation({
     mutationFn: (id: string) => mutateApi<{ deleted: boolean }>(`/api/scans/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scans'] });
+      qc.invalidateQueries({ queryKey: ['scan-stats'] });
+    },
+  });
+}
+
+export function useResumeScan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => mutateApi<{ resumed: boolean }>(`/api/scans/${id}/resume`, { method: 'POST' }),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ['scan', id] });
       qc.invalidateQueries({ queryKey: ['scans'] });
       qc.invalidateQueries({ queryKey: ['scan-stats'] });
     },
@@ -1032,6 +1053,10 @@ export function useUpdateAiSettings(workspaceId: number | undefined) {
       ai_analysis_enabled?: boolean;
       ai_scanning_enabled?: boolean;
       ai_triage_enabled?: boolean;
+      ai_model_analyzer?: string;
+      ai_model_scanner?: string;
+      ai_model_triage?: string;
+      scan_depth?: 1500 | 500 | 100;
     }) =>
       mutateApi<Record<string, unknown>>(`/api/workspaces/${workspaceId}`, {
         method: 'PUT',

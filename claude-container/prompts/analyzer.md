@@ -33,6 +33,8 @@ Read `contributors-to-assess.json` at the path specified in the prompt. It conta
 Write to PROFILE_PATH with ALL of the following sections. Use actual data — no placeholders, no generic observations. Reference specific files, versions, commit hashes, and counts.
 
 ```markdown
+# Repository Profile
+
 | | |
 |---|---|
 | **Generated** | {date} |
@@ -41,24 +43,35 @@ Write to PROFILE_PATH with ALL of the following sections. Use actual data — no
 
 ## Summary
 
-- Name, description, and application type (web API, CLI tool, library, monorepo, microservice, etc.)
-- Primary language(s) and frameworks
-- What this application does — 2-3 sentences
+{2-3 sentences: what the app does, its purpose, architecture style}
+
+**Stack**: {languages, frameworks with versions, databases, message queues, caches — one compact line}
+
+**Codebase**: {source file count, approximate line count, scannable source size}
+
+**Architecture**: {structure pattern (monorepo/microservices/monolith), API style (REST/GraphQL/gRPC), state management if frontend — one compact line}
 
 ### Module Map
 
-> Include this table ONLY if recommended strategy is "subagent". Each module should be under 600 KB.
+> Include this section ONLY if `scannableCodeSizeKb` from repo-metadata.json exceeds 600. For smaller repos, skip this section entirely.
+
+Divide the codebase into logical scan modules — each representing one functional area (e.g., authentication, API layer, data access, background workers, admin panel, frontend). Each module should be under 600 KB of source code.
 
 | Module | Path | Size (KB) | Description |
 |--------|------|-----------|-------------|
 
-### Security Boundaries
+### Security Context
 
 - **Authentication**: {how auth works, which module handles it, specific files}
 - **Authorization**: {how authz works, where checks happen}
 - **Input entry points**: {where user input enters — specific route files, controllers, handlers}
-- **Data stores**: {databases/caches used, which modules access them, how queries are built}
+- **Input validation**: {approach, library, consistency across modules}
+- **Data stores**: {databases/caches used, how queries are built (ORM/raw SQL/parameterized)}
 - **External services**: {external APIs called, from which modules}
+- **Error handling**: {centralized / per-module, does it leak sensitive info}
+- **Logging**: {security event logging presence, what's logged}
+- **Rate limiting**: Present / Missing
+- **Security headers**: Present / Missing
 
 ### Trust Boundaries
 
@@ -66,91 +79,55 @@ Write to PROFILE_PATH with ALL of the following sections. Use actual data — no
 - **Authenticated**: {routes/modules requiring auth}
 - **Admin-only**: {privileged routes/modules}
 
-### Known Security Patterns
+### Complexity Hotspots
 
-- **Input validation**: {approach, library, consistency across modules}
-- **Query construction**: {parameterized / ORM / raw concatenation, per module}
-- **Auth token handling**: {verification approach, middleware vs per-route}
-- **Error handling**: {centralized / per-module, does it leak sensitive info}
-- **Logging**: {security event logging presence, what's logged}
+List files over 500 lines that concentrate business logic or security-relevant code.
 
-## Stats
+| File | Lines | Note |
+|------|-------|------|
+
+---
+
+## Contributors & Activity
 
 | Metric | Value |
 |--------|-------|
 | Total commits | ... |
-| Commits (last 6 months) | ... |
 | First commit | ... |
 | Last commit | ... |
-| Contributors (all time) | ... |
-| Contributors (last 6 months) | ... |
-| Remote branches | ... |
-| Tags/releases | ... |
-| Tracked files | ... |
-| Code size (excl. .git) | ... |
-| Scannable source code | ... |
-
-### File Type Distribution
-
-| Extension | Count |
-|-----------|-------|
-
-### Monthly Activity (last 12 months)
-
-| Month | Commits |
-|-------|---------|
-
-## Tech Stack
-
-- **Languages**: list each with file count and line count
-- A short prose paragraph covering frameworks and versions, databases, package managers, build tools, cloud providers, message queues, caches, and other notable technologies
-
-## Architecture
-
-- Project structure pattern (monorepo, modular monolith, microservices, flat)
-- Design patterns observed (MVC, DDD, Clean Architecture, event-driven, etc.)
-- API style (REST, GraphQL, gRPC, WebSocket, etc.)
-- State management (if frontend)
-- Configuration management (env files, config services, feature flags)
-- Error handling patterns (centralized handler, per-module, typed exceptions)
-
-## Contributors & Maintenance
+| Contributors | {total} ({active} active last 6 months) |
+| Activity | {min}–{max} commits/month (last 12 months) |
 
 ### Top Contributors
 
 | # | Author | Commits (total) | Commits (6 mo) | Primary areas |
 |---|--------|-----------------|-----------------|---------------|
 
-### Commit Patterns
-
-| Day | Commits |
-|-----|---------|
-
 ### Maintenance Assessment
 
 - **Bus factor**: {number} — {evidence}
-- **Activity status**: actively maintained / sporadic / stale / abandoned
-- **Commit quality**: are messages descriptive? Conventional commits? Squash merges?
-- **Code review signals**: merge commit ratio, PR patterns, review tooling
+- **Commit quality**: {description — conventional commits? ticket prefixes? descriptive messages?}
+- **Code review signals**: {merge commit ratio, PR patterns, review tooling}
+
+---
 
 ## Code Quality
 
-Rate each dimension: Excellent / Good / Acceptable / Poor / Critical — with evidence.
+Rate each dimension with a one-line heading and evidence paragraph:
 
-| Dimension | Rating | Evidence |
-|-----------|--------|----------|
-| Structure & organization | ... | ... |
-| Error handling | ... | ... |
-| Testing | ... | ... |
-| Documentation | ... | ... |
-| Dead code | ... | ... |
-| Consistency | ... | ... |
-| Complexity hotspots | ... | ... |
+### {Dimension} — {Excellent / Good / Acceptable / Poor / Critical}
+{Evidence — reference specific files, patterns, examples}
 
-### Large Files (>500 lines)
+Dimensions to cover:
+- Structure & organization
+- Error handling
+- Testing
+- Documentation
+- Dead code
+- Consistency
+- Complexity hotspots
 
-| File | Lines | Notes |
-|------|-------|-------|
+---
 
 ## Dependency Health
 
@@ -158,37 +135,23 @@ Rate each dimension: Excellent / Good / Acceptable / Poor / Critical — with ev
 |--------|-------|
 | Direct dependencies | ... |
 | Dev dependencies | ... |
-| Transitive (from lockfile) | ... |
 | Pinning strategy | exact / ranges / floating |
-| Lockfile last updated | ... |
+| Lockfile | present / absent |
 
-### Notable Dependencies
+### Dependency Concerns
 
-Flag outdated major versions, deprecated packages, heavy/bloated packages, and anything suspicious.
+List only problematic dependencies — outdated, preview, alpha, deprecated, or suspicious. Do not list healthy dependencies.
 
-| Package | Current | Latest | Status |
-|---------|---------|--------|--------|
+| Package | Version | Issue |
+|---------|---------|-------|
 
-## Security Posture
-
-Observations from source code patterns (not from scan tools):
-
-| Aspect | Status | Details |
-|--------|--------|---------|
-| Authentication | JWT / session / OAuth / API key / none | ... |
-| Authorization | RBAC / ABAC / ACL / none | ... |
-| Input validation | schema / manual / framework / none | ... |
-| Secret management | env vars / vault / hardcoded / config | ... |
-| CORS | configured / open / missing | ... |
-| Rate limiting | present / missing | ... |
-| Logging & audit | present / partial / missing | ... |
-| Security headers (CSP, etc.) | present / missing | ... |
-| HTTPS enforcement | yes / no / N/A | ... |
-| SQL/query safety | parameterized / string concat / ORM | ... |
+---
 
 ## DevOps & CI/CD
 
 Short paragraph covering: CI/CD platform, security scanning in pipeline, deployment strategy, containerization, and IaC presence. Only mention what actually exists.
+
+---
 
 ## Risk Summary
 
@@ -201,11 +164,6 @@ Short paragraph covering: CI/CD platform, security scanning in pipeline, deploym
 | Maintenance activity | ... | ... |
 | Security hygiene | ... | ... |
 | Documentation | ... | ... |
-
-## Recommendations
-
-3-7 actionable, prioritized recommendations. Be specific — reference actual files and actual problems, not generic advice.
-
 ```
 
 ## Step 4: Contributor Assessment
@@ -225,10 +183,9 @@ Score each contributor on these dimensions (1-10 scale):
 
 For each contributor, write a **feedback** field — a markdown paragraph (100-300 words) that explains your assessment. Reference specific files, code patterns, commit messages, and examples. Describe strengths and areas for improvement with evidence.
 
-Write the assessments as a fenced JSON block at the end of the profile:
+Write the assessments as a JSON file at the assessments path specified in the prompt:
 
-````markdown
-```contributor-assessments
+```json
 [
   {
     "email": "dev@example.com",
@@ -241,7 +198,6 @@ Write the assessments as a fenced JSON block at the end of the profile:
   }
 ]
 ```
-````
 
 ### Assessment Rules
 
@@ -272,7 +228,8 @@ When writing in a language other than English, follow these rules:
 
 - Read actual source files — don't guess about frameworks, versions, or patterns
 - Every profile section must contain real data. If not applicable (e.g., no CI/CD found), say so explicitly — don't skip the section
-- The Summary section must be thorough and accurate — the security scanner depends entirely on it for scan strategy
-- Do NOT perform security vulnerability scanning — that's the scanner's job. Security Posture captures observations, not findings
+- The Summary section must be thorough and accurate — the security scanner depends entirely on it for scan strategy. The Module Map is critical for large repos — the scanner uses it as a checklist to ensure every module gets scanned
+- Do NOT perform security vulnerability scanning — that's the scanner's job. Security Context captures how security works, not what's broken
 - DO provide quantitative data wherever possible (counts, percentages, dates)
 - ALWAYS write the profile file, even for tiny repositories
+- ALWAYS write the contributor-assessments.json file, even if the array is empty

@@ -77,7 +77,6 @@ def scan_repo(repo_path: str, output_path: str) -> None:
                 entities=[
                     'EMAIL_ADDRESS', 'PHONE_NUMBER', 'IP_ADDRESS',
                     'CREDIT_CARD', 'IBAN_CODE',
-                    'US_SSN', 'US_DRIVER_LICENSE', 'MEDICAL_LICENSE',
                 ],
             )
 

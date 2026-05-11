@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/index.ts';
-import { scans, scanSteps, repositories } from '../db/schema.ts';
+import { scans, scanSteps, scanModules, repositories } from '../db/schema.ts';
 import { createScan, getScan, listScans } from '../orchestrator/db.ts';
 import { authorize, authorizeSuperAdmin, authorizePublic, ForbiddenError } from '../lib/authorize.ts';
 import * as fs from 'fs';
@@ -33,10 +33,11 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
       total: sql<number>`COUNT(*)::int`,
       queued: sql<number>`COUNT(*) FILTER (WHERE ${scans.status} = 'queued')::int`,
       running: sql<number>`COUNT(*) FILTER (WHERE ${scans.status} = 'running')::int`,
+      paused: sql<number>`COUNT(*) FILTER (WHERE ${scans.status} = 'paused')::int`,
       completed: sql<number>`COUNT(*) FILTER (WHERE ${scans.status} = 'completed')::int`,
       failed: sql<number>`COUNT(*) FILTER (WHERE ${scans.status} = 'failed')::int`,
       avg_duration_sec: sql<number | null>`ROUND(AVG(EXTRACT(EPOCH FROM (${scans.completedAt} - ${scans.startedAt}))) FILTER (WHERE ${scans.status} = 'completed'))::int`,
-      earliest_active: sql<string | null>`MIN(${scans.createdAt}) FILTER (WHERE ${scans.status} = 'running' OR ${scans.status} = 'queued')`,
+      earliest_active: sql<string | null>`MIN(${scans.createdAt}) FILTER (WHERE ${scans.status} = 'running' OR ${scans.status} = 'queued' OR ${scans.status} = 'paused')`,
     }).from(scans).where(whereClause);
 
     return stats;
@@ -143,7 +144,16 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
       .where(eq(scanSteps.scanId, id))
       .orderBy(scanSteps.stepOrder);
 
-    return { ...scan, steps };
+    // Sniper module progress (only meaningful when scan is paused or running mid-AI-research)
+    const moduleRows = await db.select({ status: scanModules.status })
+      .from(scanModules)
+      .where(eq(scanModules.scanId, id));
+    const moduleProgress = {
+      total: moduleRows.length,
+      completed: moduleRows.filter(m => m.status === 'completed').length,
+    };
+
+    return { ...scan, steps, moduleProgress };
   });
 
   // DELETE /api/scans/:id — remove a queued scan
@@ -234,6 +244,36 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
     }
 
     return { cancelled: true };
+  });
+
+  // POST /api/scans/:id/resume — manually resume a paused scan
+  app.post('/scans/:id/resume', {
+    schema: {
+      params: z.object({
+        id: z.string(),
+      }),
+    },
+  }, async (request, reply) => {
+    const { id } = request.params;
+    const scan = await getScan(id);
+    if (!scan) {
+      return reply.status(404).send({ error: 'Scan not found' });
+    }
+
+    if (!scan.workspaceId) throw new ForbiddenError('Scan has no workspace');
+    await authorize(request, scan.workspaceId, 'workspace_admin');
+
+    if (scan.status !== 'paused') {
+      return reply.status(409).send({ error: 'Only paused scans can be resumed' });
+    }
+
+    // Clear resumes_at so the worker poller picks it up on the next tick.
+    // Status stays 'paused' until the worker transactionally claims it.
+    await db.update(scans)
+      .set({ resumesAt: null, error: null })
+      .where(eq(scans.id, id));
+
+    return { resumed: true };
   });
 
   // POST /api/scans/cancel-all — cancel all running and queued scans

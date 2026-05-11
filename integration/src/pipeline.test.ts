@@ -1,7 +1,7 @@
 /**
  * Pipeline integration test.
  *
- * Runs a real scan against https://github.com/vitfury/stealer and verifies
+ * Runs a real scan against an intentionally-vulnerable public repo and verifies
  * that all pipeline steps produce expected output. This test is slow (~5-10 min)
  * because it waits for the full scan to complete.
  *
@@ -25,10 +25,12 @@ import {
   type AuthContext,
 } from './helpers.ts';
 
-const REPO_URL = 'https://github.com/vitfury/stealer';
+// Public OWASP-curated intentionally-vulnerable Node.js repo — known to contain
+// secrets and SAST issues that exercise the full scanner pipeline.
+const REPO_URL = 'https://github.com/OWASP/NodeGoat';
 const SCAN_TIMEOUT_MS = 1_200_000; // 20 minutes (AI analysis can be slow)
 
-describe('pipeline: full scan of vitfury/stealer', () => {
+describe('pipeline: full scan of an intentionally-vulnerable repo', () => {
   let auth: AuthContext;
   let wsId: number;
   let repoId: number;
@@ -117,7 +119,7 @@ describe('pipeline: full scan of vitfury/stealer', () => {
     expect(res.ok).toBe(true);
     const data = await res.json();
 
-    // vitfury/stealer is a known malicious repo — should find secrets/vulns
+    // The repo above is intentionally vulnerable — should find secrets/vulns
     expect(data.count).toBeGreaterThan(0);
     expect(data.results.length).toBeGreaterThan(0);
   });

@@ -4,7 +4,7 @@ import { execSync } from 'child_process';
 import { eq } from 'drizzle-orm';
 import { createTest, upsertFinding, updateTestFindingsCount, addScanFile, createWorkspaceEvent } from '../entities.ts';
 import { ensureWorkspace, ensureTeam, ensureRepository } from '../entities.ts';
-import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy, parseBearer, type ParsedFinding } from './parsers.ts';
+import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy, type ParsedFinding } from './parsers.ts';
 import { db } from '../../db/index.ts';
 import { scans, scanEvents, repositories } from '../../db/schema.ts';
 import { ingestContributors, findOrCreateContributor, type IngestContributor, type IngestAssessment } from '../../routes/contributors.ts';
@@ -43,7 +43,6 @@ export const TOOL_CATEGORY_MAP: Record<string, string> = {
   'snyk-sca': 'sca',
   'snyk-code': 'sast',
   'snyk-iac': 'iac',
-  'bearer': 'pii',
   'presidio': 'pii',
   'semgrep-pii': 'pii',
 };
@@ -65,7 +64,6 @@ export const TOOL_MAP: Record<string, string> = {
   'snyk-sca': 'snyk-sca',
   'snyk-code': 'snyk-code',
   'snyk-iac': 'snyk-iac',
-  'bearer': 'bearer',
   'presidio': 'presidio',
   'semgrep-pii': 'semgrep-pii',
 };
@@ -85,7 +83,6 @@ const RESULT_SPECS: [string, string, string, string][] = [
   ['snyk-sca', 'snyk-sca-results.sarif', 'SARIF', 'Snyk SCA'],
   ['snyk-code', 'snyk-code-results.sarif', 'SARIF', 'Snyk Code'],
   ['snyk-iac', 'snyk-iac-results.sarif', 'SARIF', 'Snyk IaC'],
-  ['bearer', 'bearer-results.json', 'Bearer Scan', 'Bearer PII'],
   ['presidio', 'presidio-results.sarif', 'SARIF', 'Presidio PII'],
   ['semgrep-pii', 'semgrep-pii-results.sarif', 'SARIF', 'Semgrep PII'],
   ['git-stats', 'git-contributor-stats.json', '_stats', ''],
@@ -489,7 +486,7 @@ export function normalizeFilePath(filePath: string): string {
   return p;
 }
 
-/** Extract 5 lines of code context (2 above + target + 2 below) */
+/** Extract 15 lines of code context (7 above + target + 7 below) */
 export function extractCodeSnippet(repoPath: string, filePath: string, line: number | null | undefined): string | undefined {
   if (!filePath || !line || line < 1) return undefined;
   const clean = normalizeFilePath(filePath);
@@ -498,8 +495,8 @@ export function extractCodeSnippet(repoPath: string, filePath: string, line: num
     if (!fs.existsSync(fullPath)) return undefined;
     const content = fs.readFileSync(fullPath, 'utf8');
     const lines = content.split('\n');
-    const start = Math.max(0, line - 3);   // 2 lines above (0-indexed: line-1 is target, line-3 is 2 above)
-    const end = Math.min(lines.length, line + 2); // 2 lines below
+    const start = Math.max(0, line - 8);   // 7 lines above (0-indexed: line-1 is target, line-8 is 7 above)
+    const end = Math.min(lines.length, line + 7); // 7 lines below
     return lines.slice(start, end).map((l, i) => {
       const num = start + i + 1;
       const marker = num === line ? '>' : ' ';
@@ -558,9 +555,6 @@ export async function importToDatabase(
         case 'presidio':
         case 'semgrep-pii':
           parsed = parseSarif(content);
-          break;
-        case 'bearer':
-          parsed = parseBearer(content);
           break;
         case 'gitleaks':
           parsed = parseGitleaks(content);
@@ -699,30 +693,27 @@ export async function runImportStep({ ctx, prev }: StepInput): Promise<ImportOut
     });
   }
 
-  // 5. Parse analyzer assessments from profile (embedded contributor-assessments block)
+  // 5. Parse analyzer assessments from contributor-assessments.json
   let analyzerAssessments: unknown[] = [];
   try {
-    const profilePath = ctx.profilePath;
-    const profileContent = fs.readFileSync(profilePath, 'utf8');
-    const match = profileContent.match(/```contributor-assessments\s*\n([\s\S]*?)```/);
-    if (match) {
-      const parsed = JSON.parse(match[1]);
-      if (Array.isArray(parsed)) {
-        // Deduplicate feedback text within each assessment (Claude sometimes repeats sections)
-        for (const a of parsed as Array<{ email?: string; feedback?: string }>) {
-          if (a.feedback) {
-            const before = a.feedback.length;
-            a.feedback = deduplicateFeedbackText(a.feedback);
-            if (a.feedback.length < before) {
-              console.log(`[import] Deduped feedback for ${a.email}: ${before} → ${a.feedback.length} chars`);
-            }
+    const assessmentsPath = path.join(ctx.agentDir, 'contributor-assessments.json');
+    const assessmentsContent = fs.readFileSync(assessmentsPath, 'utf8');
+    const parsed = JSON.parse(assessmentsContent);
+    if (Array.isArray(parsed)) {
+      // Deduplicate feedback text within each assessment (Claude sometimes repeats sections)
+      for (const a of parsed as Array<{ email?: string; feedback?: string }>) {
+        if (a.feedback) {
+          const before = a.feedback.length;
+          a.feedback = deduplicateFeedbackText(a.feedback);
+          if (a.feedback.length < before) {
+            console.log(`[import] Deduped feedback for ${a.email}: ${before} → ${a.feedback.length} chars`);
           }
         }
-        analyzerAssessments = parsed;
       }
+      analyzerAssessments = parsed;
     }
   } catch {
-    // Profile may not exist or may not contain assessments — that's OK
+    // Assessments file may not exist — that's OK
   }
 
   // 5b. Deduplicate assessments by contributor ID (multiple email aliases → same person)

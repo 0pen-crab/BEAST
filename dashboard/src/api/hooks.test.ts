@@ -306,7 +306,9 @@ describe('useUpdateRepository', () => {
       await result.current.mutateAsync({ id: 3, name: 'updated' });
     });
 
-    expect(qc.getQueryData(['repository', 3])).toEqual(updatedRepo);
+    await waitFor(() => {
+      expect(qc.getQueryData(['repository', 3])).toEqual(updatedRepo);
+    }, { timeout: 10_000, interval: 25 });
   });
 });
 
@@ -542,6 +544,25 @@ describe('useFindingNotes', () => {
 
   it('is disabled when findingId is 0', () => {
     const { result } = renderHook(() => useFindingNotes(0), { wrapper: createWrapper() });
+    expect(result.current.fetchStatus).toBe('idle');
+  });
+});
+
+describe('useFindingDuplicates', () => {
+  it('fetches duplicates for a finding', async () => {
+    const dupes = [{ id: 100, tool: 'gitleaks', filePath: 'foo.cs', line: 23, severity: 'High', title: 'Secret' }];
+    mockFetchSuccess(dupes);
+
+    const { useFindingDuplicates } = await import('./hooks');
+    const { result } = renderHook(() => useFindingDuplicates(42), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockFetch.mock.calls[0][0]).toBe('/api/findings/42/duplicates');
+  });
+
+  it('is disabled when findingId is 0', async () => {
+    const { useFindingDuplicates } = await import('./hooks');
+    const { result } = renderHook(() => useFindingDuplicates(0), { wrapper: createWrapper() });
     expect(result.current.fetchStatus).toBe('idle');
   });
 });

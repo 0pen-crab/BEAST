@@ -26,7 +26,7 @@ function getStoredTheme(): Theme {
   } catch {
     // localStorage may be unavailable
   }
-  return 'light';
+  return 'dark';
 }
 
 function applyTheme(theme: Theme) {
