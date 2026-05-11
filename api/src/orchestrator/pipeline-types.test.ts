@@ -39,6 +39,7 @@ describe('pipeline-types', () => {
     const step: StepDef = {
       name: 'test-step',
       run: async () => ({}),
+      required: true,
     };
     expect(step.name).toBe('test-step');
     expect(typeof step.run).toBe('function');
