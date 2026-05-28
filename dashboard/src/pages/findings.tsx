@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams, useNavigate } from 'react-router';
-import { useFindings, useRepositories } from '@/api/hooks';
+import { useFindings, useRepositories, useSources } from '@/api/hooks';
+import { useWorkspace } from '@/lib/workspace';
+import { sourceDisplayLabel } from '@/lib/provider-display';
+import { ProviderIcon } from '@/lib/provider-icons';
 import { SeverityBadge } from '@/components/severity-badge';
 import { StatusBadge } from '@/components/status-badge';
 import { ChipFilter, type FilterColumn, type ActiveFilter } from '@/components/filters/chip-filter';
@@ -157,6 +160,10 @@ export function FindingsPage() {
     const t = searchParams.get('tool');
     return t ? t.split(',') : [];
   });
+  const [sourceFilter, setSourceFilter] = useState<number | null>(() => {
+    const s = searchParams.get('source');
+    return s ? Number(s) : null;
+  });
   const [showDuplicates, setShowDuplicates] = useState<'yes' | 'no' | null>(null);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -167,6 +174,9 @@ export function FindingsPage() {
 
   const { data: repos } = useRepositories();
   const repoMap = new Map(repos?.map((r) => [r.id, r.name]) ?? []);
+  const { data: sources } = useSources();
+  const { currentWorkspace } = useWorkspace();
+  const currentWorkspaceId = currentWorkspace?.id;
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -189,6 +199,55 @@ export function FindingsPage() {
 
   const isCol = (key: ColumnKey) => visibleColumns.has(key);
 
+  // Trigger CSV download of the *current* filter set (all rows, ignoring page).
+  // Columns reflect what the user has visible in the table.
+  function handleExportCsv() {
+    const qs = new URLSearchParams();
+    qs.set('workspace_id', String(currentWorkspaceId ?? ''));
+    if (repoFilter !== null) qs.set('repository_id', String(repoFilter));
+    if (sourceFilter !== null) qs.set('source_id', String(sourceFilter));
+    if (severityFilter.length > 0) qs.set('severity', severityFilter.join(','));
+    if (toolFilter.length > 0) qs.set('tool', toolFilter.join(','));
+    if (statusFilter.length > 0) {
+      const apiStatuses = statusFilter.map((s) =>
+        s === 'Open' ? 'open' :
+        s === 'Risk Accepted' ? 'risk_accepted' :
+        s === 'False Positive' ? 'false_positive' :
+        s === 'Fixed' ? 'fixed' :
+        s === 'Duplicate' ? 'duplicate' : s
+      );
+      qs.set('status', apiStatuses.join(','));
+    }
+    if (sortField) {
+      qs.set('sort', sortField);
+      qs.set('dir', sortDir);
+    }
+    qs.set('columns', [...visibleColumns].join(','));
+
+    const token = localStorage.getItem('beast_token');
+    fetch(`/api/findings/export.csv?${qs.toString()}`, {
+      headers: token ? { Authorization: `Token ${token}` } : undefined,
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+        return res.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const date = new Date().toISOString().slice(0, 10);
+        a.download = `findings_${date}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      })
+      .catch((err) => {
+        console.error('[findings] Export failed:', err);
+      });
+  }
+
   // Build API query params
   const findingParams: Record<string, string | number | boolean | undefined> = {
     limit: PAGE_SIZE,
@@ -199,6 +258,7 @@ export function FindingsPage() {
   else { findingParams.duplicate = false; }
 
   if (repoFilter !== null) findingParams.repository_id = repoFilter;
+  if (sourceFilter !== null) findingParams.source_id = sourceFilter;
   if (severityFilter.length > 0) findingParams.severity = severityFilter.join(',');
   if (toolFilter.length > 0) findingParams.tool = toolFilter.join(',');
   if (statusFilter.length > 0) {
@@ -229,6 +289,11 @@ export function FindingsPage() {
   const severityOptions = SEVERITIES.map((s) => ({ value: s, label: t(`severity.${s}`) }));
   const statusOptions = STATUSES.map((s) => ({ value: s, label: t(`status.${statusI18nKey(s)}`) }));
   const repoOptions = (repos ?? []).map((r) => ({ value: String(r.id), label: r.name }));
+  const sourceOptions = (sources ?? []).map((s) => ({
+    value: String(s.id),
+    label: sourceDisplayLabel(s),
+    icon: <ProviderIcon provider={s.provider} className="beast-filter-opt-icon" />,
+  }));
   const toolOptions = TOOLS.map((tool) => ({ value: tool.key, label: tool.displayName }));
   const duplicateOptions = [
     { value: 'yes', label: t('findings.showDuplicates', 'Show duplicates') },
@@ -241,6 +306,9 @@ export function FindingsPage() {
     { key: 'tool', label: t('findings.tool'), multi: true, options: toolOptions },
     ...(repoOptions.length > 0
       ? [{ key: 'repository', label: t('findings.repository'), options: repoOptions }]
+      : []),
+    ...(sourceOptions.length > 0
+      ? [{ key: 'source', label: t('findings.source', 'Source'), options: sourceOptions }]
       : []),
     { key: 'duplicates', label: t('findings.duplicates', 'Duplicates'), options: duplicateOptions },
   ];
@@ -262,6 +330,10 @@ export function FindingsPage() {
     const repo = repos?.find((r) => r.id === repoFilter);
     activeFilters.push({ key: 'repository', value: String(repoFilter), label: repo?.name ?? '', columnLabel: t('findings.repository') });
   }
+  if (sourceFilter !== null) {
+    const src = sources?.find((s) => s.id === sourceFilter);
+    activeFilters.push({ key: 'source', value: String(sourceFilter), label: src ? sourceDisplayLabel(src) : '', columnLabel: t('findings.source', 'Source') });
+  }
   if (showDuplicates !== null) {
     const opt = duplicateOptions.find((o) => o.value === showDuplicates);
     activeFilters.push({ key: 'duplicates', value: showDuplicates, label: opt?.label ?? '', columnLabel: t('findings.duplicates', 'Duplicates') });
@@ -280,6 +352,10 @@ export function FindingsPage() {
       setRepoFilter(Number(value));
       setSearchParams((p) => { p.set('repository', value); return p; }, { replace: true });
     }
+    else if (columnKey === 'source') {
+      setSourceFilter(Number(value));
+      setSearchParams((p) => { p.set('source', value); return p; }, { replace: true });
+    }
     else if (columnKey === 'duplicates') setShowDuplicates(value as 'yes' | 'no');
   };
 
@@ -294,6 +370,10 @@ export function FindingsPage() {
     else if (columnKey === 'repository') {
       setRepoFilter(null);
       setSearchParams((p) => { p.delete('repository'); return p; }, { replace: true });
+    }
+    else if (columnKey === 'source') {
+      setSourceFilter(null);
+      setSearchParams((p) => { p.delete('source'); return p; }, { replace: true });
     }
     else if (columnKey === 'duplicates') setShowDuplicates(null);
   };
@@ -331,6 +411,19 @@ export function FindingsPage() {
               searchPlaceholder={t('findings.searchPlaceholder')}
             />
           </div>
+
+          {/* Export CSV — respects current filters, search and visible columns */}
+          <button
+            type="button"
+            title={t('findings.exportCsv', 'Export CSV')}
+            onClick={handleExportCsv}
+            disabled={!findings || findings.count === 0}
+            className="beast-btn beast-btn-outline beast-btn-filter"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+            </svg>
+          </button>
 
           {/* Column settings */}
           <div className="beast-dropdown-wrap">

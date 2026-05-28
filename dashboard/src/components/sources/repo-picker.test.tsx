@@ -38,4 +38,19 @@ describe('RepoPicker selectionMode', () => {
     );
     expect(screen.queryByText(/import all/i)).not.toBeInTheDocument();
   });
+
+  it('shows the last-updated date when lastActivityAt is present', () => {
+    const withDate = [
+      { slug: 'repo-a', fullName: 'org/repo-a', cloneUrl: '', description: null, imported: false, lastActivityAt: '2026-03-15T10:00:00Z' },
+      { slug: 'repo-b', fullName: 'org/repo-b', cloneUrl: '', description: null, imported: false, lastActivityAt: null },
+    ];
+    renderWithProviders(
+      <RepoPicker
+        repos={withDate as any} sourceId={1} onImported={vi.fn()}
+        selectionMode selected={new Set()} onSelectionChange={vi.fn()}
+      />,
+    );
+    // repo-a renders a formatted "Mar 15"-style date; repo-b (null) renders nothing
+    expect(screen.getByText(/Mar 15/)).toBeInTheDocument();
+  });
 });

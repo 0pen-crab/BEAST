@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export type FilterColumn = {
@@ -6,7 +6,7 @@ export type FilterColumn = {
   label: string;
   type?: 'select' | 'range';
   multi?: boolean;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; icon?: ReactNode }[];
   minPlaceholder?: string;
   maxPlaceholder?: string;
 };
@@ -188,6 +188,7 @@ export function ChipFilter({
               className="beast-filter-dropdown-item"
               onClick={() => handleValuePick(opt.value)}
             >
+              {opt.icon}
               {opt.label}
             </button>
           ))}
@@ -208,6 +209,7 @@ export function ChipFilter({
                 checked={multiSelected.has(opt.value)}
                 onChange={() => handleMultiToggle(opt.value)}
               />
+              {opt.icon}
               {opt.label}
             </label>
           ))}

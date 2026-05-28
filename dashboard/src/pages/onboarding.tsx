@@ -13,7 +13,7 @@ import { RepoPicker } from '@/components/sources/repo-picker';
 import { CompactToolCard } from '@/components/compact-tool-card';
 import { IntegrationPanel, type IntegrationStatus } from '@/components/integration-panel';
 import { buildIntegrationGroups } from '@/lib/integration-groups';
-import { PROVIDER_DISPLAY } from '@/lib/provider-display';
+import { PROVIDER_DISPLAY, sourceDisplayLabel } from '@/lib/provider-display';
 import { LanguageSelect } from '@/components/language-select';
 import { BeastAcronym } from '@/components/beast-acronym';
 import { ProviderIcon } from '@/lib/provider-icons';
@@ -426,7 +426,7 @@ function SourceStep({
               {sources.map((source) => {
                 const count = repoCounts[source.id] ?? 0;
                 const prov = PROVIDER_DISPLAY[source.provider] ?? PROVIDER_DISPLAY.local;
-                const label = source.orgName || source.provider;
+                const label = sourceDisplayLabel(source);
                 return (
                   <div key={source.id} className="flex items-center gap-2.5 border border-th-border bg-th-bg px-3 py-2">
                     <ProviderIcon
@@ -583,7 +583,7 @@ function ImportStep({
             <div className="space-y-3 mt-4">
               {inProgress.map(s => {
                 const prov = PROVIDER_DISPLAY[s.source.provider] ?? PROVIDER_DISPLAY.local;
-                const label = s.source.orgName || s.source.provider;
+                const label = sourceDisplayLabel(s.source);
                 return (
                   <div key={s.source.id} className="flex items-center gap-3">
                     {s.status === 'fetching' && <div className="h-4 w-4 border-2 border-beast-red border-t-transparent rounded-full animate-spin flex-shrink-0" />}
@@ -633,7 +633,7 @@ function ImportStep({
               <div className="divide-y divide-th-border-subtle border border-th-border mt-2">
                 {autoImported.map(s => {
                   const prov = PROVIDER_DISPLAY[s.source.provider] ?? PROVIDER_DISPLAY.local;
-                  const label = s.source.orgName || s.source.provider;
+                  const label = sourceDisplayLabel(s.source);
                   const count = s.repos.length;
                   return (
                     <div key={s.source.id} className="flex items-center gap-3 px-3 py-2.5">
@@ -656,7 +656,7 @@ function ImportStep({
           )}
           {selectable.map(s => {
             const prov = PROVIDER_DISPLAY[s.source.provider] ?? PROVIDER_DISPLAY.local;
-            const label = s.source.orgName || s.source.provider;
+            const label = sourceDisplayLabel(s.source);
             return (
               <div key={s.source.id} className="beast-card">
                 <div className="beast-card-title flex items-center gap-2">

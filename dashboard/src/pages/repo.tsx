@@ -4,6 +4,7 @@ import { useParams, Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useRepository, useRepositoryTests, useFindingCounts, useFindings, useDeleteRepository, useRepoReports, useScanArtifacts, useTriggerScan, useSource } from '@/api/hooks';
 import { ProviderIcon } from '@/lib/provider-icons';
+import { sourceDisplayLabel } from '@/lib/provider-display';
 import { SeverityBadge } from '@/components/severity-badge';
 import { StatusBadge } from '@/components/status-badge';
 import { CardSkeleton, Skeleton, TableSkeleton } from '@/components/skeleton';
@@ -100,7 +101,7 @@ export function RepoPage() {
             {source && (
               <div className="beast-flex beast-flex-gap-sm beast-page-subtitle">
                 <ProviderIcon provider={source.provider} className="beast-icon-sm" />
-                <span>{source.orgName ?? source.provider}</span>
+                <span>{sourceDisplayLabel(source)}</span>
               </div>
             )}
             {repo?.description && <p className="beast-page-subtitle">{repo.description}</p>}

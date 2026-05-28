@@ -8,6 +8,27 @@
       "when": 1775606400000,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778889600000,
+      "tag": "0001_add_ai_model_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778889700000,
+      "tag": "0002_add_scan_depth",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778889800000,
+      "tag": "0003_add_scan_resume_support",
+      "breakpoints": true
     }
   ]
 }

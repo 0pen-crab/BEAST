@@ -43,26 +43,6 @@ rules:
   # Network / Infrastructure
   # ═══════════════════════════════════════════════════════════════
 
-  - id: pii.hardcoded-ipv4-address
-    languages: [generic]
-    severity: INFO
-    message: "Hardcoded IPv4 address detected"
-    metadata:
-      category: pii
-      confidence: MEDIUM
-    patterns:
-      - pattern-regex: '\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\b'
-      - pattern-not-regex: '\b(?:127\.0\.0\.1|0\.0\.0\.0|255\.255\.255\.\d+)\b'
-
-  - id: pii.hardcoded-ipv6-address
-    languages: [generic]
-    severity: INFO
-    message: "Hardcoded IPv6 address detected"
-    metadata:
-      category: pii
-      confidence: MEDIUM
-    pattern-regex: '(?i)\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b'
-
   - id: pii.hardcoded-mac-address
     languages: [generic]
     severity: INFO

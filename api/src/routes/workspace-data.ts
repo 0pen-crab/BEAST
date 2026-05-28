@@ -13,6 +13,28 @@ function maskSecret(value: string | null): string | null {
   return value.slice(0, 4) + '*'.repeat(value.length - 6) + value.slice(-2);
 }
 
+/** RFC 4180 CSV field escape: quote when it contains comma/quote/newline. */
+export function csvEscape(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  const s = typeof v === 'string' ? v : String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+/** Serialise rows of `unknown` to CSV using the column order in `columns`.
+ *  Each column maps the row to its string value via `extract`. */
+export function rowsToCsv<T>(
+  columns: { header: string; extract: (row: T) => unknown }[],
+  rows: T[],
+): string {
+  const lines: string[] = [];
+  lines.push(columns.map((c) => csvEscape(c.header)).join(','));
+  for (const r of rows) {
+    lines.push(columns.map((c) => csvEscape(c.extract(r))).join(','));
+  }
+  return lines.join('\n') + '\n';
+}
+
 export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
   // ═══════════════════════════════════════════════════════════════
   // TEAMS
@@ -543,6 +565,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
           status: z.string().optional(),
           tool: z.string().optional(),
           repository_id: z.coerce.number().positive().optional(),
+          source_id: z.coerce.number().positive().optional(),
           test_id: z.coerce.number().positive().optional(),
           limit: z.coerce.number().min(1).max(500).default(50),
           offset: z.coerce.number().min(0).default(0),
@@ -553,7 +576,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
-      const { workspace_id, severity, status, tool, repository_id, test_id, limit, offset, sort, dir, include_secrets } = request.query;
+      const { workspace_id, severity, status, tool, repository_id, source_id, test_id, limit, offset, sort, dir, include_secrets } = request.query;
 
       if (workspace_id) {
         await authorize(request, workspace_id, 'member');
@@ -585,6 +608,12 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       if (repository_id) {
         conditions.push(eq(findings.repositoryId, repository_id));
+      }
+      if (source_id) {
+        // findings → repository → source
+        const sourceRepoIds = db.select({ id: repositories.id }).from(repositories)
+          .where(eq(repositories.sourceId, source_id));
+        conditions.push(inArray(findings.repositoryId, sourceRepoIds));
       }
       if (test_id) {
         conditions.push(eq(findings.testId, test_id));
@@ -657,6 +686,120 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // GET /api/findings/export.csv — same filters as /findings, no pagination, CSV out.
+  // Honours `columns=` (comma-separated keys) to restrict the output to the columns
+  // the user currently sees on the findings page.
+  app.get(
+    '/findings/export.csv',
+    {
+      schema: {
+        querystring: z.object({
+          workspace_id: z.coerce.number().positive().optional(),
+          severity: z.string().optional(),
+          status: z.string().optional(),
+          tool: z.string().optional(),
+          repository_id: z.coerce.number().positive().optional(),
+          source_id: z.coerce.number().positive().optional(),
+          test_id: z.coerce.number().positive().optional(),
+          sort: z.enum(['priority', 'severity', 'created_at', 'updated_at', 'title', 'tool', 'status', 'cvss_score', 'repository', 'contributor', 'file_path']).default('priority'),
+          dir: z.enum(['asc', 'desc']).default('desc'),
+          columns: z.string().optional(),
+          include_secrets: z.coerce.boolean().default(false),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { workspace_id, severity, status, tool, repository_id, source_id, test_id, sort, dir, columns: columnsParam, include_secrets } = request.query;
+
+      if (workspace_id) {
+        await authorize(request, workspace_id, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('workspace_id is required');
+      }
+
+      const conditions: SQL[] = [];
+      if (workspace_id) {
+        const workspaceTestIds = db.select({ id: tests.id }).from(tests)
+          .innerJoin(scans, eq(tests.scanId, scans.id))
+          .where(eq(scans.workspaceId, workspace_id));
+        conditions.push(inArray(findings.testId, workspaceTestIds));
+      }
+      if (severity) {
+        const vals = severity.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.severity, vals[0]) : inArray(findings.severity, vals));
+      }
+      if (status) {
+        const vals = status.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.status, vals[0]) : inArray(findings.status, vals));
+      }
+      if (tool) {
+        const vals = tool.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.tool, vals[0]) : inArray(findings.tool, vals));
+      }
+      if (repository_id) conditions.push(eq(findings.repositoryId, repository_id));
+      if (test_id) conditions.push(eq(findings.testId, test_id));
+
+      const whereClause = conditions.length ? and(...conditions) : undefined;
+
+      const severityRank = sql`CASE LOWER(${findings.severity})
+        WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3
+        WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END`;
+      const sortColumns: Record<string, any> = {
+        severity: severityRank,
+        created_at: findings.createdAt,
+        updated_at: findings.updatedAt,
+        title: findings.title,
+        tool: findings.tool,
+        status: findings.status,
+        cvss_score: findings.cvssScore,
+        repository: sql`(SELECT ${repositories.name} FROM ${repositories} WHERE ${repositories.id} = ${findings.repositoryId})`,
+        contributor: sql`(SELECT ${contributors.displayName} FROM ${contributors} WHERE ${contributors.id} = ${findings.contributorId})`,
+        file_path: findings.filePath,
+      };
+      const orderByClauses = sort === 'priority'
+        ? [sql`(${findings.status} = 'open') DESC`, desc(severityRank), desc(findings.createdAt)]
+        : [(dir === 'asc' ? asc(sortColumns[sort]) : desc(sortColumns[sort]))];
+
+      const rows = await db.select({
+        ...getTableColumns(findings),
+        contributorName: contributors.displayName,
+        repositoryName: repositories.name,
+      }).from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .leftJoin(contributors, eq(contributors.id, findings.contributorId))
+        .leftJoin(repositories, eq(repositories.id, findings.repositoryId))
+        .where(whereClause)
+        .orderBy(...orderByClauses);
+
+      type Row = (typeof rows)[number];
+      const allColumns: { key: string; header: string; extract: (r: Row) => unknown }[] = [
+        { key: 'severity',    header: 'Severity',    extract: (r) => r.severity },
+        { key: 'tool',        header: 'Tool',        extract: (r) => r.tool },
+        { key: 'location',    header: 'Location',    extract: (r) => r.line != null ? `${r.filePath ?? ''}:${r.line}` : (r.filePath ?? '') },
+        { key: 'repository',  header: 'Repository',  extract: (r) => r.repositoryName ?? '' },
+        { key: 'contributor', header: 'Contributor', extract: (r) => r.contributorName ?? '' },
+        { key: 'cvss',        header: 'CVSS',        extract: (r) => r.cvssScore ?? '' },
+        { key: 'status',      header: 'Status',      extract: (r) => r.status ?? '' },
+        { key: 'date',        header: 'Date',        extract: (r) => r.createdAt ? new Date(r.createdAt as any).toISOString() : '' },
+        { key: 'title',       header: 'Title',       extract: (r) => r.title ?? '' },
+        { key: 'description', header: 'Description', extract: (r) => r.description ?? '' },
+        { key: 'secret',      header: 'Secret',      extract: (r) => include_secrets ? (r.secretValue ?? '') : (maskSecret(r.secretValue) ?? '') },
+      ];
+
+      const wanted = columnsParam ? new Set(columnsParam.split(',').map((s) => s.trim()).filter(Boolean)) : null;
+      const selected = wanted ? allColumns.filter((c) => wanted.has(c.key)) : allColumns;
+      // Empty/invalid columns param → fall back to full set so user always gets something
+      const finalColumns = selected.length > 0 ? selected : allColumns;
+
+      const csv = rowsToCsv(finalColumns, rows);
+      const date = new Date().toISOString().slice(0, 10);
+      reply.header('Content-Type', 'text/csv; charset=utf-8');
+      reply.header('Content-Disposition', `attachment; filename="findings_${date}.csv"`);
+      return csv;
+    },
+  );
+
   // GET /api/findings/counts?workspace_id=X
   app.get(
     '/findings/counts',
@@ -665,12 +808,13 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         querystring: z.object({
           workspace_id: z.coerce.number().positive().optional(),
           repository_id: z.coerce.number().positive().optional(),
+          source_id: z.coerce.number().positive().optional(),
           test_id: z.coerce.number().positive().optional(),
         }),
       },
     },
     async (request) => {
-      const { workspace_id, repository_id, test_id } = request.query;
+      const { workspace_id, repository_id, source_id, test_id } = request.query;
 
       if (workspace_id) {
         await authorize(request, workspace_id, 'member');
@@ -688,6 +832,12 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       if (repository_id) {
         conditions.push(eq(findings.repositoryId, repository_id));
+      }
+      if (source_id) {
+        // findings → repository → source
+        const sourceRepoIds = db.select({ id: repositories.id }).from(repositories)
+          .where(eq(repositories.sourceId, source_id));
+        conditions.push(inArray(findings.repositoryId, sourceRepoIds));
       }
       if (test_id) {
         conditions.push(eq(findings.testId, test_id));

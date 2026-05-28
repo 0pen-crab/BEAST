@@ -24,7 +24,7 @@ import { SourceForm } from '@/components/sources/source-form';
 import { CompactToolCard } from '@/components/compact-tool-card';
 import { IntegrationPanel, type IntegrationStatus } from '@/components/integration-panel';
 import { buildIntegrationGroups } from '@/lib/integration-groups';
-import { PROVIDER_DISPLAY } from '@/lib/provider-display';
+import { PROVIDER_DISPLAY, sourceDisplayLabel } from '@/lib/provider-display';
 import { ProviderIcon } from '@/lib/provider-icons';
 import type { Source, DiscoveredRepo, ToolDefinition } from '@/api/types';
 import { RepoPicker } from '@/components/sources/repo-picker';
@@ -675,9 +675,9 @@ function SourceCard({
             <span className={cn('beast-source-name', display.color)}>
               {display.label}
             </span>
-            {source.orgName && (
+            {(source.orgName || source.provider !== 'local') && (
               <span className="beast-source-org">
-                {source.orgName}
+                {sourceDisplayLabel(source)}
               </span>
             )}
             {repoCount > 0 && (

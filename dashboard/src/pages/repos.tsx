@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useRepositories, useTeams, useSources, useBulkUpdateRepositories, useTriggerScan, useFindingCountsByTool } from '@/api/hooks';
 import { ProviderIcon } from '@/lib/provider-icons';
+import { sourceDisplayLabel } from '@/lib/provider-display';
 import { apiFetch, fetchApi } from '@/api/client';
 import { useWorkspace } from '@/lib/workspace';
 import { generateFindingsMarkdown, generateFindingsCsv, downloadFile, downloadAsZip, type ExportFinding } from '@/lib/export-findings';
@@ -356,8 +357,10 @@ export function ReposPage() {
           case 'status': cmp = (a.status ?? '').localeCompare(b.status ?? ''); break;
           case 'team': cmp = (teamMap.get(a.teamId) ?? '').localeCompare(teamMap.get(b.teamId) ?? ''); break;
           case 'source': {
-            const sa = sourceMap.get(a.sourceId!)?.orgName ?? '';
-            const sb = sourceMap.get(b.sourceId!)?.orgName ?? '';
+            const ma = sourceMap.get(a.sourceId!);
+            const mb = sourceMap.get(b.sourceId!);
+            const sa = ma ? sourceDisplayLabel(ma) : '';
+            const sb = mb ? sourceDisplayLabel(mb) : '';
             cmp = sa.localeCompare(sb);
             break;
           }
@@ -438,7 +441,7 @@ export function ReposPage() {
 
   const sourceOptions = (sources ?? []).map((s) => ({
     value: String(s.id),
-    label: s.orgName ?? s.provider,
+    label: sourceDisplayLabel(s),
   }));
 
   const languageOptions = useMemo(() => {
@@ -469,7 +472,7 @@ export function ReposPage() {
     chipFilters.push({ key: 'status', value: statusFilter.join(','), label: labels.join(', '), columnLabel: t('repos.statusFilter') });
   }
   if (sourceFilter.length > 0) {
-    const labels = sourceFilter.map((id) => { const s = sources?.find((x) => x.id === id); return s?.orgName ?? s?.provider ?? ''; }).filter(Boolean);
+    const labels = sourceFilter.map((id) => { const s = sources?.find((x) => x.id === id); return s ? sourceDisplayLabel(s) : ''; }).filter(Boolean);
     chipFilters.push({ key: 'source', value: sourceFilter.map(String).join(','), label: labels.join(', '), columnLabel: t('repos.source') });
   }
   if (languageFilter.length > 0) {
@@ -858,7 +861,7 @@ function RepoRow({
 }: {
   repo: Repository;
   teamName?: string;
-  source?: { provider: string; orgName: string | null };
+  source?: { provider: string; orgName: string | null; baseUrl: string };
   isSelected: boolean;
   onToggle: () => void;
   onScan: () => void;
@@ -918,7 +921,7 @@ function RepoRow({
           {source ? (
             <span className="beast-source-inline">
               <ProviderIcon provider={source.provider} className="beast-source-inline-icon" />
-              {source.orgName ?? source.provider}
+              {sourceDisplayLabel(source)}
             </span>
           ) : '\u2014'}
         </td>

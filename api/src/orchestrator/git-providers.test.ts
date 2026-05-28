@@ -353,6 +353,72 @@ describe('git-providers', () => {
 
       vi.unstubAllGlobals();
     });
+
+    it('listAccessibleRepos returns all projects the token has access to', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      const client = new GitLabClient('https://gitlab.example.com', 'glpat-xxx');
+
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          // /api/v4/user — auth probe
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ id: 42, username: 'me' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ([
+            { id: 1, path: 'r1', web_url: 'https://gitlab.example.com/g/r1', description: null, default_branch: 'main', statistics: { repository_size: 100 }, last_activity_at: '2026-01-01T00:00:00Z' },
+            { id: 2, path: 'r2', web_url: 'https://gitlab.example.com/g/r2', description: 'x', default_branch: 'main', statistics: { repository_size: 200 }, last_activity_at: '2026-01-02T00:00:00Z' },
+          ]),
+        });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const repos = await client.listAccessibleRepos();
+
+      expect(repos).toHaveLength(2);
+      expect(repos[0]).toEqual({
+        externalId: '1', name: 'r1', url: 'https://gitlab.example.com/g/r1',
+        description: null, defaultBranch: 'main', sizeBytes: 100,
+        primaryLanguage: null, lastActivityAt: '2026-01-01T00:00:00Z',
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://gitlab.example.com/api/v4/user',
+        expect.objectContaining({ headers: expect.objectContaining({ 'PRIVATE-TOKEN': 'glpat-xxx' }) }),
+      );
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://gitlab.example.com/api/v4/projects?per_page=100&page=1&statistics=true',
+        expect.objectContaining({ headers: expect.objectContaining({ 'PRIVATE-TOKEN': 'glpat-xxx' }) }),
+      );
+
+      vi.unstubAllGlobals();
+    });
+
+    it('listAccessibleRepos works without a token — returns only public projects', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      const client = new GitLabClient('https://gitlab.example.com');
+
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([
+          { id: 9, path: 'public-repo', web_url: 'https://gitlab.example.com/g/public-repo', description: null, default_branch: 'main', statistics: { repository_size: 50 }, last_activity_at: '2026-04-01T00:00:00Z' },
+        ]),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const repos = await client.listAccessibleRepos();
+
+      expect(repos).toHaveLength(1);
+      expect(repos[0].externalId).toBe('9');
+      // No /user auth probe when token is absent — go straight to /projects
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://gitlab.example.com/api/v4/projects?per_page=100&page=1&statistics=true',
+        expect.objectContaining({ headers: expect.not.objectContaining({ 'PRIVATE-TOKEN': expect.anything() }) }),
+      );
+
+      vi.unstubAllGlobals();
+    });
   });
 
   describe('BitBucketClient', () => {

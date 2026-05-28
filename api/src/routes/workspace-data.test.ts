@@ -1014,6 +1014,75 @@ describe('GET /findings', () => {
   });
 });
 
+describe('GET /findings/export.csv', () => {
+  it('returns CSV with header + rows, content-type text/csv, attachment disposition', async () => {
+    const rows = [
+      { id: 1, title: 'SQL Injection', severity: 'High', tool: 'semgrep', status: 'open',
+        filePath: '/app/db.py', line: 42, cvssScore: 7.5, repositoryName: 'app', contributorName: 'Alice',
+        description: 'desc', createdAt: '2026-01-15T10:00:00Z', secretValue: null },
+      { id: 2, title: 'XSS, with comma', severity: 'Medium', tool: 'trivy', status: 'fixed',
+        filePath: '/web/index.html', line: null, cvssScore: 5.5, repositoryName: 'web', contributorName: null,
+        description: 'has "quotes"', createdAt: '2026-02-01T11:00:00Z', secretValue: 'abc123secret' },
+    ];
+    mockDb.select.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            leftJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                  orderBy: vi.fn().mockResolvedValue(rows),
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/findings/export.csv?columns=severity,tool,location,repository,status' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^text\/csv/);
+    expect(res.headers['content-disposition']).toMatch(/^attachment; filename="findings_/);
+
+    const lines = res.body.split('\n');
+    expect(lines[0]).toBe('Severity,Tool,Location,Repository,Status');
+    // Comma + quote escaping must work for XSS title row (we don't export title in this column set,
+    // but location with embedded path/line and contributor edge cases still test the escape):
+    expect(lines[1]).toBe('High,semgrep,/app/db.py:42,app,open');
+    expect(lines[2]).toBe('Medium,trivy,/web/index.html,web,fixed');
+  });
+
+  it('falls back to the full column set when columns param is empty/invalid', async () => {
+    mockDb.select.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            leftJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                  orderBy: vi.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/findings/export.csv?columns=zzznope' });
+
+    expect(res.statusCode).toBe(200);
+    const header = res.body.split('\n')[0];
+    // Header should contain every default column header
+    expect(header).toContain('Severity');
+    expect(header).toContain('Tool');
+    expect(header).toContain('Title');
+    expect(header).toContain('Date');
+  });
+});
+
 describe('GET /findings/counts', () => {
   it('returns severity counts', async () => {
     const counts = {

@@ -206,6 +206,7 @@ export function useTest(id: number) {
 
 export function useFindings(params?: {
   repository_id?: number;
+  source_id?: number;
   test_id?: number;
   severity?: string;
   status?: string;

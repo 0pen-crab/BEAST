@@ -45,9 +45,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/security-venv/bin/pip install semgrep checkov
 
 # Presidio + spacy NLP model (isolated — dep conflicts)
+# NOTE: typer >=0.16 dropped click as a hard dep, but spacy's CLI still imports
+# it directly (`from click import NoSuchOption`). Install click explicitly so
+# `spacy download` works.
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv /opt/presidio-venv && \
-    /opt/presidio-venv/bin/pip install presidio-analyzer presidio-anonymizer && \
+    /opt/presidio-venv/bin/pip install presidio-analyzer presidio-anonymizer click && \
     /opt/presidio-venv/bin/python -m spacy download en_core_web_lg
 
 # ggshield (isolated — marshmallow/click conflicts)

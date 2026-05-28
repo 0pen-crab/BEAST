@@ -5,7 +5,8 @@ import { useConnectSource, useImportFromSource, useUploadRepoZip } from '@/api/h
 import { apiFetch } from '@/api/client';
 import { cn } from '@/lib/utils';
 
-type Tab = 'single' | 'public' | 'private' | 'local';
+type Tab = 'single' | 'git-server' | 'local';
+type Deployment = 'cloud' | 'self-hosted';
 
 function normalizeUrl(input: string): string {
   if (/^https?:\/\//i.test(input)) return input;
@@ -28,6 +29,44 @@ function ProviderHint() {
   );
 }
 
+const TOKEN_PLACEHOLDERS: Record<string, string> = {
+  bitbucket: 'ATBBxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  github: 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  gitlab: 'glpat-xxxxxxxxxxxxxxxxxxxx',
+};
+
+// Known cloud REST API hosts per provider (web host ≠ API host for GitHub/Bitbucket).
+const CLOUD_API_BASE: Record<string, string> = {
+  bitbucket: 'https://api.bitbucket.org/2.0',
+  github: 'https://api.github.com',
+  gitlab: 'https://gitlab.com',
+};
+
+// Extract the org/user/workspace name from cloud input. Accepts a bare name
+// ("acme-org"), a host+path ("github.com/acme-org") or a full URL.
+function orgFromCloudInput(raw: string): string {
+  const stripped = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  const parts = stripped.split('/').filter(Boolean);
+  if (parts.length === 0) return '';
+  // A first segment containing a dot is a host (github.com) → org is the next segment.
+  return parts[0].includes('.') ? (parts[1] ?? '') : parts[0];
+}
+
+const URL_PLACEHOLDERS: Record<string, Record<Deployment, string>> = {
+  bitbucket: {
+    'cloud': 'https://bitbucket.org/my-workspace',
+    'self-hosted': 'https://bitbucket.example.com/my-workspace',
+  },
+  github: {
+    'cloud': 'https://github.com/my-org',
+    'self-hosted': 'https://github.example.com/my-org',
+  },
+  gitlab: {
+    'cloud': 'https://gitlab.com/my-group',
+    'self-hosted': 'https://gitlab.example.com/my-group',
+  },
+};
+
 interface SourceFormProps {
   workspaceId: number;
   onConnected: () => void;
@@ -42,12 +81,10 @@ export function SourceForm({ workspaceId, onConnected, onCancel }: SourceFormPro
   // Single repo URL
   const [singleUrl, setSingleUrl] = useState('');
 
-  // Public URL
-  const [url, setUrl] = useState('');
-
-  // Private source
-  const [provider, setProvider] = useState('bitbucket');
-  const [orgName, setOrgName] = useState('');
+  // Git Server tab
+  const [provider, setProvider] = useState<'bitbucket' | 'github' | 'gitlab'>('github');
+  const [deployment, setDeployment] = useState<Deployment>('cloud');
+  const [gitServerUrl, setGitServerUrl] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [username, setUsername] = useState('');
   const connectSource = useConnectSource();
@@ -120,46 +157,49 @@ export function SourceForm({ workspaceId, onConnected, onCancel }: SourceFormPro
     }
   }
 
-  async function handlePublicSubmit(e: FormEvent) {
+  async function handleGitServerSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!url.trim()) return;
+    if (!gitServerUrl.trim()) return;
     setError('');
     setRateLimited(null);
-    const normalized = normalizeUrl(url.trim());
-    try {
-      await connectSource.mutateAsync({ workspace_id: workspaceId, url: normalized });
-      await qc.invalidateQueries({ queryKey: ['sources'] });
-      onConnected();
-      setUrl('');
-    } catch (err: any) {
-      handleError(err, normalized);
+
+    let parsedBaseUrl: string;
+    let parsedOrgName: string;
+
+    if (deployment === 'cloud') {
+      // Cloud: we already know each provider's API host. The input only supplies
+      // the org/user/workspace name — accept either a full URL or a bare name.
+      parsedBaseUrl = CLOUD_API_BASE[provider];
+      parsedOrgName = orgFromCloudInput(gitServerUrl.trim());
+    } else {
+      // Self-hosted: derive the host from the entered URL.
+      let host: string;
+      try {
+        const u = new URL(normalizeUrl(gitServerUrl.trim()));
+        host = `${u.protocol}//${u.host}`;
+        parsedOrgName = u.pathname.split('/').filter(Boolean)[0] ?? '';
+      } catch {
+        setError(t('sources.invalidGitServerUrl'));
+        return;
+      }
+      // GitHub Enterprise serves its REST API under /api/v3; GitLab/Bitbucket use the host as-is.
+      parsedBaseUrl = provider === 'github' ? `${host}/api/v3` : host;
     }
-  }
-
-  async function handlePrivateSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!accessToken.trim()) return;
-    setError('');
-
-    const baseUrls: Record<string, string> = {
-      bitbucket: 'https://api.bitbucket.org/2.0',
-      github: 'https://api.github.com',
-      gitlab: 'https://gitlab.com',
-    };
 
     try {
       await connectSource.mutateAsync({
         workspace_id: workspaceId,
         provider,
-        base_url: baseUrls[provider] || baseUrls.bitbucket,
-        org_name: orgName.trim() || undefined,
-        access_token: accessToken.trim(),
+        base_url: parsedBaseUrl,
+        org_name: parsedOrgName || undefined,
+        access_token: accessToken.trim() || undefined,
         username: provider === 'bitbucket' ? username.trim() || undefined : undefined,
-      });
+      } as any);
       await qc.invalidateQueries({ queryKey: ['sources'] });
       onConnected();
-      setProvider('bitbucket');
-      setOrgName('');
+      setProvider('github');
+      setDeployment('cloud');
+      setGitServerUrl('');
       setAccessToken('');
       setUsername('');
     } catch (err: any) {
@@ -183,8 +223,7 @@ export function SourceForm({ workspaceId, onConnected, onCancel }: SourceFormPro
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'single', label: t('sources.singleRepo') },
-    { key: 'public', label: t('sources.publicSource') },
-    { key: 'private', label: t('sources.privateSource') },
+    { key: 'git-server', label: t('sources.gitServer') },
     { key: 'local', label: t('repos.addRepoUpload') },
   ];
 
@@ -285,109 +324,88 @@ export function SourceForm({ workspaceId, onConnected, onCancel }: SourceFormPro
         </form>
       )}
 
-      {/* Public URL tab */}
-      {tab === 'public' && (
-        <form onSubmit={handlePublicSubmit} className="space-y-4">
+      {/* Git Server tab */}
+      {tab === 'git-server' && (
+        <form onSubmit={handleGitServerSubmit} className="space-y-4">
           <div>
-            <label htmlFor="source-url" className="beast-label">{t('sources.pasteSourceUrl')}</label>
-            <input
-              id="source-url"
-              type="text"
-              className="beast-input"
-              placeholder="github.com/org-or-username"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              required
-            />
-            <ProviderHint />
-          </div>
-          <div className="flex gap-2 justify-end">
-            {onCancel && (
-              <button type="button" onClick={onCancel} className="beast-btn beast-btn-outline">
-                {t('common.cancel')}
-              </button>
-            )}
-            <button type="submit" disabled={isPending || !url.trim()} className="beast-btn beast-btn-primary">
-              {isPending ? t('repos.uploading') : t('repos.addButton')}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {/* Private source tab */}
-      {tab === 'private' && (
-        <form onSubmit={handlePrivateSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="provider" className="beast-label">{t('settings.provider')}</label>
+            <label htmlFor="git-provider" className="beast-label">{t('settings.provider')}</label>
             <select
-              id="provider"
+              id="git-provider"
               className="beast-input"
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => setProvider(e.target.value as typeof provider)}
             >
-              <option value="bitbucket">Bitbucket</option>
               <option value="github">GitHub</option>
               <option value="gitlab">GitLab</option>
+              <option value="bitbucket">Bitbucket</option>
             </select>
           </div>
           <div>
-            <label htmlFor="org-name" className="beast-label">{t('settings.orgName')}</label>
-            <input
-              id="org-name"
-              name="source-org-name"
-              type="text"
-              autoComplete="off"
+            <label htmlFor="git-deployment" className="beast-label">{t('settings.deployment')}</label>
+            <select
+              id="git-deployment"
               className="beast-input"
-              placeholder="my-organization"
-              value={orgName}
-              onChange={(e) => setOrgName(e.target.value)}
-            />
+              value={deployment}
+              onChange={(e) => setDeployment(e.target.value as Deployment)}
+            >
+              <option value="cloud">{t('settings.deploymentCloud')}</option>
+              <option value="self-hosted">{t('settings.deploymentSelfHosted')}</option>
+            </select>
           </div>
           <div>
-            <label htmlFor="access-token" className="beast-label">{t('settings.accessToken')}</label>
+            <label htmlFor="git-server-url" className="beast-label">{t('settings.gitServerUrl')}</label>
             <input
-              id="access-token"
-              name="source-access-token"
+              id="git-server-url"
+              name="source-git-server-url"
               type="text"
               autoComplete="off"
               className="beast-input"
-              style={{ WebkitTextSecurity: 'disc' } as any}
-              placeholder="ghp_... or ATBB..."
-              value={accessToken}
-              onChange={(e) => setAccessToken(e.target.value)}
+              placeholder={URL_PLACEHOLDERS[provider][deployment]}
+              value={gitServerUrl}
+              onChange={(e) => setGitServerUrl(e.target.value)}
               required
             />
-            {provider === 'github' && (
-              <a
-                href="https://github.com/settings/tokens/new?scopes=repo&description=BEAST"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-1 inline-block text-[11px] text-th-text-muted hover:text-beast-red"
-              >
-                Where do I get the token?
-              </a>
-            )}
           </div>
-          {provider === 'bitbucket' && (
+
+          <div className="beast-form-section">
+            <h3 className="beast-card-title">{t('sources.tokenSectionTitle')}</h3>
+            <p className="beast-text-hint">{t('sources.tokenSectionDesc')}</p>
             <div>
-              <label htmlFor="bb-username" className="beast-label">{t('settings.bbUsername')}</label>
+              <label htmlFor="access-token" className="beast-label">{t('settings.accessToken')}</label>
               <input
-                id="bb-username"
+                id="access-token"
+                name="source-access-token"
                 type="text"
+                autoComplete="off"
                 className="beast-input"
-                placeholder="username (for API token auth)"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                style={{ WebkitTextSecurity: 'disc' } as any}
+                placeholder={TOKEN_PLACEHOLDERS[provider]}
+                value={accessToken}
+                onChange={(e) => setAccessToken(e.target.value)}
               />
             </div>
-          )}
+            {provider === 'bitbucket' && (
+              <div>
+                <label htmlFor="bb-username" className="beast-label">{t('settings.bbUsername')}</label>
+                <input
+                  id="bb-username"
+                  type="text"
+                  className="beast-input"
+                  placeholder="username (for API token auth)"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-2 justify-end">
             {onCancel && (
               <button type="button" onClick={onCancel} className="beast-btn beast-btn-outline">
                 {t('common.cancel')}
               </button>
             )}
-            <button type="submit" disabled={isPending || !accessToken.trim()} className="beast-btn beast-btn-primary">
+            <button type="submit" disabled={isPending || !gitServerUrl.trim()} className="beast-btn beast-btn-primary">
               {isPending ? t('sources.connecting') : t('sources.addSource')}
             </button>
           </div>

@@ -170,6 +170,7 @@ if is_enabled "trufflehog"; then
       --directory="$REPO_PATH" \
       --json \
       --no-update \
+      --no-verification \
       > "$TRUFFLEHOG_OUT" || ec=$?
     # Exit code 183 = findings detected — that's success, not failure
     if [ "$ec" -eq 0 ] || [ "$ec" -eq 183 ]; then

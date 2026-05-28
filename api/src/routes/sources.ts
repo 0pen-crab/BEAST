@@ -43,8 +43,8 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
           pr_comments_enabled: z.boolean().optional(),
           webhook_url: z.string().optional(),
         }).refine(
-          (data) => data.url || (data.provider && data.org_name),
-          { message: 'Provide either url (public) or provider + org_name (private)' },
+          (data) => data.url || (data.provider && (data.org_name || data.base_url)),
+          { message: 'Provide either url (public) or provider + (org_name or base_url) (private)' },
         ),
       },
     },
@@ -65,17 +65,23 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         baseUrl = parsed.baseUrl;
         orgName = parsed.orgName;
         repoSlug = parsed.repoSlug;
-      } else if (body.provider && body.org_name) {
+      } else if (body.provider && (body.org_name || body.base_url)) {
         provider = body.provider;
-        orgName = body.org_name;
+        orgName = body.org_name ?? '';
         if (provider === 'local') {
-          baseUrl = body.base_url ?? body.org_name;
+          baseUrl = body.base_url ?? body.org_name ?? '';
           orgName = '';
         } else {
           baseUrl = body.base_url ?? getDefaultBaseUrl(provider);
         }
+        // Server-wide listing (no org_name) is only supported for GitLab + token
+        if (!orgName && provider !== 'gitlab') {
+          return reply.status(400).send({
+            error: `${provider} requires an organization/user name in the URL. Listing all token-accessible repos is only supported for GitLab.`,
+          });
+        }
       } else {
-        return reply.status(400).send({ error: 'Provide either url (public) or provider + org_name (private)' });
+        return reply.status(400).send({ error: 'Provide either url (public) or provider + (org_name or base_url) (private)' });
       }
 
       // Resolve effective token: explicit > user-level PAT
@@ -84,9 +90,9 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         effectiveToken = await getSecret('user', request.user.id, `${provider}_pat`);
       }
 
-      // Detect org type (skip for single-repo URLs)
+      // Detect org type (skip for single-repo URLs and server-wide listings without org_name)
       let orgType: string | null = null;
-      if (provider !== 'local' && !repoSlug) {
+      if (provider !== 'local' && !repoSlug && orgName) {
         try {
           const client = createClient(provider, baseUrl, effectiveToken ?? undefined, body.username);
           orgType = await (client as any).detectOrgType(orgName);
@@ -221,6 +227,9 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
           discoveredRepos = [singleRepo];
         } else if (provider === 'local') {
           discoveredRepos = await (client as LocalDirectoryClient).listRepos(baseUrl);
+        } else if (!orgName && provider === 'gitlab') {
+          // Server-wide listing for self-hosted GitLab: all repos accessible to the token
+          discoveredRepos = await (client as GitLabClient).listAccessibleRepos();
         } else {
           discoveredRepos = await (client as GitHubClient | GitLabClient | BitBucketClient).listRepos(
             orgName, (orgType ?? 'organization') as OrgType, effectiveToken ?? undefined,
@@ -344,8 +353,10 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!source) return reply.status(404).send({ error: 'Source not found' });
       await authorize(request, source.workspaceId, 'member');
 
-      // For sources without orgType (single repos, uploads) — return repos from DB
-      if (!source.orgType || (source.provider === 'local' && source.baseUrl === 'local://')) {
+      // Single-repo sources (orgName set, no orgType) and local uploads: repos are already in DB
+      const isSingleRepoOrLocal = source.provider === 'local'
+        || (!!source.orgName && !source.orgType);
+      if (isSingleRepoOrLocal) {
         const imported = await db.select({
           name: repositories.name,
           sizeBytes: repositories.sizeBytes,
@@ -374,6 +385,9 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       let allRepos: DiscoveredRepo[];
       if (source.provider === 'local') {
         allRepos = await (client as LocalDirectoryClient).listRepos(source.baseUrl);
+      } else if (source.provider === 'gitlab' && !source.orgName) {
+        // Server-wide listing for GitLab without a specific group/user
+        allRepos = await (client as GitLabClient).listAccessibleRepos();
       } else {
         const ot = (source.orgType ?? 'organization') as OrgType;
         allRepos = await (client as GitHubClient | GitLabClient | BitBucketClient).listRepos(
@@ -432,6 +446,9 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       try {
         if (source.provider === 'local') {
           allRepos = await (client as LocalDirectoryClient).listRepos(source.baseUrl);
+        } else if (source.provider === 'gitlab' && !source.orgName) {
+          // Server-wide listing for GitLab without a specific group/user
+          allRepos = await (client as GitLabClient).listAccessibleRepos();
         } else {
           const ot = (source.orgType ?? 'organization') as OrgType;
           allRepos = await (client as GitHubClient | GitLabClient | BitBucketClient).listRepos(
@@ -444,10 +461,12 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         throw err;
       }
+      console.log(`[sources/import] source=${id} provider=${source.provider} orgName="${source.orgName ?? ''}" listed=${allRepos.length} requested=${body.all ? 'all' : (body.repos?.length ?? 0)}`);
 
       const toImport = body.all
         ? allRepos
         : allRepos.filter(r => body.repos?.includes(r.name));
+      console.log(`[sources/import] toImport=${toImport.length}`);
 
       const team = await ensureTeam(source.workspaceId, 'Unassigned');
 

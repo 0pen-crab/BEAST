@@ -61,7 +61,7 @@ export async function cloneRepo(ctx: PipelineContext): Promise<void> {
   } else {
     // Fresh clone
     fs.mkdirSync(ctx.workDir, { recursive: true });
-    execGit(`git clone "${cloneUrl}" "${repoPath}"`);
+    execGitWithDnsRetry(`git clone "${cloneUrl}" "${repoPath}"`);
 
     if (commitHash) {
       execGit(`git checkout ${commitHash}`, repoPath);
@@ -69,6 +69,34 @@ export async function cloneRepo(ctx: PipelineContext): Promise<void> {
       execGit(`git checkout ${branch}`, repoPath);
     }
   }
+}
+
+function isTransientDnsError(message: string): boolean {
+  return /Could not resolve host|Temporary failure in name resolution|getaddrinfo (EAI_AGAIN|ENOTFOUND|EBUSY)|DNS server returned general failure/i.test(message);
+}
+
+// Retries clone on transient DNS errors. Docker's embedded resolver
+// (127.0.0.11) occasionally returns SERVFAIL — surfacing those to the user as
+// a hard failure means they re-run the whole scan for a problem that resolves
+// itself in seconds.
+function execGitWithDnsRetry(command: string, cwd?: string, attempts = 3): void {
+  const delaysMs = [2000, 5000];
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      execGit(command, cwd);
+      return;
+    } catch (err: any) {
+      lastErr = err;
+      if (!isTransientDnsError(err?.message ?? '')) throw err;
+      const delay = delaysMs[i];
+      if (delay === undefined) break;
+      console.warn(`[clone] DNS transient (attempt ${i + 1}/${attempts}); retrying in ${delay}ms: ${err.message.slice(0, 200)}`);
+      const end = Date.now() + delay;
+      while (Date.now() < end) { /* busy wait — execSync is sync, can't await */ }
+    }
+  }
+  throw lastErr;
 }
 
 function repoExists(repoPath: string): boolean {

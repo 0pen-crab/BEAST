@@ -314,6 +314,49 @@ export class GitLabClient {
     return repos;
   }
 
+  async listAccessibleRepos(): Promise<DiscoveredRepo[]> {
+    const headers = this.headers();
+
+    // Optional auth probe: only when we have a token, surface bad credentials early
+    if (this.token) {
+      const meRes = await fetch(`${this.baseUrl}/api/v4/user`, { headers });
+      if (!meRes.ok) {
+        const body = await meRes.text().catch(() => '');
+        throw new Error(`GitLab token rejected by ${this.baseUrl}: ${meRes.status} ${body.slice(0, 200)}`);
+      }
+    }
+
+    const repos: DiscoveredRepo[] = [];
+    let page = 1;
+    while (true) {
+      const url = `${this.baseUrl}/api/v4/projects?per_page=100&page=${page}&statistics=true`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`GitLab API error: ${res.status} ${body.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) break;
+
+      for (const r of data) {
+        repos.push({
+          externalId: String(r.id),
+          name: r.path,
+          url: r.web_url,
+          description: r.description ?? null,
+          defaultBranch: r.default_branch ?? null,
+          sizeBytes: r.statistics?.repository_size ?? null,
+          primaryLanguage: null,
+          lastActivityAt: r.last_activity_at ?? null,
+        });
+      }
+
+      if (data.length < 100) break;
+      page++;
+    }
+    return repos;
+  }
+
   async getRepo(namespace: string, repoSlug: string, token?: string): Promise<DiscoveredRepo> {
     const headers = { ...this.headers() };
     if (token) headers['PRIVATE-TOKEN'] = token;

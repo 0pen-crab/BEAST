@@ -43,7 +43,7 @@ export async function fetchApi<T>(url: string): Promise<T> {
       return `HTTP ${res.status}`;
     });
     let message = text;
-    try { const parsed = JSON.parse(text); message = parsed.error ?? parsed.message ?? text; } catch { /* response is not JSON */ }
+    try { const parsed = JSON.parse(text); message = parsed.message ?? parsed.error ?? text; } catch { /* response is not JSON */ }
     throw new Error(message);
   }
   return res.json();
@@ -66,7 +66,7 @@ export async function mutateApi<T>(url: string, options: RequestInit): Promise<T
       return `HTTP ${res.status}`;
     });
     let message = text;
-    try { const parsed = JSON.parse(text); message = parsed.error ?? parsed.message ?? text; } catch { /* response is not JSON */ }
+    try { const parsed = JSON.parse(text); message = parsed.message ?? parsed.error ?? text; } catch { /* response is not JSON */ }
     throw new Error(message);
   }
   if (res.status === 204) return undefined as T;

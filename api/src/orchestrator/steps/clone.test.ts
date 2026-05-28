@@ -137,6 +137,39 @@ describe('cloneRepo', () => {
     await expect(cloneRepo(makeCtx())).rejects.toThrow('Clone failed');
   });
 
+  it('retries clone on transient DNS errors and succeeds on a later attempt', async () => {
+    mockExistsSync.mockReturnValue(false);
+    const dnsErr = () => {
+      const err: any = new Error('git clone failed');
+      err.status = 128;
+      err.stderr = Buffer.from("fatal: unable to access 'https://example.com/foo': Could not resolve host: example.com (DNS server returned general failure)");
+      err.stdout = Buffer.from('');
+      throw err;
+    };
+    // First two attempts: DNS fail. Third: success.
+    mockExecSync.mockImplementationOnce(dnsErr).mockImplementationOnce(dnsErr).mockImplementationOnce(() => Buffer.from(''));
+
+    await cloneRepo(makeCtx());
+
+    const cloneCalls = mockExecSync.mock.calls.filter((c: any) => String(c[0]).startsWith('git clone'));
+    expect(cloneCalls).toHaveLength(3);
+  });
+
+  it('does NOT retry on non-DNS clone errors (auth, 404, etc.)', async () => {
+    mockExistsSync.mockReturnValue(false);
+    mockExecSync.mockImplementationOnce(() => {
+      const err: any = new Error('clone fail');
+      err.status = 128;
+      err.stderr = Buffer.from("fatal: Authentication failed for 'https://example.com/foo'");
+      err.stdout = Buffer.from('');
+      throw err;
+    });
+
+    await expect(cloneRepo(makeCtx())).rejects.toThrow('Clone failed');
+    const cloneCalls = mockExecSync.mock.calls.filter((c: any) => String(c[0]).startsWith('git clone'));
+    expect(cloneCalls).toHaveLength(1);
+  });
+
   it('checks out specific branch when provided', async () => {
     mockExistsSync.mockReturnValue(false);
 

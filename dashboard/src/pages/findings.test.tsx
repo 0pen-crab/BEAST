@@ -68,6 +68,10 @@ vi.mock('@/api/hooks', () => ({
     data: [{ id: 1, name: 'repo-1' }],
     isLoading: false,
   })),
+  useSources: vi.fn(() => ({
+    data: [{ id: 1, provider: 'gitlab', baseUrl: 'https://gitlab.example.com', orgName: null }],
+    isLoading: false,
+  })),
 }));
 
 beforeEach(() => {
@@ -133,6 +137,12 @@ describe('FindingsPage', () => {
     // Check that useFindings was called with sort params
     const lastCall = mockUseFindings.mock.calls[mockUseFindings.mock.calls.length - 1];
     expect(lastCall[0]).toMatchObject({ sort: 'severity', dir: 'asc' });
+  });
+
+  it('passes source_id to useFindings when ?source= is in the URL', () => {
+    renderWithProviders(<FindingsPage />, { initialEntries: ['/findings?source=1'] });
+    const lastCall = mockUseFindings.mock.calls[mockUseFindings.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ source_id: 1 });
   });
 
   it('toggles sort direction on second click', async () => {

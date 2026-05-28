@@ -29,6 +29,10 @@ export async function syncSource(sourceId: number): Promise<{ added: number; upd
   if (source.provider === 'local') {
     const client = new LocalDirectoryClient();
     repos = await client.listRepos(source.baseUrl);
+  } else if (source.provider === 'gitlab' && !source.orgName) {
+    // Server-wide listing for GitLab without a specific group/user
+    const client = createClient(source.provider, source.baseUrl, token ?? undefined, source.credentialUsername ?? undefined) as GitLabClient;
+    repos = await client.listAccessibleRepos();
   } else {
     const client = createClient(source.provider, source.baseUrl, token ?? undefined, source.credentialUsername ?? undefined);
     const orgType = (source.orgType ?? 'organization') as OrgType;
