@@ -1,21 +1,22 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useFindingCounts, useFindingCountsByTool, useRepositories } from '@/api/hooks';
-import { apiFetch, mutateApi } from '@/api/client';
+import { apiFetch } from '@/api/client';
 import { useWorkspace } from '@/lib/workspace';
-import { TableSkeleton } from '@/components/skeleton';
+import { TableSkeleton, CardSkeleton } from '@/components/skeleton';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { ExportButton } from '@/components/export-button';
 import { TOOL_CATEGORIES, getToolsByCategory } from '@/lib/tool-mapping';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/format';
-import { downloadBlob } from '@/lib/export-findings';
 import type { Severity } from '@/api/types';
 
 interface Scan {
   id: string;
   status: string;
+  /** Completed, but some tools/AI modules failed after retry — partial results. */
+  completedWithErrors?: boolean;
   repoName: string;
   createdAt: string;
   completedAt: string | null;
@@ -32,7 +33,7 @@ export function DashboardPage() {
             <h1 className="beast-page-title">{t('dashboard.title')}</h1>
             <p className="beast-page-subtitle">{t('dashboard.subtitle')}</p>
           </div>
-          <SecurityBrief />
+          <ExportButton scope={{ type: 'workspace' }} />
         </div>
         <div className="beast-grid-2">
           <SeverityBreakdownBar />
@@ -46,140 +47,6 @@ export function DashboardPage() {
         </div>
       </div>
     </ErrorBoundary>
-  );
-}
-
-type BriefState =
-  | { phase: 'idle' }
-  | { phase: 'processing'; jobId: string }
-  | { phase: 'done'; jobId: string }
-  | { phase: 'error'; message: string };
-
-function SecurityBrief() {
-  const { t } = useTranslation();
-  const { currentWorkspace } = useWorkspace();
-  const wsId = currentWorkspace?.id;
-  const [state, setState] = useState<BriefState>({ phase: 'idle' });
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
-
-  const startPolling = useCallback((jobId: string) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await apiFetch(`/api/highlights/${jobId}?workspace_id=${wsId}`);
-        if (!res.ok) {
-          setState({ phase: 'error', message: 'Failed to check status' });
-          clearInterval(pollRef.current!);
-          return;
-        }
-        const data = await res.json() as { status: string; error?: string };
-        if (data.status === 'done') {
-          clearInterval(pollRef.current!);
-          setState({ phase: 'done', jobId });
-        } else if (data.status === 'failed') {
-          clearInterval(pollRef.current!);
-          setState({ phase: 'error', message: data.error ?? t('dashboard.securityBriefFailed') });
-        }
-      } catch {
-        clearInterval(pollRef.current!);
-        setState({ phase: 'error', message: t('dashboard.securityBriefFailed') });
-      }
-    }, 3000);
-  }, [wsId, t]);
-
-  // On mount: restore state from backend if there's an active/done job
-  useEffect(() => {
-    if (!wsId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await apiFetch(`/api/highlights/latest?workspace_id=${wsId}`);
-        if (!res.ok || cancelled) return;
-        const data = await res.json() as { job: { id: string; status: string; error?: string } | null };
-        if (!data.job || cancelled) return;
-        if (data.job.status === 'processing') {
-          setState({ phase: 'processing', jobId: data.job.id });
-          startPolling(data.job.id);
-        } else if (data.job.status === 'done') {
-          setState({ phase: 'done', jobId: data.job.id });
-        } else if (data.job.status === 'failed') {
-          setState({ phase: 'error', message: data.job.error ?? t('dashboard.securityBriefFailed') });
-        }
-      } catch { /* ignore */ }
-    })();
-    return () => { cancelled = true; };
-  }, [wsId, startPolling, t]);
-
-  const handleGenerate = useCallback(async () => {
-    if (!wsId) return;
-    setState({ phase: 'processing', jobId: '' });
-    try {
-      const res = await apiFetch(`/api/highlights/generate?workspace_id=${wsId}`, { method: 'POST' });
-      const data = await res.json() as { jobId?: string; error?: string; message?: string };
-      if (!res.ok || !data.jobId) {
-        setState({
-          phase: 'error',
-          message: data.message ?? data.error ?? t('dashboard.securityBriefFailed'),
-        });
-        return;
-      }
-      setState({ phase: 'processing', jobId: data.jobId });
-      startPolling(data.jobId);
-    } catch {
-      setState({ phase: 'error', message: t('dashboard.securityBriefFailed') });
-    }
-  }, [wsId, startPolling, t]);
-
-  const handleDownload = useCallback(async () => {
-    if (state.phase !== 'done' || !wsId) return;
-    try {
-      const res = await apiFetch(`/api/highlights/${state.jobId}/download?workspace_id=${wsId}`);
-      if (!res.ok) return;
-      const blob = await res.blob();
-      downloadBlob(`security-brief-${new Date().toISOString().slice(0, 10)}.csv`, blob);
-    } catch {
-      // silent — download failed
-    }
-  }, [state, wsId]);
-
-  const isProcessing = state.phase === 'processing';
-  const isDone = state.phase === 'done';
-  const isError = state.phase === 'error';
-
-  return (
-    <div className="beast-brief-group">
-      <button
-        className={cn('beast-btn-brief', isProcessing && 'beast-btn-brief-processing')}
-        onClick={handleGenerate}
-        disabled={isProcessing || !wsId}
-      >
-        {isProcessing && <span className="beast-brief-spinner" />}
-        {isProcessing ? t('dashboard.securityBriefProcessing') : t('dashboard.securityBrief')}
-      </button>
-      {isDone && (
-        <button
-          className="beast-btn-brief-download"
-          onClick={handleDownload}
-          title={t('dashboard.securityBriefDownload')}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-        </button>
-      )}
-      {isError && (
-        <span className="beast-brief-error">{state.message}</span>
-      )}
-    </div>
   );
 }
 
@@ -202,7 +69,7 @@ const RING_STROKES: Record<Severity, string> = {
 function SeverityBreakdownBar() {
   const { t } = useTranslation();
   const { data } = useFindingCounts();
-  if (!data) return null;
+  if (!data) return <CardSkeleton />;
 
   const segments: { severity: Severity; count: number }[] = [
     { severity: 'Critical', count: data.Critical },
@@ -296,11 +163,11 @@ function RecentScans() {
   const { t } = useTranslation();
   const { currentWorkspace } = useWorkspace();
   const wsId = currentWorkspace?.id;
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['recentScans', wsId],
     queryFn: async () => {
       const res = await apiFetch(`/api/scans?limit=10&workspace_id=${wsId}`);
-      if (!res.ok) return null;
+      if (!res.ok) throw new Error(`Failed to load scans: HTTP ${res.status}`);
       return res.json() as Promise<{ count: number; results: Scan[] }>;
     },
     enabled: !!wsId,
@@ -313,6 +180,17 @@ function RecentScans() {
       </div>
       {isLoading ? (
         <TableSkeleton rows={5} />
+      ) : isError ? (
+        <p className="beast-empty">
+          <span className="beast-text-hint">{t('dashboard.scansError', 'Failed to load scans')}</span>{' '}
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="beast-btn beast-btn-ghost beast-btn-sm"
+          >
+            {t('common.retry', 'Retry')}
+          </button>
+        </p>
       ) : !data?.results.length ? (
         <p className="beast-empty">{t('dashboard.noScansYet')}</p>
       ) : (
@@ -320,22 +198,29 @@ function RecentScans() {
           <thead>
             <tr>
               <th>{t('dashboard.repository')}</th>
-              <th>Status</th>
+              <th>{t('common.status')}</th>
               <th className="beast-th-right">{t('dashboard.duration')}</th>
               <th className="beast-th-right">{t('dashboard.completed')}</th>
             </tr>
           </thead>
           <tbody>
-            {data.results.map((scan) => (
+            {data.results.map((scan) => {
+              // Same amber treatment as the Scans page: completed-with-errors
+              // must not look like a clean green completion.
+              const withErrors = scan.status === 'completed' && !!scan.completedWithErrors;
+              return (
               <tr key={scan.id}>
                 <td>
-                  <Link to="/scans" className="beast-td-primary beast-row-link">
+                  <Link to={`/scans?scan=${scan.id}`} className="beast-td-primary beast-row-link">
                     {scan.repoName}
                   </Link>
                 </td>
                 <td>
-                  <span className={cn('status-pill', STATUS_PILL[scan.status] ?? 'status-queued')}>
-                    {t(`status.${scan.status}`)}
+                  <span
+                    className={cn('status-pill', withErrors ? 'status-paused' : STATUS_PILL[scan.status] ?? 'status-queued')}
+                    title={withErrors ? t('scans.completedWithErrorsTooltip') : undefined}
+                  >
+                    {withErrors ? t('scans.completedWithErrors') : t(`status.${scan.status}`)}
                   </span>
                 </td>
                 <td className="beast-td-date">
@@ -347,7 +232,8 @@ function RecentScans() {
                     : '—'}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}

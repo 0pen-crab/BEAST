@@ -63,7 +63,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
           <div className="flex h-7 w-7 items-center justify-center bg-beast-red/15 text-xs font-bold text-beast-red">
             {(user?.displayName ?? user?.username)?.charAt(0).toUpperCase() ?? 'U'}
           </div>
-          <span className="text-[13px] font-medium text-th-text hidden sm:inline">
+          <span className="beast-topbar-username">
             {user?.displayName ?? user?.username}
           </span>
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className={cn('text-th-text-muted transition-transform', menuOpen && 'rotate-180')}>
@@ -80,8 +80,8 @@ export function Topbar({ onMenuClick }: TopbarProps) {
                 <div className="flex h-9 w-9 items-center justify-center bg-beast-red/15 text-sm font-bold text-beast-red">
                   {(user?.displayName ?? user?.username)?.charAt(0).toUpperCase() ?? 'U'}
                 </div>
-                <div>
-                  <div className="text-sm font-medium text-th-text">{user?.displayName ?? user?.username}</div>
+                <div className="beast-user-menu-identity">
+                  <div className="beast-user-menu-name">{user?.displayName ?? user?.username}</div>
                   <div className="text-[10px] uppercase tracking-[0.1em] text-th-text-muted">
                     {user?.role === 'super_admin' ? 'Super Admin' : user?.role ?? 'User'}
                   </div>

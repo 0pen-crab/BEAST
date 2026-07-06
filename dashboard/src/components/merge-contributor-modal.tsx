@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Contributor } from '../api/contributor-types.ts';
-import { ContributorSearch } from './contributor-search.tsx';
-import { formatDate } from '../lib/format.ts';
+import type { Contributor } from '../api/contributor-types';
+import { ContributorSearch } from './contributor-search';
+import { formatDate } from '../lib/format';
 
 interface SingleModeProps {
   mode: 'single';
   source: Contributor;
   candidates?: never;
+  initialTargetId?: never;
   workspaceId: number;
   onConfirm: (sourceId: number, targetId: number) => void;
   onClose: () => void;
@@ -19,6 +20,8 @@ interface BulkModeProps {
   mode: 'bulk';
   source?: never;
   candidates: Contributor[];
+  /** Preselect this candidate as merge target (falls back to most recently active). */
+  initialTargetId?: number;
   workspaceId: number;
   onConfirm: (sourceIds: number[], targetId: number) => void;
   onClose: () => void;
@@ -35,9 +38,15 @@ export function MergeContributorModal(props: MergeContributorModalProps) {
   // Single mode: selected target from search
   const [selectedTarget, setSelectedTarget] = useState<Contributor | null>(null);
 
-  // Bulk mode: which candidate is the target (default: most recently active)
+  // Bulk mode: which candidate is the target (caller-provided default, else most recently active)
   const [targetId, setTargetId] = useState<number>(() => {
     if (mode === 'bulk') {
+      if (
+        props.initialTargetId !== undefined &&
+        props.candidates.some((c) => c.id === props.initialTargetId)
+      ) {
+        return props.initialTargetId;
+      }
       const sorted = [...props.candidates].sort((a, b) =>
         (b.lastSeen ?? '').localeCompare(a.lastSeen ?? ''),
       );

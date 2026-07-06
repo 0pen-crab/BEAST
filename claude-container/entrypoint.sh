@@ -16,7 +16,6 @@ fi
 mkdir -p /home/scanner/.claude
 chown -R scanner:scanner /home/scanner/.claude
 echo "[entrypoint] Claude auth directory ready at /home/scanner/.claude"
-
 # Install Claude Code hooks (rate limit detection)
 cp /opt/beast/settings.json /home/scanner/.claude/settings.json
 chown scanner:scanner /home/scanner/.claude/settings.json

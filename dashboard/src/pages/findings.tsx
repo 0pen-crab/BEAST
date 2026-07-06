@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useSearchParams, useNavigate } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { useFindings, useRepositories, useSources } from '@/api/hooks';
+import { fetchApiRaw } from '@/api/client';
 import { useWorkspace } from '@/lib/workspace';
 import { sourceDisplayLabel } from '@/lib/provider-display';
 import { ProviderIcon } from '@/lib/provider-icons';
@@ -12,11 +13,12 @@ import { Pagination } from '@/components/pagination';
 import { TableSkeleton } from '@/components/skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorBoundary } from '@/components/error-boundary';
-import { TOOLS } from '@/lib/tool-mapping';
+import { TOOLS, TOOL_CATEGORIES } from '@/lib/tool-mapping';
 import { cn } from '@/lib/utils';
-import { formatDateShort } from '@/lib/format';
+import { formatDate } from '@/lib/format';
 import { SEVERITIES, STATUSES } from '@/api/types';
-import type { Severity, Status, Finding } from '@/api/types';
+import type { Finding } from '@/api/types';
+import { parseListParam, parsePageParam, parseEnumParam, setOrDeleteParam } from '@/lib/url-state';
 
 const PAGE_SIZE = 50;
 
@@ -24,6 +26,24 @@ const PAGE_SIZE = 50;
 function statusI18nKey(status: string): string {
   if (status === 'Risk Accepted') return 'Accepted';
   return status.replace(/\s+/g, '');
+}
+
+// Status values travel through the URL and the API in snake_case; the filter
+// UI works with display labels. Keep one mapping for both directions.
+const STATUS_API_TO_DISPLAY: Record<string, string> = {
+  open: 'Open',
+  risk_accepted: 'Risk Accepted',
+  false_positive: 'False Positive',
+  fixed: 'Fixed',
+  duplicate: 'Duplicate',
+};
+const STATUS_DISPLAY_TO_API: Record<string, string> = Object.fromEntries(
+  Object.entries(STATUS_API_TO_DISPLAY).map(([api, display]) => [display, api]),
+);
+
+/** Display labels ("Risk Accepted") → API values ("risk_accepted"); unknown pass through. */
+function toApiStatuses(display: string[]): string[] {
+  return display.map((s) => STATUS_DISPLAY_TO_API[s] ?? s);
 }
 
 /** Show only the filename (last path segment) + line number */
@@ -38,7 +58,8 @@ function shortPath(filePath: string, line: number | null | undefined): string {
 
 // ── Sortable header ──────────────────────────────────────────────
 
-type SortField = 'title' | 'severity' | 'tool' | 'status' | 'cvss_score' | 'created_at' | 'repository' | 'contributor' | 'file_path';
+const SORT_FIELDS = ['title', 'severity', 'tool', 'status', 'cvss_score', 'created_at', 'repository', 'contributor', 'file_path'] as const;
+type SortField = typeof SORT_FIELDS[number];
 type SortDir = 'asc' | 'desc';
 
 function SortableHeader({
@@ -149,28 +170,70 @@ function ColumnSettingsDropdown({
 
 export function FindingsPage() {
   const { t } = useTranslation();
+  // The URL is the source of truth on mount — every piece of list state below
+  // initializes from it so refresh / shared links fully restore the view.
   const [searchParams, setSearchParams] = useSearchParams();
-  const [severityFilter, setSeverityFilter] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [severityFilter, setSeverityFilter] = useState<string[]>(() =>
+    parseListParam(searchParams.get('severity')).filter((s) => (SEVERITIES as readonly string[]).includes(s)),
+  );
+  const [statusFilter, setStatusFilter] = useState<string[]>(() =>
+    // The `status` param carries API values → display labels used by the filter.
+    parseListParam(searchParams.get('status')).map((v) => STATUS_API_TO_DISPLAY[v] ?? v),
+  );
   const [repoFilter, setRepoFilter] = useState<number | null>(() => {
     const r = searchParams.get('repository');
     return r ? Number(r) : null;
   });
-  const [toolFilter, setToolFilter] = useState<string[]>(() => {
-    const t = searchParams.get('tool');
-    return t ? t.split(',') : [];
-  });
+  const [toolFilter, setToolFilter] = useState<string[]>(() => parseListParam(searchParams.get('tool')));
   const [sourceFilter, setSourceFilter] = useState<number | null>(() => {
     const s = searchParams.get('source');
     return s ? Number(s) : null;
   });
-  const [showDuplicates, setShowDuplicates] = useState<'yes' | 'no' | null>(null);
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(0);
-  const [sortField, setSortField] = useState<SortField | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [showDuplicates, setShowDuplicates] = useState<'yes' | 'no' | null>(
+    () => parseEnumParam(searchParams.get('dup'), ['yes', 'no'] as const),
+  );
+  // Initialize both the input and the committed (debounced) term from ?q= so
+  // mounting from a link doesn't trigger a second fetch or a page reset.
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get('q') ?? '');
+  const [page, setPage] = useState(() => parsePageParam(searchParams.get('page')));
+  const [sortField, setSortField] = useState<SortField | null>(() => parseEnumParam(searchParams.get('sort'), SORT_FIELDS));
+  const [sortDir, setSortDir] = useState<SortDir>(() => (searchParams.get('dir') === 'desc' ? 'desc' : 'asc'));
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(loadVisibleColumns);
   const [showColumnSettings, setShowColumnSettings] = useState(false);
+
+  // Mirror list state back into the query string after any change. `replace`
+  // keeps the browser history clean, defaults are deleted so plain views keep
+  // a bare URL, and the string comparison guards against a setSearchParams →
+  // effect → setSearchParams update loop. Search is written only once the
+  // debounced term commits (server-side search).
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    setOrDeleteParam(next, 'severity', severityFilter.join(','));
+    setOrDeleteParam(next, 'status', toApiStatuses(statusFilter).join(','));
+    setOrDeleteParam(next, 'tool', toolFilter.join(','));
+    setOrDeleteParam(next, 'repository', repoFilter !== null ? String(repoFilter) : '');
+    setOrDeleteParam(next, 'source', sourceFilter !== null ? String(sourceFilter) : '');
+    setOrDeleteParam(next, 'dup', showDuplicates ?? '');
+    setOrDeleteParam(next, 'q', debouncedSearch);
+    setOrDeleteParam(next, 'sort', sortField ?? '');
+    setOrDeleteParam(next, 'dir', sortField && sortDir === 'desc' ? 'desc' : '');
+    setOrDeleteParam(next, 'page', page > 0 ? String(page + 1) : '');
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [severityFilter, statusFilter, toolFilter, repoFilter, sourceFilter, showDuplicates, debouncedSearch, sortField, sortDir, page, searchParams, setSearchParams]);
+
+  // Debounce the search input (~300ms) so we don't spam the API on every
+  // keystroke; the page resets when the effective search term changes.
+  useEffect(() => {
+    if (search === debouncedSearch) return;
+    const id = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [search, debouncedSearch]);
 
   const { data: repos } = useRepositories();
   const repoMap = new Map(repos?.map((r) => [r.id, r.name]) ?? []);
@@ -209,14 +272,7 @@ export function FindingsPage() {
     if (severityFilter.length > 0) qs.set('severity', severityFilter.join(','));
     if (toolFilter.length > 0) qs.set('tool', toolFilter.join(','));
     if (statusFilter.length > 0) {
-      const apiStatuses = statusFilter.map((s) =>
-        s === 'Open' ? 'open' :
-        s === 'Risk Accepted' ? 'risk_accepted' :
-        s === 'False Positive' ? 'false_positive' :
-        s === 'Fixed' ? 'fixed' :
-        s === 'Duplicate' ? 'duplicate' : s
-      );
-      qs.set('status', apiStatuses.join(','));
+      qs.set('status', toApiStatuses(statusFilter).join(','));
     }
     if (sortField) {
       qs.set('sort', sortField);
@@ -224,14 +280,8 @@ export function FindingsPage() {
     }
     qs.set('columns', [...visibleColumns].join(','));
 
-    const token = localStorage.getItem('beast_token');
-    fetch(`/api/findings/export.csv?${qs.toString()}`, {
-      headers: token ? { Authorization: `Token ${token}` } : undefined,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Export failed: ${res.status}`);
-        return res.blob();
-      })
+    fetchApiRaw(`/api/findings/export.csv?${qs.toString()}`)
+      .then((res) => res.blob())
       .then((blob) => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -262,17 +312,10 @@ export function FindingsPage() {
   if (severityFilter.length > 0) findingParams.severity = severityFilter.join(',');
   if (toolFilter.length > 0) findingParams.tool = toolFilter.join(',');
   if (statusFilter.length > 0) {
-    // Map display names to API values
-    const apiStatuses = statusFilter.map((s) => {
-      if (s === 'Open') return 'open';
-      if (s === 'Risk Accepted') return 'risk_accepted';
-      if (s === 'False Positive') return 'false_positive';
-      if (s === 'Fixed') return 'fixed';
-      if (s === 'Duplicate') return 'duplicate';
-      return s;
-    });
-    findingParams.status = apiStatuses.join(',');
+    findingParams.status = toApiStatuses(statusFilter).join(',');
   }
+
+  if (debouncedSearch) findingParams.search = debouncedSearch;
 
   if (sortField) {
     findingParams.sort = sortField;
@@ -294,7 +337,15 @@ export function FindingsPage() {
     label: sourceDisplayLabel(s),
     icon: <ProviderIcon provider={s.provider} className="beast-filter-opt-icon" />,
   }));
-  const toolOptions = TOOLS.map((tool) => ({ value: tool.key, label: tool.displayName }));
+  // Group tool options by category so the filter shows category headers with a
+  // select-all checkbox. Ordered by TOOL_CATEGORIES, then tools within each.
+  const toolOptions = TOOL_CATEGORIES.flatMap((cat) =>
+    TOOLS.filter((tool) => tool.category === cat.key).map((tool) => ({
+      value: tool.key,
+      label: tool.displayName,
+      group: cat.displayName,
+    })),
+  );
   const duplicateOptions = [
     { value: 'yes', label: t('findings.showDuplicates', 'Show duplicates') },
     { value: 'no', label: t('findings.hideDuplicates', 'Hide duplicates') },
@@ -305,10 +356,10 @@ export function FindingsPage() {
     { key: 'status', label: t('findings.status'), multi: true, options: statusOptions },
     { key: 'tool', label: t('findings.tool'), multi: true, options: toolOptions },
     ...(repoOptions.length > 0
-      ? [{ key: 'repository', label: t('findings.repository'), options: repoOptions }]
+      ? [{ key: 'repository', label: t('findings.repository'), searchable: true, options: repoOptions }]
       : []),
     ...(sourceOptions.length > 0
-      ? [{ key: 'source', label: t('findings.source', 'Source'), options: sourceOptions }]
+      ? [{ key: 'source', label: t('findings.source', 'Source'), searchable: true, options: sourceOptions }]
       : []),
     { key: 'duplicates', label: t('findings.duplicates', 'Duplicates'), options: duplicateOptions },
   ];
@@ -339,23 +390,15 @@ export function FindingsPage() {
     activeFilters.push({ key: 'duplicates', value: showDuplicates, label: opt?.label ?? '', columnLabel: t('findings.duplicates', 'Duplicates') });
   }
 
+  // The URL sync effect above mirrors every filter change, so handlers only
+  // touch state.
   const handleFilterAdd = (columnKey: string, value: string) => {
     setPage(0);
     if (columnKey === 'severity') setSeverityFilter(value.split(','));
     else if (columnKey === 'status') setStatusFilter(value.split(','));
-    else if (columnKey === 'tool') {
-      const vals = value.split(',');
-      setToolFilter(vals);
-      setSearchParams((p) => { p.set('tool', value); return p; }, { replace: true });
-    }
-    else if (columnKey === 'repository') {
-      setRepoFilter(Number(value));
-      setSearchParams((p) => { p.set('repository', value); return p; }, { replace: true });
-    }
-    else if (columnKey === 'source') {
-      setSourceFilter(Number(value));
-      setSearchParams((p) => { p.set('source', value); return p; }, { replace: true });
-    }
+    else if (columnKey === 'tool') setToolFilter(value.split(','));
+    else if (columnKey === 'repository') setRepoFilter(Number(value));
+    else if (columnKey === 'source') setSourceFilter(Number(value));
     else if (columnKey === 'duplicates') setShowDuplicates(value as 'yes' | 'no');
   };
 
@@ -363,27 +406,15 @@ export function FindingsPage() {
     setPage(0);
     if (columnKey === 'severity') setSeverityFilter([]);
     else if (columnKey === 'status') setStatusFilter([]);
-    else if (columnKey === 'tool') {
-      setToolFilter([]);
-      setSearchParams((p) => { p.delete('tool'); return p; }, { replace: true });
-    }
-    else if (columnKey === 'repository') {
-      setRepoFilter(null);
-      setSearchParams((p) => { p.delete('repository'); return p; }, { replace: true });
-    }
-    else if (columnKey === 'source') {
-      setSourceFilter(null);
-      setSearchParams((p) => { p.delete('source'); return p; }, { replace: true });
-    }
+    else if (columnKey === 'tool') setToolFilter([]);
+    else if (columnKey === 'repository') setRepoFilter(null);
+    else if (columnKey === 'source') setSourceFilter(null);
     else if (columnKey === 'duplicates') setShowDuplicates(null);
   };
 
-  // Client-side search (title + filePath)
-  const displayResults = findings?.results.filter((f) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return f.title.toLowerCase().includes(q) || (f.filePath?.toLowerCase().includes(q));
-  });
+  // Search is applied server-side (see `search` in findingParams), so the
+  // count and pagination always match what's displayed.
+  const displayResults = findings?.results;
 
   return (
     <ErrorBoundary>
@@ -394,7 +425,7 @@ export function FindingsPage() {
             <p className="beast-page-subtitle">{t('findings.subtitle')}</p>
           </div>
           {findings && (
-            <span className="beast-pagination-info">{findings.count} {t('common.results')}</span>
+            <span className="beast-pagination-info">{t('common.resultsCount', { count: findings.count })}</span>
           )}
         </div>
 
@@ -561,7 +592,7 @@ function FindingRow({
         <td><StatusBadge finding={finding} /></td>
       )}
       {visibleColumns.has('date') && (
-        <td className="beast-td-date">{formatDateShort(finding.createdAt)}</td>
+        <td className="beast-td-date">{formatDate(finding.createdAt)}</td>
       )}
     </tr>
   );

@@ -1,4 +1,5 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
+import { eq } from 'drizzle-orm';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import multipart from '@fastify/multipart';
@@ -19,8 +20,6 @@ import { workspaceRoutes } from './routes/workspaces.ts';
 import { workspaceDataRoutes } from './routes/workspace-data.ts';
 import { sourceRoutes } from './routes/sources.ts';
 import { workspaceEventRoutes } from './routes/workspace-events.ts';
-import { pullRequestRoutes } from './routes/pull-requests.ts';
-import { webhookRoutes } from './routes/webhooks.ts';
 import { memberRoutes } from './routes/members.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { workspaceToolRoutes } from './routes/workspace-tools.ts';
@@ -29,10 +28,116 @@ import { workerStatusRoutes } from './routes/worker-status.ts';
 import { highlightsRoutes } from './routes/highlights.ts';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { db } from './db/index.ts';
+import { scans } from './db/schema.ts';
 import { createWorkspaceEvent } from './orchestrator/entities.ts';
 import { authHook, registerSafetyNet } from './middleware/auth.ts';
 import { ForbiddenError } from './lib/authorize.ts';
 import { PROVIDER_SECRETS } from './lib/provider-secrets.ts';
+
+// ── Process crash handlers ───────────────────────────────────
+// A stray rejection in a setInterval (workers) or a plugin (API) must never
+// zombify the process silently — log loudly and exit so docker restarts it.
+
+export function fatalCrashHandler(kind: string): (err: unknown) => void {
+  return (err: unknown) => {
+    console.error(`[FATAL] ${kind} — process will exit(1) so it can be restarted:`, err);
+    process.exit(1);
+  };
+}
+
+export function installCrashHandlers(): void {
+  process.on('unhandledRejection', fatalCrashHandler('unhandledRejection'));
+  process.on('uncaughtException', fatalCrashHandler('uncaughtException'));
+}
+
+// ── Global API error handler ─────────────────────────────────
+
+/**
+ * Best-effort workspace attribution for API errors. Checks explicit
+ * workspace_id in query/params/body first, then common URL patterns:
+ *   /api/workspaces/:id…  — the param IS the workspace id
+ *   /api/scans/:uuid…     — resolved via the scan row (single indexed lookup)
+ * Returns undefined when the error cannot be attributed.
+ */
+async function resolveWorkspaceIdForError(request: FastifyRequest): Promise<number | undefined> {
+  const query = (request.query as Record<string, unknown>) ?? {};
+  const params = (request.params as Record<string, unknown>) ?? {};
+  const body = (typeof request.body === 'object' && request.body !== null)
+    ? (request.body as Record<string, unknown>)
+    : {};
+
+  const rawId = query.workspace_id ?? params.workspace_id ?? body.workspace_id ?? body.workspaceId;
+  if (rawId) {
+    const parsed = Number(rawId);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+
+  const wsMatch = request.url.match(/^\/api\/workspaces\/(\d+)(?:[/?]|$)/);
+  if (wsMatch) return Number(wsMatch[1]);
+
+  const scanMatch = request.url.match(/^\/api\/scans\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?]|$)/i);
+  if (scanMatch) {
+    try {
+      const [scan] = await db.select({ workspaceId: scans.workspaceId })
+        .from(scans)
+        .where(eq(scans.id, scanMatch[1]));
+      if (scan?.workspaceId) return scan.workspaceId;
+    } catch (lookupErr) {
+      // Attribution is best-effort — never mask the original error, but say why it's unattributed
+      console.error('[app] Workspace attribution lookup failed for', request.url, ':', lookupErr instanceof Error ? lookupErr.message : lookupErr);
+    }
+  }
+
+  return undefined;
+}
+
+export async function apiErrorHandler(
+  error: Error & { statusCode?: number },
+  request: FastifyRequest,
+  reply: FastifyReply,
+) {
+  // Handle ForbiddenError from authorize()
+  if (error instanceof ForbiddenError) {
+    return reply.status(403).send({ error: error.message });
+  }
+
+  const statusCode = error.statusCode ?? 500;
+  const workspaceId = await resolveWorkspaceIdForError(request);
+
+  // Loud, structured log line — always emitted, attributable or not
+  request.log.error(
+    {
+      err: error,
+      method: request.method,
+      url: request.url,
+      statusCode,
+      userId: request.user?.id ?? null,
+      workspaceId: workspaceId ?? null,
+    },
+    `[api_error] ${request.method} ${request.url} -> ${statusCode}: ${error.message}`,
+  );
+
+  // Log to workspace events if we have a workspace context
+  if (workspaceId) {
+    try {
+      await createWorkspaceEvent(workspaceId, 'api_error', {
+        method: request.method,
+        url: request.url,
+        statusCode,
+        message: error.message,
+        stack: error.stack ?? null,
+      });
+    } catch (eventErr) {
+      console.error('[app] Failed to log API error to workspace events:', eventErr instanceof Error ? eventErr.message : eventErr);
+    }
+  }
+
+  return reply.status(statusCode).send({
+    statusCode,
+    error: error.name ?? 'Error',
+    message: error.message,
+  });
+}
 
 export function buildApp() {
   const encryptionKey = process.env.ENCRYPTION_KEY ?? '';
@@ -63,52 +168,8 @@ export function buildApp() {
   // Deny-by-default safety net — catches handlers that forgot to call authorize()
   registerSafetyNet(app);
 
-  // Global error handler — log errors to workspace events when workspace_id is available
-  app.setErrorHandler(async (error: Error & { statusCode?: number }, request, reply) => {
-    // Handle ForbiddenError from authorize()
-    if (error instanceof ForbiddenError) {
-      return reply.status(403).send({ error: error.message });
-    }
-
-    request.log.error(error);
-
-    // Try to extract workspace_id from query, params, or body
-    let workspaceId: number | undefined;
-    const query = (request.query as Record<string, unknown>) ?? {};
-    const params = (request.params as Record<string, unknown>) ?? {};
-    const body = (typeof request.body === 'object' && request.body !== null)
-      ? (request.body as Record<string, unknown>)
-      : {};
-
-    const rawId = query.workspace_id ?? params.workspace_id ?? body.workspace_id ?? body.workspaceId;
-    if (rawId) {
-      const parsed = Number(rawId);
-      if (!isNaN(parsed) && parsed > 0) workspaceId = parsed;
-    }
-
-    const statusCode = error.statusCode ?? 500;
-
-    // Log to workspace events if we have a workspace context
-    if (workspaceId) {
-      try {
-        await createWorkspaceEvent(workspaceId, 'api_error', {
-          method: request.method,
-          url: request.url,
-          statusCode,
-          message: error.message,
-          stack: error.stack ?? null,
-        });
-      } catch (eventErr) {
-        console.error('[app] Failed to log API error to workspace events:', eventErr instanceof Error ? eventErr.message : eventErr);
-      }
-    }
-
-    return reply.status(statusCode).send({
-      statusCode,
-      error: error.name ?? 'Error',
-      message: error.message,
-    });
-  });
+  // Global error handler — loud structured logging + best-effort workspace attribution
+  app.setErrorHandler(apiErrorHandler);
 
   // Routes
   app.register(healthRoutes, { prefix: '/api' });
@@ -121,8 +182,6 @@ export function buildApp() {
   app.register(workspaceDataRoutes, { prefix: '/api' });
   app.register(sourceRoutes, { prefix: '/api' });
   app.register(workspaceEventRoutes, { prefix: '/api' });
-  app.register(pullRequestRoutes, { prefix: '/api' });
-  app.register(webhookRoutes, { prefix: '/api' });
   app.register(memberRoutes, { prefix: '/api' });
   app.register(adminRoutes, { prefix: '/api' });
   app.register(workspaceToolRoutes, { prefix: '/api' });

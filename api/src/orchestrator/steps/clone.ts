@@ -1,9 +1,12 @@
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import type { PipelineContext, StepInput, CloneOutput } from '../pipeline-types.ts';
 import { SCANNER_UID, SCANNER_GID } from '../pipeline-types.ts';
 import { getRepoCloneCredentials } from '../entities.ts';
 import { buildAuthCloneUrl } from '../git-providers.ts';
+import { withRetry } from '../../lib/retry.ts';
+
+const GIT_TIMEOUT_MS = 300_000; // 5 min per git command
 
 function ensureScanDir(dir: string): void {
   if (fs.existsSync(dir)) {
@@ -16,13 +19,19 @@ function ensureScanDir(dir: string): void {
 export async function runCloneStep({ ctx }: StepInput): Promise<Record<string, unknown>> {
   // Resolve authenticated clone URL if credentials exist
   if (ctx.cloneUrl) {
-    const creds = await getRepoCloneCredentials(ctx.repoName, ctx.repoUrl);
+    const creds = await getRepoCloneCredentials(ctx.repoName, ctx.repoUrl, ctx.repositoryId || undefined);
     if (creds) {
       ctx.cloneUrl = buildAuthCloneUrl(creds.provider, ctx.cloneUrl, creds.token, creds.email);
     }
   }
 
   await cloneRepo(ctx);
+
+  // The analyzer runs on claude-runner as the `scanner` user and writes
+  // repo-profile.md into the repo base dir (/workspace/src-<sourceId>/<repo>).
+  // That dir is created here by root (Node), so chown it to scanner — otherwise
+  // the profile write silently fails and the Repository Profile button stays disabled.
+  try { fs.chownSync(ctx.repoBaseDir, SCANNER_UID, SCANNER_GID); } catch { /* non-fatal in dev */ }
 
   ensureScanDir(ctx.toolsDir);
   ensureScanDir(ctx.agentDir);
@@ -36,7 +45,7 @@ export async function runCloneStep({ ctx }: StepInput): Promise<Record<string, u
 }
 
 export async function cloneRepo(ctx: PipelineContext): Promise<void> {
-  const { cloneUrl, repoPath, branch, commitHash } = ctx;
+  const { cloneUrl, repoPath, branch, commitHash, cancelSignal } = ctx;
 
   if (!cloneUrl) {
     // Local path mode — validate the path exists
@@ -47,27 +56,51 @@ export async function cloneRepo(ctx: PipelineContext): Promise<void> {
   }
 
   if (repoExists(repoPath)) {
-    // Existing repo — fetch + checkout
-    execGit(`git fetch --all --prune`, repoPath);
+    // Existing repo — restore auth on the remote for fetch, then checkout
+    await execGit(['remote', 'set-url', 'origin', cloneUrl], repoPath, cancelSignal);
+    await execGit(['fetch', '--all', '--prune'], repoPath, cancelSignal);
 
     if (commitHash) {
-      execGit(`git checkout ${commitHash}`, repoPath);
+      await execGit(['checkout', commitHash], repoPath, cancelSignal);
     } else if (branch) {
-      execGit(`git checkout ${branch}`, repoPath);
-      execGit(`git pull origin ${branch}`, repoPath);
+      await execGit(['checkout', branch], repoPath, cancelSignal);
+      await execGit(['pull', 'origin', branch], repoPath, cancelSignal);
     } else {
-      execGit(`git pull`, repoPath);
+      await execGit(['pull'], repoPath, cancelSignal);
     }
   } else {
     // Fresh clone
     fs.mkdirSync(ctx.workDir, { recursive: true });
-    execGitWithDnsRetry(`git clone "${cloneUrl}" "${repoPath}"`);
+    await execGitWithDnsRetry(['clone', cloneUrl, repoPath], undefined, cancelSignal);
 
     if (commitHash) {
-      execGit(`git checkout ${commitHash}`, repoPath);
+      await execGit(['checkout', commitHash], repoPath, cancelSignal);
     } else if (branch) {
-      execGit(`git checkout ${branch}`, repoPath);
+      await execGit(['checkout', branch], repoPath, cancelSignal);
     }
+  }
+
+  // Scrub the access token from .git/config. buildAuthCloneUrl embeds it in the
+  // remote URL, which git persists in plaintext — the scanner then flags it as a
+  // leaked secret (a false positive about our own clone mechanism). Reset the
+  // remote to the credential-free URL once all fetching is done.
+  const cleanUrl = stripCredentials(cloneUrl);
+  if (cleanUrl !== cloneUrl) {
+    await execGit(['remote', 'set-url', 'origin', cleanUrl], repoPath, cancelSignal);
+  }
+}
+
+// Removes userinfo (user:token@) from an https clone URL so it isn't persisted
+// in .git/config. SSH/other URLs are returned unchanged.
+export function stripCredentials(url: string): string {
+  try {
+    const u = new URL(url);
+    if (!u.username && !u.password) return url;
+    u.username = '';
+    u.password = '';
+    return u.toString();
+  } catch {
+    return url.replace(/^([a-z]+:\/\/)[^/@]*@/i, '$1');
   }
 }
 
@@ -78,41 +111,55 @@ function isTransientDnsError(message: string): boolean {
 // Retries clone on transient DNS errors. Docker's embedded resolver
 // (127.0.0.11) occasionally returns SERVFAIL — surfacing those to the user as
 // a hard failure means they re-run the whole scan for a problem that resolves
-// itself in seconds.
-function execGitWithDnsRetry(command: string, cwd?: string, attempts = 3): void {
-  const delaysMs = [2000, 5000];
-  let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      execGit(command, cwd);
-      return;
-    } catch (err: any) {
-      lastErr = err;
-      if (!isTransientDnsError(err?.message ?? '')) throw err;
-      const delay = delaysMs[i];
-      if (delay === undefined) break;
-      console.warn(`[clone] DNS transient (attempt ${i + 1}/${attempts}); retrying in ${delay}ms: ${err.message.slice(0, 200)}`);
-      const end = Date.now() + delay;
-      while (Date.now() < end) { /* busy wait — execSync is sync, can't await */ }
-    }
-  }
-  throw lastErr;
+// itself in seconds. Backoff sleeps are async (withRetry) so the worker event
+// loop keeps servicing cancel polling and timers while waiting.
+async function execGitWithDnsRetry(args: string[], cwd?: string, signal?: AbortSignal, attempts = 3): Promise<void> {
+  let attempt = 0;
+  await withRetry(
+    () => {
+      attempt += 1;
+      return execGit(args, cwd, signal);
+    },
+    {
+      attempts,
+      backoffMs: 2000, // 2s, then 4s (exponential)
+      shouldRetry: (err) => {
+        if (signal?.aborted) return false;
+        const message = err instanceof Error ? err.message : String(err);
+        if (!isTransientDnsError(message)) return false;
+        console.warn(`[clone] DNS transient (attempt ${attempt}/${attempts}); retrying with backoff: ${message.slice(0, 200)}`);
+        return true;
+      },
+    },
+  );
 }
 
 function repoExists(repoPath: string): boolean {
   return fs.existsSync(`${repoPath}/.git`);
 }
 
-function execGit(command: string, cwd?: string): void {
-  try {
-    execSync(command, {
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 300_000, // 5 min
+const CANCEL_MESSAGE = 'Git command aborted by cancellation';
+
+// Async git execution — the worker event loop stays free during clones, and
+// the AbortSignal kills the in-flight git process the moment a scan is
+// cancelled. Args are passed as an array (no shell), so URLs need no quoting.
+function execGit(args: string[], cwd?: string, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error(CANCEL_MESSAGE));
+      return;
+    }
+    execFile('git', args, { cwd, timeout: GIT_TIMEOUT_MS, signal }, (err, stdout, stderr) => {
+      if (!err) {
+        resolve();
+        return;
+      }
+      if (signal?.aborted || err.name === 'AbortError' || err.code === 'ABORT_ERR') {
+        reject(new Error(CANCEL_MESSAGE));
+        return;
+      }
+      const detail = String(stderr ?? '') || String(stdout ?? '');
+      reject(new Error(`Clone failed (exit ${err.code}): ${detail}`));
     });
-  } catch (err: any) {
-    const stderr = err.stderr?.toString() || '';
-    const stdout = err.stdout?.toString() || '';
-    throw new Error(`Clone failed (exit ${err.status}): ${stderr || stdout}`);
-  }
+  });
 }

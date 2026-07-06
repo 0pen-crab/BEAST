@@ -8,6 +8,7 @@ import {
   contributorDailyActivity,
   contributorAssessments,
   findings,
+  teams,
 } from '../db/schema.ts';
 import { authorize, authorizePublic, ForbiddenError } from '../lib/authorize.ts';
 import { queueFeedbackCompilation } from '../orchestrator/feedback-worker.ts';
@@ -589,7 +590,7 @@ export const contributorRoutes: FastifyPluginAsyncZod = async (app) => {
         team_id: z.number().positive().nullable(),
       }),
     },
-  }, async (request) => {
+  }, async (request, reply) => {
     const { ids, team_id } = request.body;
 
     // Resolve workspace from first contributor
@@ -598,13 +599,31 @@ export const contributorRoutes: FastifyPluginAsyncZod = async (app) => {
       .where(eq(contributors.id, ids[0]))
       .limit(1);
     if (!first) throw new ForbiddenError('Contributor not found');
-    await authorize(request, first.wsId, 'workspace_admin');
+    const wsId = first.wsId;
+    await authorize(request, wsId, 'workspace_admin');
 
-    await db.update(contributors)
+    // Target team must live in the SAME workspace as the contributors.
+    if (team_id !== null) {
+      const [team] = await db.select({ workspaceId: teams.workspaceId })
+        .from(teams)
+        .where(eq(teams.id, team_id))
+        .limit(1);
+      if (!team || team.workspaceId !== wsId) {
+        return reply.status(400).send({ error: 'team_id does not belong to this workspace' });
+      }
+    }
+
+    // Constrain the UPDATE to the authorized workspace — authorization was
+    // resolved from ids[0] only, so foreign-workspace ids must stay untouched.
+    const updatedRows = await db.update(contributors)
       .set({ teamId: team_id, updatedAt: new Date() })
-      .where(inArray(contributors.id, ids));
+      .where(and(
+        inArray(contributors.id, ids),
+        eq(contributors.workspaceId, wsId),
+      ))
+      .returning({ id: contributors.id });
 
-    return { updated: ids.length };
+    return { updated: updatedRows.length };
   });
 
   // ── POST /api/contributors/:id/recompile-feedback ────────────────
@@ -631,6 +650,11 @@ export const contributorRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   }, async (request, reply) => {
     const { source_id, target_id } = request.body;
+
+    // Self-merge would walk the delete path and destroy the contributor.
+    if (source_id === target_id) {
+      return reply.status(400).send({ error: 'cannot merge a contributor into itself' });
+    }
 
     // Fetch both contributors
     const sourceRows = await db.select().from(contributors).where(eq(contributors.id, source_id));

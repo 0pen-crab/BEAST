@@ -257,7 +257,8 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
           (case when f.severity = 'Critical' then 10 when f.severity = 'High' then 5 when f.severity = 'Medium' then 2 when f.severity = 'Low' then 0.5 else 0 end)
           * (case when f.tool in ('gitleaks','trufflehog','gitguardian','trivy-secrets') then 1.2 when f.tool = 'beast' then 1.0 else 0.8 end)
         ), 0) / 5.0)::numeric, 1)) from findings f where f.repository_id = ${repositories.id} and f.status = 'open')::float`,
-        lastScannedAt: sql<string | null>`(select max(s.created_at) from scans s where s.repository_id = ${repositories.id})`,
+        // Completed scans only — a queued/running scan must not populate "last scanned".
+        lastScannedAt: sql<string | null>`(select max(s.completed_at) from scans s where s.repository_id = ${repositories.id} and s.status = 'completed')`,
       }).from(repositories)
         .innerJoin(teams, eq(teams.id, repositories.teamId))
         .where(conditions.length ? and(...conditions) : undefined)
@@ -277,7 +278,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         }),
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const { ids, team_id, status } = request.body;
 
       // Fetch first repo to resolve workspace
@@ -287,21 +288,42 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         .where(eq(repositories.id, ids[0]))
         .limit(1);
       if (wsRows.length === 0) throw new ForbiddenError('Repository not found');
-      await authorize(request, wsRows[0].wsId, 'workspace_admin');
+      const wsId = wsRows[0].wsId;
+      await authorize(request, wsId, 'workspace_admin');
 
+      // Target team must live in the SAME workspace — otherwise a workspace admin
+      // could move repos into a foreign workspace's team.
       if (team_id) {
-        await db.update(repositories)
-          .set({ teamId: team_id, updatedAt: new Date() })
-          .where(inArray(repositories.id, ids));
+        const teamRows = await db.select({ workspaceId: teams.workspaceId })
+          .from(teams)
+          .where(eq(teams.id, team_id))
+          .limit(1);
+        if (teamRows.length === 0 || teamRows[0].workspaceId !== wsId) {
+          return reply.status(400).send({ error: 'team_id does not belong to this workspace' });
+        }
       }
 
-      if (status) {
-        await db.update(repositories)
-          .set({ status, updatedAt: new Date() })
-          .where(inArray(repositories.id, ids));
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (team_id) updates.teamId = team_id;
+      if (status) updates.status = status;
+      if (Object.keys(updates).length === 1) {
+        return { updated: 0 };
       }
 
-      return { updated: ids.length };
+      // Constrain the UPDATE to repos of the AUTHORIZED workspace only.
+      // Authorization was resolved from ids[0]; without this subquery any
+      // foreign-workspace ids smuggled into the list would be updated too.
+      const allowedRepoIds = db.select({ id: repositories.id })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(and(inArray(repositories.id, ids), eq(teams.workspaceId, wsId)));
+
+      const updatedRows = await db.update(repositories)
+        .set(updates)
+        .where(inArray(repositories.id, allowedRepoIds))
+        .returning({ id: repositories.id });
+
+      return { updated: updatedRows.length };
     },
   );
 
@@ -324,7 +346,8 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
           (case when f.severity = 'Critical' then 10 when f.severity = 'High' then 5 when f.severity = 'Medium' then 2 when f.severity = 'Low' then 0.5 else 0 end)
           * (case when f.tool in ('gitleaks','trufflehog','gitguardian','trivy-secrets') then 1.2 when f.tool = 'beast' then 1.0 else 0.8 end)
         ), 0) / 5.0)::numeric, 1)) from findings f where f.repository_id = ${repositories.id} and f.status = 'open')::float`,
-        lastScannedAt: sql<string | null>`(select max(s.created_at) from scans s where s.repository_id = ${repositories.id})`,
+        // Completed scans only — a queued/running scan must not populate "last scanned".
+        lastScannedAt: sql<string | null>`(select max(s.completed_at) from scans s where s.repository_id = ${repositories.id} and s.status = 'completed')`,
       }).from(repositories)
         .innerJoin(teams, eq(teams.id, repositories.teamId))
         .where(eq(repositories.id, id));
@@ -428,6 +451,81 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // GET /api/repositories/:id/ai-traces — raw stream-json traces for every
+  // Claude invocation of the most recent scan. Used by the dashboard's
+  // "AI Trace" tab to visualise what the agents actually did.
+  app.get(
+    '/repositories/:id/ai-traces',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const wsRows = await db.select({ wsId: teams.workspaceId })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(eq(repositories.id, id))
+        .limit(1);
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+
+      await authorize(request, wsRows[0].wsId, 'member');
+
+      // Latest scan of any type.
+      const scanRows = await db.select({
+        id: scans.id,
+        scanType: scans.scanType,
+        status: scans.status,
+        startedAt: scans.startedAt,
+        completedAt: scans.completedAt,
+        createdAt: scans.createdAt,
+        error: scans.error,
+      })
+        .from(scans)
+        .where(eq(scans.repositoryId, id))
+        .orderBy(desc(scans.createdAt))
+        .limit(1);
+
+      if (scanRows.length === 0) {
+        return { scan: null, traces: [] };
+      }
+
+      const scan = scanRows[0];
+
+      const rows = await db.select({
+        fileName: scanFiles.fileName,
+        content: scanFiles.content,
+        createdAt: scanFiles.createdAt,
+      }).from(scanFiles)
+        .where(and(
+          eq(scanFiles.scanId, scan.id),
+          eq(scanFiles.fileType, 'ai-trace'),
+        ))
+        .orderBy(asc(scanFiles.createdAt));
+
+      return {
+        scan: {
+          id: scan.id,
+          scan_type: scan.scanType,
+          status: scan.status,
+          started_at: scan.startedAt as unknown as string | null,
+          completed_at: scan.completedAt as unknown as string | null,
+          created_at: scan.createdAt as unknown as string,
+          error: scan.error,
+        },
+        traces: rows.map(r => ({
+          wave: (r.fileName || '').replace(/\.jsonl$/, ''),
+          file_name: r.fileName,
+          content: r.content || '',
+          created_at: r.createdAt as unknown as string,
+        })),
+      };
+    },
+  );
+
   // DELETE /api/repositories/:id
   app.delete(
     '/repositories/:id',
@@ -465,7 +563,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
     {
       schema: {
         querystring: z.object({
-          scan_id: z.string().optional(),
+          scan_id: z.string().uuid().optional(),
           repository_id: z.coerce.number().positive().optional(),
         }),
       },
@@ -567,6 +665,10 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
           repository_id: z.coerce.number().positive().optional(),
           source_id: z.coerce.number().positive().optional(),
           test_id: z.coerce.number().positive().optional(),
+          search: z.string().optional(),
+          // String enum, NOT z.coerce.boolean() — Boolean('false') is true,
+          // which would silently invert the filter's meaning.
+          duplicate: z.enum(['true', 'false']).optional(),
           limit: z.coerce.number().min(1).max(500).default(50),
           offset: z.coerce.number().min(0).default(0),
           sort: z.enum(['priority', 'severity', 'created_at', 'updated_at', 'title', 'tool', 'status', 'cvss_score', 'repository', 'contributor', 'file_path']).default('priority'),
@@ -576,7 +678,7 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
-      const { workspace_id, severity, status, tool, repository_id, source_id, test_id, limit, offset, sort, dir, include_secrets } = request.query;
+      const { workspace_id, severity, status, tool, repository_id, source_id, test_id, search, duplicate, limit, offset, sort, dir, include_secrets } = request.query;
 
       if (workspace_id) {
         await authorize(request, workspace_id, 'member');
@@ -617,6 +719,19 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       if (test_id) {
         conditions.push(eq(findings.testId, test_id));
+      }
+      if (search) {
+        const pattern = `%${search}%`;
+        conditions.push(
+          sql`(${findings.title} ILIKE ${pattern} OR ${findings.filePath} ILIKE ${pattern})`,
+        );
+      }
+      // duplicate=false → hide duplicate-status findings (used by "Top findings"
+      // on the repo page); duplicate=true → only duplicates.
+      if (duplicate === 'false') {
+        conditions.push(ne(findings.status, 'duplicate'));
+      } else if (duplicate === 'true') {
+        conditions.push(eq(findings.status, 'duplicate'));
       }
 
       const whereClause = conditions.length ? and(...conditions) : undefined;
@@ -737,6 +852,12 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
         conditions.push(vals.length === 1 ? eq(findings.tool, vals[0]) : inArray(findings.tool, vals));
       }
       if (repository_id) conditions.push(eq(findings.repositoryId, repository_id));
+      if (source_id) {
+        // findings → repository → source (same filter as GET /findings)
+        const sourceRepoIds = db.select({ id: repositories.id }).from(repositories)
+          .where(eq(repositories.sourceId, source_id));
+        conditions.push(inArray(findings.repositoryId, sourceRepoIds));
+      }
       if (test_id) conditions.push(eq(findings.testId, test_id));
 
       const whereClause = conditions.length ? and(...conditions) : undefined;
@@ -974,7 +1095,9 @@ export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: {
         params: z.object({ id: z.coerce.number() }),
         body: z.object({
-          status: z.string().optional(),
+          // Must mirror chk_findings_status in the DB — anything else would
+          // bounce off the CHECK constraint as an opaque 500.
+          status: z.enum(['open', 'false_positive', 'fixed', 'risk_accepted', 'duplicate']).optional(),
           risk_accepted_reason: z.string().optional(),
         }),
       },

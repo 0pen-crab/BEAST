@@ -1,21 +1,39 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiFetch } from '@/api/client';
+import { toast } from '@/lib/toast';
 
 const POLL_INTERVAL_MS = 10_000;
+const HEALTH_TOAST_ID = 'health-status';
 
-interface HealthIssue {
+/** One broken system, as reported by GET /api/health (503 body). */
+interface SystemFailure {
+  system: 'db' | 'worker' | 'claude-runner' | 'security-tools';
   message: string;
-  source: string;
 }
 
 interface HealthState {
-  status: 'ok' | 'degraded' | 'unreachable';
-  issues: HealthIssue[];
+  status: 'ok' | 'degraded' | 'down' | 'unreachable';
+  failures: SystemFailure[];
 }
 
-const HEALTHY: HealthState = { status: 'ok', issues: [] };
+const HEALTHY: HealthState = { status: 'ok', failures: [] };
 
+function sameState(a: HealthState, b: HealthState) {
+  return (
+    a.status === b.status &&
+    a.failures.length === b.failures.length &&
+    a.failures.every(
+      (f, i) => f.system === b.failures[i].system && f.message === b.failures[i].message,
+    )
+  );
+}
+
+/**
+ * Headless health watcher — renders no DOM of its own. Polls /api/health and
+ * drives the shared toast stack: one persistent banner (updated in place)
+ * while the backend is unreachable/degraded, auto-dismissed on recovery.
+ */
 export function HealthNotification() {
   const { t } = useTranslation();
   const [state, setState] = useState<HealthState>(HEALTHY);
@@ -24,20 +42,24 @@ export function HealthNotification() {
   const check = useCallback(async () => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
+    let next: HealthState;
     try {
       const res = await apiFetch('/api/health');
       if (res.ok) {
-        setState(HEALTHY);
+        next = HEALTHY;
       } else {
         const body = await res.json().catch(() => ({}));
-        const issues = Array.isArray(body?.issues) ? body.issues as HealthIssue[] : [];
-        setState({ status: 'degraded', issues });
+        const failures = Array.isArray(body?.failures) ? body.failures as SystemFailure[] : [];
+        next = { status: body?.status === 'down' ? 'down' : 'degraded', failures };
       }
     } catch {
-      setState({ status: 'unreachable', issues: [] });
+      next = { status: 'unreachable', failures: [] };
     } finally {
       inFlightRef.current = false;
     }
+    // Keep the previous reference when nothing changed so the toast-sync
+    // effect below only fires on real health transitions.
+    setState((prev) => (sameState(prev, next) ? prev : next));
   }, []);
 
   useEffect(() => {
@@ -46,34 +68,28 @@ export function HealthNotification() {
     return () => clearInterval(id);
   }, [check]);
 
-  if (state.status === 'ok') return null;
+  useEffect(() => {
+    if (state.status === 'ok') {
+      toast.dismiss(HEALTH_TOAST_ID);
+      return;
+    }
+    // Generic title; one detail line per failed system, prefixed with the
+    // localized system name ("Worker: heartbeat is stale…").
+    const showsFailures = state.status !== 'unreachable' && state.failures.length > 0;
+    toast.show({
+      id: HEALTH_TOAST_ID,
+      kind: 'error',
+      persistent: true,
+      title: showsFailures ? t('health.degradedTitle') : t('health.title'),
+      message: showsFailures
+        ? state.failures.map((f) => `${t(`health.systems.${f.system}`, f.system)}: ${f.message}`)
+        : t('health.detail'),
+      action: { label: t('health.retry'), onClick: check },
+    });
+  }, [state, t, check]);
 
-  const showsIssues = state.status === 'degraded' && state.issues.length > 0;
-  const title = showsIssues ? t('health.degradedTitle') : t('health.title');
+  // Remove the banner if the watcher itself unmounts.
+  useEffect(() => () => toast.dismiss(HEALTH_TOAST_ID), []);
 
-  return (
-    <div className="beast-notification-stack">
-      <div className="beast-notification beast-notification-error" role="alert">
-        <div className="beast-notification-content">
-          <div className="beast-notification-title">{title}</div>
-          {showsIssues ? (
-            state.issues.map((issue, i) => (
-              <div key={i} className="beast-notification-detail">{issue.message}</div>
-            ))
-          ) : (
-            <div className="beast-notification-detail">{t('health.detail')}</div>
-          )}
-          <div className="beast-notification-actions">
-            <button
-              type="button"
-              className="beast-btn beast-btn-outline beast-btn-sm"
-              onClick={check}
-            >
-              {t('health.retry')}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 }

@@ -13,6 +13,7 @@ vi.mock('../orchestrator/entities.ts', () => ({
   updateMemberRole: vi.fn(),
   removeWorkspaceMember: vi.fn(),
   countWorkspaceAdmins: vi.fn(),
+  searchUsersNotInWorkspace: vi.fn(),
   findSessionByToken: vi.fn(),
 }));
 
@@ -46,6 +47,7 @@ import {
   listWorkspaceMembers,
   countWorkspaceAdmins,
   removeWorkspaceMember,
+  searchUsersNotInWorkspace,
 } from '../orchestrator/entities.ts';
 import bcrypt from 'bcrypt';
 
@@ -56,6 +58,7 @@ const mockGetMember = getWorkspaceMember as ReturnType<typeof vi.fn>;
 const mockListMembers = listWorkspaceMembers as ReturnType<typeof vi.fn>;
 const mockCountAdmins = countWorkspaceAdmins as ReturnType<typeof vi.fn>;
 const mockRemoveMember = removeWorkspaceMember as ReturnType<typeof vi.fn>;
+const mockSearchUsers = searchUsersNotInWorkspace as ReturnType<typeof vi.fn>;
 const mockHash = bcrypt.hash as ReturnType<typeof vi.fn>;
 
 let app: FastifyInstance;
@@ -160,6 +163,74 @@ describe('GET /api/workspaces/:id/members', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toHaveLength(1);
+  });
+});
+
+describe('GET /api/workspaces/:id/users/search', () => {
+  it('returns candidate users not already in the workspace', async () => {
+    mockSearchUsers.mockResolvedValueOnce([
+      { id: 5, username: 'alice@corp.com', displayName: 'Alice' },
+      { id: 6, username: 'bob@corp.com', displayName: 'Bob' },
+    ]);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/workspaces/1/users/search?q=al',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toHaveLength(2);
+    expect(mockSearchUsers).toHaveBeenCalledWith(1, 'al', 10, undefined);
+  });
+
+  it('defaults to an empty query and a limit of 10', async () => {
+    mockSearchUsers.mockResolvedValueOnce([]);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/workspaces/2/users/search',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockSearchUsers).toHaveBeenCalledWith(2, '', 10, undefined);
+  });
+
+  it('trims whitespace from the query', async () => {
+    mockSearchUsers.mockResolvedValueOnce([]);
+
+    await app.inject({
+      method: 'GET',
+      url: '/api/workspaces/1/users/search?q=%20%20bob%20%20',
+    });
+
+    expect(mockSearchUsers).toHaveBeenCalledWith(1, 'bob', 10, undefined);
+  });
+
+  it('honors an explicit limit', async () => {
+    mockSearchUsers.mockResolvedValueOnce([]);
+
+    await app.inject({
+      method: 'GET',
+      url: '/api/workspaces/1/users/search?q=a&limit=5',
+    });
+
+    expect(mockSearchUsers).toHaveBeenCalledWith(1, 'a', 5, undefined);
+  });
+
+  it('excludes the requesting user from candidates', async () => {
+    const scopedApp = Fastify();
+    scopedApp.setValidatorCompiler(validatorCompiler);
+    scopedApp.setSerializerCompiler(serializerCompiler);
+    scopedApp.addHook('onRequest', async (req) => { (req as any).user = { id: 42 }; });
+    await scopedApp.register(memberRoutes, { prefix: '/api' });
+    await scopedApp.ready();
+
+    mockSearchUsers.mockResolvedValueOnce([]);
+    await scopedApp.inject({ method: 'GET', url: '/api/workspaces/1/users/search?q=x' });
+
+    // The current user's id (42) is forwarded so the query can exclude self.
+    expect(mockSearchUsers).toHaveBeenCalledWith(1, 'x', 10, 42);
+    await scopedApp.close();
   });
 });
 

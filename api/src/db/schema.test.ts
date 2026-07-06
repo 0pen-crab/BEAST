@@ -41,4 +41,16 @@ describe('schema', () => {
   it('workspaceTools table is defined', () => {
     expect(schema.workspaceTools).toBeDefined();
   });
+
+  it('exports workerHeartbeat table with id and beatAt columns', () => {
+    expect(schema.workerHeartbeat).toBeDefined();
+    expect((schema.workerHeartbeat as any).id).toBeDefined();
+    expect((schema.workerHeartbeat as any).beatAt).toBeDefined();
+  });
+
+  it('exports WorkerHeartbeat and NewWorkerHeartbeat types', () => {
+    const _select: schema.WorkerHeartbeat | undefined = undefined;
+    const _insert: schema.NewWorkerHeartbeat | undefined = undefined;
+    expect(true).toBe(true);
+  });
 });

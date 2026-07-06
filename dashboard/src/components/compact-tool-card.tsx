@@ -61,7 +61,8 @@ export function CompactToolCard({ tool, enabled, onToggle }: CompactToolCardProp
               {tool.displayName}
             </h3>
             <p className="mt-0.5 text-xs text-th-text-muted line-clamp-2">
-              {tool.description}
+              {/* Translated by toolKey; the backend registry description is the fallback */}
+              {t(`tools.descriptions.${tool.key}`, tool.description)}
             </p>
           </div>
         </div>

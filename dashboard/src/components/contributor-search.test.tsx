@@ -51,6 +51,42 @@ describe('ContributorSearch', () => {
     );
   });
 
+  it('ignores a stale response that resolves after a newer request', async () => {
+    let resolveStale!: (value: unknown) => void;
+    const stale = new Promise((r) => { resolveStale = r; });
+    fetchMock
+      .mockImplementationOnce(() => stale) // first (slow) request
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          count: 1,
+          results: [{ id: 2, displayName: 'Fresh', emails: ['fresh@test.com'] }],
+        }),
+      });
+
+    render(<ContributorSearch workspaceId={1} excludeIds={[]} onSelect={mockOnSelect} />);
+    const input = screen.getByPlaceholderText('Search by name or email...');
+    fireEvent.change(input, { target: { value: 'old query' } });
+    // Let the debounce fire so the slow request is actually dispatched
+    await new Promise((r) => setTimeout(r, 350));
+    fireEvent.change(input, { target: { value: 'fresh query' } });
+
+    await waitFor(() => expect(screen.getByText('Fresh')).toBeDefined());
+
+    // The stale (earlier) response arrives late — it must NOT overwrite fresh results
+    resolveStale({
+      ok: true,
+      json: async () => ({
+        count: 1,
+        results: [{ id: 1, displayName: 'Stale', emails: ['stale@test.com'] }],
+      }),
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.queryByText('Stale')).toBeNull();
+    expect(screen.getByText('Fresh')).toBeDefined();
+  });
+
   it('excludes specified contributor IDs from results', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

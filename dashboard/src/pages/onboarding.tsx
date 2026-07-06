@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useTheme } from '@/lib/theme';
 import { useWorkspace } from '@/lib/workspace';
-import { useToolRegistry, useUpdateWorkspaceTools, useValidateToken, useSources, useDeleteSource, useImportFromSource } from '@/api/hooks';
+import { useToolRegistry, useUpdateWorkspaceTools, useValidateToken, useSources, useDeleteSource, useImportFromSource, useUpdateAiSettings } from '@/api/hooks';
 import { StepProgress } from '@/components/sources/step-progress';
 import { SourceForm } from '@/components/sources/source-form';
 import { RepoPicker } from '@/components/sources/repo-picker';
@@ -163,7 +163,190 @@ function Step1({
   );
 }
 
-// ── Step 2: Configure tools ──────────────────────────────────
+// ── Step 2: AI Code Analysis ─────────────────────────────────
+
+type ScanDepth = 1500 | 500 | 100;
+type AIMode = 'quick' | 'standard' | 'deep';
+
+const AI_MODES: {
+  mode: AIMode;
+  depth: ScanDepth;
+  left: number;
+  top: number;
+  badge?: string;
+  badgeRed?: boolean;
+  axisLabel: string;
+}[] = [
+  { mode: 'quick',    depth: 1500, left: 10, top: 88, axisLabel: '×1'  },
+  { mode: 'standard', depth: 500,  left: 50, top: 50, badge: 'BALANCED',                  axisLabel: '×5'  },
+  { mode: 'deep',     depth: 100,  left: 90, top: 12, badge: 'BEAST MODE', badgeRed: true, axisLabel: '×10' },
+];
+
+// Clock SVG used in Y-axis tick labels alongside the dollar signs.
+function ClockIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" style={{ verticalAlign: '-1px' }}>
+      <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M8 4.5 V8 L10.5 9.5" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AIAnalysisStep({
+  workspaceId,
+  onContinue,
+}: {
+  workspaceId: number;
+  onContinue: () => void;
+}) {
+  const { t } = useTranslation();
+  const { refetchWorkspaces } = useWorkspace();
+  const updateAi = useUpdateAiSettings(workspaceId);
+  const [error, setError] = useState('');
+
+  // New workspaces always start with the recommended STANDARD preset and AI on.
+  // The user may then change the mode or toggle AI off.
+  const [aiEnabled, setAiEnabled] = useWizardStepState<boolean>(workspaceId, 'step2.aiEnabled', true);
+  const [selectedMode, setSelectedMode] = useWizardStepState<AIMode>(workspaceId, 'step2.mode', 'standard');
+
+  const selected = AI_MODES.find((m) => m.mode === selectedMode) ?? AI_MODES[1];
+
+  function handleContinue() {
+    setError('');
+    updateAi.mutate(
+      {
+        ai_analysis_enabled: aiEnabled,
+        ai_scanning_enabled: aiEnabled,
+        ai_triage_enabled: aiEnabled,
+        scan_depth: selected.depth,
+      },
+      {
+        onSuccess: () => {
+          refetchWorkspaces();
+          onContinue();
+        },
+        onError: (err: Error) => {
+          console.error('[onboarding] AI settings save failed:', err);
+          setError(err.message || 'Failed to save AI settings');
+        },
+      },
+    );
+  }
+
+  return (
+    <div className="beast-card">
+      {/* AI header */}
+      <div className="beast-ai-header">
+        <button
+          type="button"
+          className={cn('beast-ai-toggle', !aiEnabled && 'off')}
+          onClick={() => setAiEnabled(!aiEnabled)}
+          aria-label={t('onboarding.aiAnalysis.title')}
+          aria-pressed={aiEnabled}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="beast-ai-title">{t('onboarding.aiAnalysis.title')}</div>
+          <div className="beast-ai-sub">{t('onboarding.aiAnalysis.subtitle')}</div>
+        </div>
+      </div>
+
+      {aiEnabled ? (
+        <div className="beast-ai-body">
+          {/* Chart */}
+          <div className="beast-ai-chart">
+            <div className="beast-ai-plot">
+              <div className="beast-ai-chart-y-label">{t('onboarding.aiAnalysis.axisCost')} →</div>
+              <div className="beast-ai-chart-x-label">{t('onboarding.aiAnalysis.axisDepth')} →</div>
+              <div className="beast-ai-tick" style={{ top: '8%' }} />
+              <span className="beast-ai-tick-lbl" style={{ top: '8%' }}>
+                <span className="beast-ai-tick-dollar">$$$</span><ClockIcon /><ClockIcon /><ClockIcon />
+              </span>
+              <div className="beast-ai-tick" style={{ top: '50%' }} />
+              <span className="beast-ai-tick-lbl" style={{ top: '50%' }}>
+                <span className="beast-ai-tick-dollar">$$</span><ClockIcon /><ClockIcon />
+              </span>
+              <div className="beast-ai-tick" style={{ top: '92%' }} />
+              <span className="beast-ai-tick-lbl" style={{ top: '92%' }}>
+                <span className="beast-ai-tick-dollar">$</span><ClockIcon />
+              </span>
+
+              <div className="beast-ai-line">
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <line x1="10" y1="88" x2="90" y2="12" stroke="var(--color-beast-red)" strokeWidth="0.5" strokeDasharray="2,2" opacity="0.6" />
+                </svg>
+              </div>
+
+              {AI_MODES.map((m) => (
+                <button
+                  key={m.mode}
+                  type="button"
+                  data-testid={`ai-dot-${m.mode}`}
+                  className={cn('beast-ai-dot', selectedMode === m.mode && 'active')}
+                  style={{ left: `${m.left}%`, top: `${m.top}%` }}
+                  onClick={() => setSelectedMode(m.mode)}
+                  aria-label={t(`settings.scanDepth.${m.mode}.label`)}
+                  aria-pressed={selectedMode === m.mode}
+                />
+              ))}
+              {AI_MODES.map((m) => (
+                <span
+                  key={`${m.mode}-lbl`}
+                  className={cn('beast-ai-dot-label', selectedMode === m.mode && 'active')}
+                  style={{ left: `${m.left}%` }}
+                >
+                  {m.axisLabel}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Info card */}
+          <div className="beast-ai-info">
+            {selected.badge && (
+              <span className={cn('beast-ai-info-badge', selected.badgeRed && 'beast-ai-info-badge-red')}>
+                {selected.badge}
+              </span>
+            )}
+            <span className="beast-ai-info-title" data-testid="ai-mode-title">
+              {t(`settings.scanDepth.${selectedMode}.label`)}
+            </span>
+            <div className="beast-ai-info-tag">{t(`settings.scanDepth.${selectedMode}.tag`)}</div>
+            <p className="beast-ai-info-desc">{t(`onboarding.aiAnalysis.modes.${selectedMode}.desc`)}</p>
+            <dl className="beast-ai-info-specs">
+              <dt>{t('onboarding.aiAnalysis.specs.depth')}</dt>
+              <dd>{selected.depth}</dd>
+              <dt>{t('onboarding.aiAnalysis.specs.cost')}</dt>
+              <dd>{t(`onboarding.aiAnalysis.modes.${selectedMode}.cost`)}</dd>
+              <dt>{t('onboarding.aiAnalysis.specs.duration')}</dt>
+              <dd>{t(`onboarding.aiAnalysis.modes.${selectedMode}.duration`)}</dd>
+            </dl>
+          </div>
+        </div>
+      ) : (
+        <div className="beast-ai-off">
+          <div className="beast-ai-off-icon">{t('onboarding.aiAnalysis.off.label')}</div>
+          <p>{t('onboarding.aiAnalysis.off.desc')}</p>
+        </div>
+      )}
+
+      {/* Footer with continue */}
+      <div className="beast-ai-footer">
+        {error && <div className="beast-error beast-ai-footer-error">{error}</div>}
+        <button
+          type="button"
+          onClick={handleContinue}
+          disabled={updateAi.isPending}
+          className="beast-btn beast-btn-primary"
+        >
+          {updateAi.isPending ? t('onboarding.savingTools') : t('onboarding.aiAnalysis.continue')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 3: Configure tools ──────────────────────────────────
+// (was step 2 before AI Analysis was inserted)
 
 function ToolConfigStep({
   workspaceId,
@@ -179,10 +362,10 @@ function ToolConfigStep({
   const updateTools = useUpdateWorkspaceTools(workspaceId);
   const validateToken = useValidateToken(workspaceId);
 
-  const [enabled, setEnabled] = useWizardStepState<Record<string, boolean>>(workspaceId, 'step2.enabled', {});
+  const [enabled, setEnabled] = useWizardStepState<Record<string, boolean>>(workspaceId, 'step3.enabled', {});
   const [integrationStates, setIntegrationStates] = useWizardStepState<
     Record<string, { status: IntegrationStatus; error?: string }>
-  >(workspaceId, 'step2.integrations', {});
+  >(workspaceId, 'step3.integrations', {});
   const [initialized, setInitialized] = useState(false);
 
   if (!initialized && tools.length > 0 && Object.keys(enabled).length === 0) {
@@ -363,7 +546,7 @@ function ToolConfigStep({
   );
 }
 
-// ── Step 3: Connect source ───────────────────────────────────
+// ── Step 4: Connect source ───────────────────────────────────
 
 function SourceStep({
   workspaceId,
@@ -471,7 +654,7 @@ function SourceStep({
   );
 }
 
-// ── Step 4: Import repos ─────────────────────────────────────
+// ── Step 5: Import repos ─────────────────────────────────────
 
 type FetchStatus = 'pending' | 'fetching' | 'done' | 'error';
 
@@ -496,6 +679,7 @@ function ImportStep({
   const [fetchStates, setFetchStates] = useState<SourceFetchState[]>([]);
   const [fetching, setFetching] = useState(false);
   const [importedCount, setImportedCount] = useState<number | null>(null);
+  const [importFailures, setImportFailures] = useState<string[]>([]);
   const [selections, setSelections] = useState<Record<number, Set<string>>>({});
   const importMutation = useImportFromSource();
   const fetchedSourceIds = useRef<string>('');
@@ -512,6 +696,7 @@ function ImportStep({
     fetchedSourceIds.current = currentSourceIds;
     setFetching(true);
     setImportedCount(null);
+    setImportFailures([]);
     setSelections({});
     setFetchStates(sources.map(s => ({ source: s, status: 'pending' as FetchStatus, repos: [] })));
 
@@ -535,6 +720,7 @@ function ImportStep({
 
   async function handleImport() {
     let total = 0;
+    const failures: string[] = [];
     for (const [sourceIdStr, selected] of Object.entries(selections)) {
       if (selected.size === 0) continue;
       try {
@@ -542,9 +728,14 @@ function ImportStep({
           sourceId: Number(sourceIdStr), repos: Array.from(selected),
         });
         total += result.imported;
-      } catch { /* continue */ }
+      } catch {
+        const source = sources.find((s) => s.id === Number(sourceIdStr));
+        failures.push(source ? sourceDisplayLabel(source) : `#${sourceIdStr}`);
+      }
     }
-    const autoCount = autoImported.reduce((sum, s) => sum + Math.max(s.repos.length, 1), 0);
+    // Count only repos that were actually imported — never floor per source.
+    const autoCount = autoImported.reduce((sum, s) => sum + s.repos.filter((r) => r.imported).length, 0);
+    setImportFailures(failures);
     setImportedCount(total + autoCount);
   }
 
@@ -564,6 +755,11 @@ function ImportStep({
               </div>
             </div>
             <p className="text-sm font-medium text-th-text">{t('onboarding.importSuccess', { count: importedCount })}</p>
+            {importFailures.length > 0 && (
+              <div className="beast-error mt-4 text-left">
+                {t('onboarding.importFailedSources', 'Failed to import from: {{sources}}', { sources: importFailures.join(', ') })}
+              </div>
+            )}
           </div>
         }
         sidebar={<button onClick={onDone} className="beast-btn beast-btn-primary w-full">{t('onboarding.goToDashboard')}</button>}
@@ -591,7 +787,7 @@ function ImportStep({
                     {s.status === 'error' && <svg className="h-4 w-4 text-beast-red flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>}
                     {s.status === 'pending' && <div className="h-4 w-4 rounded-full border-2 border-th-border flex-shrink-0" />}
                     <span className={cn('text-sm', s.status === 'pending' ? 'text-th-text-muted' : 'text-th-text')}>
-                      {s.status === 'done' ? `${prov.label} (${label}) — ${s.repos.length} repos` : t('onboarding.fetchingRepos', { provider: prov.label, name: label })}
+                      {s.status === 'done' ? `${prov.label} (${label}) — ${t('common.reposCount', { count: s.repos.length })}` : t('onboarding.fetchingRepos', { provider: prov.label, name: label })}
                     </span>
                   </div>
                 );
@@ -645,7 +841,7 @@ function ImportStep({
                       )} />
                       <span className="text-sm text-th-text">{label}</span>
                       {count > 0 && (
-                        <span className="text-[11px] text-th-text-muted">{count} repos</span>
+                        <span className="text-[11px] text-th-text-muted">{t('common.reposCount', { count })}</span>
                       )}
                       <svg className="h-4 w-4 text-beast-red ml-auto flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
                     </div>
@@ -662,7 +858,7 @@ function ImportStep({
                 <div className="beast-card-title flex items-center gap-2">
                   <span className={prov.color}>{prov.label}</span>
                   <span className="text-th-text-muted font-normal">— {label}</span>
-                  <span className="text-[11px] text-th-text-muted font-normal ml-auto">{s.repos.length} repos</span>
+                  <span className="text-[11px] text-th-text-muted font-normal ml-auto">{t('common.reposCount', { count: s.repos.length })}</span>
                 </div>
                 <RepoPicker
                   repos={s.repos} sourceId={s.source.id} onImported={() => {}}
@@ -711,7 +907,7 @@ export function NewWorkspacePage() {
   // Parse /onboarding/workspaceId/step from wildcard
   const segments = (params['*'] ?? '').split('/').filter(Boolean);
   const urlWorkspaceId = segments[0] ? Number(segments[0]) : null;
-  const urlStep = segments[1] ? (Number(segments[1]) as 1 | 2 | 3 | 4) : null;
+  const urlStep = segments[1] ? (Number(segments[1]) as 1 | 2 | 3 | 4 | 5) : null;
 
   const [workspaceId, setWorkspaceId] = useState<number | null>(() => {
     if (!urlWorkspaceId) {
@@ -729,8 +925,8 @@ export function NewWorkspacePage() {
     }
     return urlWorkspaceId;
   });
-  const [step, setStepState] = useState<1 | 2 | 3 | 4>(
-    urlWorkspaceId && urlStep && urlStep >= 2 && urlStep <= 4 ? urlStep : urlWorkspaceId ? 2 : 1,
+  const [step, setStepState] = useState<1 | 2 | 3 | 4 | 5>(
+    urlWorkspaceId && urlStep && urlStep >= 2 && urlStep <= 5 ? urlStep : urlWorkspaceId ? 2 : 1,
   );
   // Track the highest step reached (persisted in localStorage)
   const [maxStep, setMaxStep] = useWizardMaxStep(
@@ -739,7 +935,7 @@ export function NewWorkspacePage() {
   );
 
   // Update URL when step or workspaceId changes
-  function setStep(newStep: 1 | 2 | 3 | 4) {
+  function setStep(newStep: 1 | 2 | 3 | 4 | 5) {
     setStepState(newStep);
     if (newStep > maxStep) setMaxStep(newStep);
     if (workspaceId) {
@@ -768,7 +964,7 @@ export function NewWorkspacePage() {
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
   function handleSourcesContinue() {
-    setStep(4);
+    setStep(5);
   }
 
   function handleDone() {
@@ -789,6 +985,7 @@ export function NewWorkspacePage() {
     { label: t('onboarding.step2'), status: getStepStatus(2) },
     { label: t('onboarding.step3'), status: getStepStatus(3) },
     { label: t('onboarding.step4'), status: getStepStatus(4) },
+    { label: t('onboarding.step5'), status: getStepStatus(5) },
   ];
 
   return (
@@ -839,7 +1036,7 @@ export function NewWorkspacePage() {
           <StepProgress
             steps={steps}
             onStepClick={(index) => {
-              const targetStep = (index + 1) as 1 | 2 | 3 | 4;
+              const targetStep = (index + 1) as 1 | 2 | 3 | 4 | 5;
               if (targetStep !== step && targetStep <= maxStep) setStep(targetStep);
             }}
           />
@@ -861,23 +1058,32 @@ export function NewWorkspacePage() {
 
         {workspaceId !== null && (
           <div className={step === 2 ? '' : 'hidden'}>
-            <ToolConfigStep
+            <AIAnalysisStep
               workspaceId={workspaceId}
               onContinue={() => setStep(3)}
-              onSkip={() => setStep(3)}
             />
           </div>
         )}
 
         {workspaceId !== null && (
           <div className={step === 3 ? '' : 'hidden'}>
-            <SourceStep workspaceId={workspaceId} onContinue={handleSourcesContinue} />
+            <ToolConfigStep
+              workspaceId={workspaceId}
+              onContinue={() => setStep(4)}
+              onSkip={() => setStep(4)}
+            />
           </div>
         )}
 
         {workspaceId !== null && (
           <div className={step === 4 ? '' : 'hidden'}>
-            <ImportStep workspaceId={workspaceId} onDone={handleDone} isActive={step === 4} />
+            <SourceStep workspaceId={workspaceId} onContinue={handleSourcesContinue} />
+          </div>
+        )}
+
+        {workspaceId !== null && (
+          <div className={step === 5 ? '' : 'hidden'}>
+            <ImportStep workspaceId={workspaceId} onDone={handleDone} isActive={step === 5} />
           </div>
         )}
       </div>

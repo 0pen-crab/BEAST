@@ -54,54 +54,26 @@ describe('finalize module exports', () => {
 // ── storeReports ───────────────────────────────────────────────────
 
 describe('storeReports', () => {
-  it('stores both profile and report when both have content', async () => {
+  it('stores the audit report (profile is persisted by the analyzer step)', async () => {
     mockAddScanFile.mockResolvedValue({ id: 1 });
 
     const { storeReports } = await import('./finalize.ts');
-    await storeReports('scan-1', '# Report', '# Profile');
+    await storeReports('scan-1', '# Report');
 
-    expect(mockAddScanFile).toHaveBeenCalledTimes(2);
-
-    // Profile call
-    expect(mockAddScanFile).toHaveBeenCalledWith({
-      scanId: 'scan-1',
-      fileName: 'repo-profile.md',
-      fileType: 'profile',
-      content: '# Profile',
-    });
-
-    // Report call
+    expect(mockAddScanFile).toHaveBeenCalledTimes(1);
     expect(mockAddScanFile).toHaveBeenCalledWith({
       scanId: 'scan-1',
       fileName: 'final-report.md',
       fileType: 'audit',
       content: '# Report',
     });
+    // Must NOT re-store the profile — the analyzer already did.
+    expect(mockAddScanFile).not.toHaveBeenCalledWith(expect.objectContaining({ fileType: 'profile' }));
   });
 
-  it('skips profile when profileContent is empty', async () => {
-    mockAddScanFile.mockResolvedValue({ id: 1 });
-
+  it('stores nothing when reportContent is empty', async () => {
     const { storeReports } = await import('./finalize.ts');
-    await storeReports('scan-1', '# Report', '');
-
-    expect(mockAddScanFile).toHaveBeenCalledTimes(1);
-    expect(mockAddScanFile).toHaveBeenCalledWith(expect.objectContaining({ fileType: 'audit' }));
-  });
-
-  it('skips report when reportContent is empty', async () => {
-    mockAddScanFile.mockResolvedValue({ id: 1 });
-
-    const { storeReports } = await import('./finalize.ts');
-    await storeReports('scan-1', '', '# Profile');
-
-    expect(mockAddScanFile).toHaveBeenCalledTimes(1);
-    expect(mockAddScanFile).toHaveBeenCalledWith(expect.objectContaining({ fileType: 'profile' }));
-  });
-
-  it('stores nothing when both are empty', async () => {
-    const { storeReports } = await import('./finalize.ts');
-    await storeReports('scan-1', '', '');
+    await storeReports('scan-1', '');
 
     expect(mockAddScanFile).not.toHaveBeenCalled();
   });
@@ -125,7 +97,8 @@ describe('ingestContributorStats', () => {
     toolsDir: '/tmp/results',
     agentDir: '/tmp',
     resultsDir: '/tmp/results',
-    profilePath: '/tmp/profile.md',
+    profilePath: '/tmp/repo-profile.md',
+    scanContextPath: '/tmp/scan-context.md',
     cloneUrl: 'https://example.com/repo.git',
     reportLanguage: 'en',
     aiAnalysisEnabled: true,

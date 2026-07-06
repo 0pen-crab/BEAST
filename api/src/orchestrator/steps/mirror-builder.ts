@@ -46,7 +46,19 @@ PYEOF`;
   const result = await sshExec(getClaudeRunnerConfig(), sshCommand, {
     inactivityTimeoutMs: 10 * 60 * 1000,
     maxTimeoutMs: 30 * 60 * 1000,
+    // A cancelled scan must abort this up-to-30-min remote build immediately,
+    // not sit in the SSH session until a timeout fires.
+    signal: ctx.cancelSignal,
   });
+
+  // Fail loud: a dead python3 (or any script crash) would otherwise yield
+  // fileCount=0 and let the scan "complete" with zero AI findings.
+  if (result.code !== 0) {
+    const stderrTail = result.stderr.length > 2048 ? '...' + result.stderr.slice(-2048) : result.stderr;
+    throw new Error(
+      `Mirror build failed on claude-runner (exit ${result.code}): ${stderrTail.trim() || '(no stderr)'}`,
+    );
+  }
 
   const fileCount = parseInt(result.stdout.trim(), 10) || 0;
   const durationMs = Date.now() - start;

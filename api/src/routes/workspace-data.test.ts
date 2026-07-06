@@ -387,21 +387,47 @@ describe('GET /repositories', () => {
 });
 
 describe('PATCH /repositories/bulk', () => {
-  it('returns updated count when team_id provided', async () => {
-    // Pre-query: resolve workspace from first repo via team join
+  /** Workspace pre-query: resolve workspace from first repo via team join. */
+  function mockWorkspaceLookup(wsId = 1) {
     mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         innerJoin: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([{ wsId: 1 }]),
+            limit: vi.fn().mockResolvedValue([{ wsId }]),
           }),
         }),
       }),
     });
-    // update().set().where() — non-returning
+  }
+
+  /** team_id validation query: teams.workspaceId lookup. */
+  function mockTeamLookup(workspaceId: number | null) {
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue(workspaceId === null ? [] : [{ workspaceId }]),
+        }),
+      }),
+    });
+  }
+
+  it('returns updated count when team_id provided', async () => {
+    mockWorkspaceLookup(1);
+    mockTeamLookup(1);
+    // Workspace-scoped subquery for allowed ids (lazy — select() is invoked while building)
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({}),
+        }),
+      }),
+    });
+    // update().set().where().returning() — honest count from returned rows
     mockDb.update.mockReturnValue({
       set: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(undefined),
+        where: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]),
+        }),
       }),
     });
 
@@ -413,6 +439,65 @@ describe('PATCH /repositories/bulk', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ updated: 3 });
+  });
+
+  it('only updates rows of the authorized workspace when foreign ids are mixed in', async () => {
+    mockWorkspaceLookup(1);
+    // status-only update → no team lookup; the workspace-scoped subquery limits
+    // the UPDATE, so only 2 of the 3 requested ids are actually touched.
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({}),
+        }),
+      }),
+    });
+    const returning = vi.fn().mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    mockDb.update.mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ returning }),
+      }),
+    });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/repositories/bulk',
+      payload: { ids: [1, 2, 999], status: 'ignored' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Honest count: the foreign id 999 was NOT updated
+    expect(res.json()).toEqual({ updated: 2 });
+    expect(returning).toHaveBeenCalled();
+  });
+
+  it('rejects a team_id belonging to another workspace with 400', async () => {
+    mockWorkspaceLookup(1);
+    mockTeamLookup(2); // team lives in workspace 2 — not ours
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/repositories/bulk',
+      payload: { ids: [1], team_id: 42 },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('team_id');
+    expect(mockDb.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown team_id with 400', async () => {
+    mockWorkspaceLookup(1);
+    mockTeamLookup(null);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/repositories/bulk',
+      payload: { ids: [1], team_id: 4242 },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(mockDb.update).not.toHaveBeenCalled();
   });
 
   it('returns 400 when ids is empty', async () => {
@@ -695,11 +780,20 @@ describe('GET /tests', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: '/tests?scan_id=abc-123',
+      url: '/tests?scan_id=11111111-1111-4111-8111-111111111111',
     });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual([]);
+  });
+
+  it('rejects a non-UUID scan_id with 400 (not a Postgres 22P02 → 500)', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/tests?scan_id=abc-123',
+    });
+
+    expect(res.statusCode).toBe(400);
   });
 
   it('filters by repository_id', async () => {
@@ -881,6 +975,53 @@ describe('GET /findings', () => {
     expect(body.results).toEqual([]);
   });
 
+  it('applies the duplicate=false filter (excludes duplicate-status findings)', async () => {
+    // Capture the main query's where() argument — before the fix `duplicate`
+    // was not in the schema, so the param was silently dropped and the WHERE
+    // clause stayed empty (duplicates leaked into "Top findings").
+    const whereSpy = vi.fn().mockReturnValue({
+      orderBy: vi.fn().mockReturnValue({
+        limit: vi.fn().mockReturnValue({
+          offset: vi.fn().mockResolvedValue([]),
+        }),
+      }),
+    });
+    let callCount = 0;
+    mockDb.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        // count query
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ count: 0 }]),
+          }),
+        };
+      }
+      return {
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({ where: whereSpy }),
+              }),
+            }),
+          }),
+        }),
+      };
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/findings?duplicate=false' });
+
+    expect(res.statusCode).toBe(200);
+    expect(whereSpy).toHaveBeenCalledTimes(1);
+    expect(whereSpy.mock.calls[0][0]).toBeDefined();
+  });
+
+  it('rejects an invalid duplicate value with 400', async () => {
+    const res = await app.inject({ method: 'GET', url: '/findings?duplicate=banana' });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('filters by workspace_id', async () => {
     let callCount = 0;
     mockDb.select.mockImplementation(() => {
@@ -970,6 +1111,101 @@ describe('GET /findings', () => {
     });
 
     expect(res.statusCode).toBe(200);
+  });
+
+  it('filters by search term across title and file path', async () => {
+    let callCount = 0;
+    let countWhereArg: unknown;
+    mockDb.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockImplementation((arg: unknown) => {
+              countWhereArg = arg;
+              return Promise.resolve([{ count: 1 }]);
+            }),
+          }),
+        };
+      }
+      return {
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockReturnValue({
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockResolvedValue([
+                          { id: 1, title: 'SQL Injection', severity: 'High', status: 'open', secretValue: null, duplicateCount: 0 },
+                        ]),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      };
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/findings?search=injection',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().count).toBe(1);
+    // A where clause must be applied when search is present
+    expect(countWhereArg).toBeDefined();
+  });
+
+  it('applies no search condition when search is absent', async () => {
+    let countWhereArg: unknown = 'sentinel';
+    let callCount = 0;
+    mockDb.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockImplementation((arg: unknown) => {
+              countWhereArg = arg;
+              return Promise.resolve([{ count: 0 }]);
+            }),
+          }),
+        };
+      }
+      return {
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockReturnValue({
+                    orderBy: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockReturnValue({
+                        offset: vi.fn().mockResolvedValue([]),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      };
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/findings',
+    });
+
+    expect(res.statusCode).toBe(200);
+    // No filters at all → whereClause is undefined
+    expect(countWhereArg).toBeUndefined();
   });
 
   it('respects limit and offset', async () => {
@@ -1080,6 +1316,43 @@ describe('GET /findings/export.csv', () => {
     expect(header).toContain('Tool');
     expect(header).toContain('Title');
     expect(header).toContain('Date');
+  });
+
+  it('applies the source_id filter (same condition as GET /findings)', async () => {
+    // Main query chain — capture the where() argument to assert a filter exists
+    const whereSpy = vi.fn().mockReturnValue({
+      orderBy: vi.fn().mockResolvedValue([]),
+    });
+    const mainChain = {
+      from: vi.fn().mockReturnValue({
+        innerJoin: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            leftJoin: vi.fn().mockReturnValue({
+              leftJoin: vi.fn().mockReturnValue({ where: whereSpy }),
+            }),
+          }),
+        }),
+      }),
+    };
+    // Subquery chain (repositories by source) — built lazily, still calls select()
+    const subChain = {
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({}),
+      }),
+    };
+    mockDb.select
+      .mockReturnValueOnce(subChain)   // source_id subquery
+      .mockReturnValueOnce(mainChain); // main export query
+
+    const res = await app.inject({ method: 'GET', url: '/findings/export.csv?source_id=7' });
+
+    expect(res.statusCode).toBe(200);
+    // The WHERE clause must not be empty — before the fix source_id was
+    // declared in the schema but silently ignored, exporting EVERYTHING.
+    expect(whereSpy).toHaveBeenCalledTimes(1);
+    expect(whereSpy.mock.calls[0][0]).toBeDefined();
+    // And the repositories-by-source subquery was actually built
+    expect(subChain.from).toHaveBeenCalled();
   });
 });
 
@@ -1340,6 +1613,47 @@ describe('PATCH /findings/:id', () => {
     expect(res.statusCode).toBe(404);
     expect(res.json().error).toBe('Finding not found');
   });
+
+  it('rejects a status outside chk_findings_status with 400 (not a DB 500)', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/findings/1',
+      payload: { status: 'totally_bogus' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(mockDb.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['open', 'false_positive', 'fixed', 'risk_accepted', 'duplicate'])(
+    'accepts allowed status %s',
+    async (status) => {
+      mockDb.select.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          innerJoin: vi.fn().mockReturnValue({
+            innerJoin: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ workspaceId: 1 }]),
+            }),
+          }),
+        }),
+      });
+      mockDb.update.mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ id: 1, status }]),
+          }),
+        }),
+      });
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/findings/1',
+        payload: { status },
+      });
+
+      expect(res.statusCode).toBe(200);
+    },
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════

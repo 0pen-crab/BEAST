@@ -1,25 +1,30 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import { hasOpenInfraIssues } from '../../orchestrator/infra-check.ts';
+import { checkAllSystems } from './checks.ts';
 
+/**
+ * GET /api/health — full-system health (maintainer decision: the health
+ * endpoint must verify EVERY system and name what's broken).
+ *
+ *   200 { status: 'ok', timestamp }                       — all systems healthy
+ *   503 { status: 'degraded' | 'down', timestamp,
+ *         failures: [{ system, message }] }               — at least one broken
+ *
+ * system ∈ 'db' | 'worker' | 'claude-runner' | 'security-tools'.
+ * The route is on the auth skip-list (middleware/auth.ts) — dashboards poll it
+ * every 10s, including from the login screen.
+ */
 export const healthRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/health', async (_request, reply) => {
-    let infra: Awaited<ReturnType<typeof hasOpenInfraIssues>>;
-    try {
-      infra = await hasOpenInfraIssues();
-    } catch (err) {
-      console.error('[health] infra check query failed:', err);
-      // The API is up — don't pretend it isn't because of a transient query
-      // failure. The infra-check itself stays diagnosable via worker logs.
-      return { status: 'ok', timestamp: new Date().toISOString() };
-    }
+    const result = await checkAllSystems();
+    const timestamp = new Date().toISOString();
 
-    if (infra.degraded) {
-      return reply.status(503).send({
-        status: 'degraded',
-        timestamp: new Date().toISOString(),
-        issues: infra.issues,
-      });
+    if (result.status === 'ok') {
+      return { status: 'ok', timestamp };
     }
-    return { status: 'ok', timestamp: new Date().toISOString() };
+    return reply.status(503).send({
+      status: result.status,
+      timestamp,
+      failures: result.failures,
+    });
   });
 };

@@ -18,6 +18,8 @@ export function ContributorSearch({ workspaceId, excludeIds, onSelect }: Contrib
   const [loading, setLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Guards against a slow earlier response overwriting newer results.
+  const requestSeqRef = useRef(0);
 
   useEffect(() => {
     if (query.length < 2) {
@@ -27,23 +29,30 @@ export function ContributorSearch({ workspaceId, excludeIds, onSelect }: Contrib
     }
 
     clearTimeout(timerRef.current);
+    const seq = ++requestSeqRef.current;
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
         const data = await fetchApi<{ results: Contributor[] }>(
           buildUrl('/api/contributors', { workspace_id: workspaceId, search: query, limit: 10 }),
         );
+        if (seq !== requestSeqRef.current) return; // stale response
         const filtered = data.results.filter((c) => !excludeIds.includes(c.id));
         setResults(filtered);
         setOpen(filtered.length > 0);
       } catch {
+        if (seq !== requestSeqRef.current) return; // stale response
         setResults([]);
       } finally {
-        setLoading(false);
+        if (seq === requestSeqRef.current) setLoading(false);
       }
     }, 300);
 
-    return () => clearTimeout(timerRef.current);
+    return () => {
+      clearTimeout(timerRef.current);
+      // Invalidate any in-flight request on new input/unmount.
+      requestSeqRef.current++;
+    };
   }, [query, workspaceId, excludeIds]);
 
   // Close on outside click
@@ -60,7 +69,7 @@ export function ContributorSearch({ workspaceId, excludeIds, onSelect }: Contrib
   };
 
   return (
-    <div className="beast-contributor-search" ref={wrapRef}>
+    <div className="beast-typeahead" ref={wrapRef}>
       <input
         type="text"
         className="beast-input"
@@ -70,13 +79,13 @@ export function ContributorSearch({ workspaceId, excludeIds, onSelect }: Contrib
         onKeyDown={handleKeyDown}
         onFocus={() => results.length > 0 && setOpen(true)}
       />
-      {loading && <div className="beast-contributor-search-loading" />}
+      {loading && <div className="beast-typeahead-loading" />}
       {open && (
-        <ul className="beast-contributor-search-dropdown">
+        <ul className="beast-typeahead-dropdown">
           {results.map((c) => (
             <li
               key={c.id}
-              className="beast-contributor-search-item"
+              className="beast-typeahead-item"
               onClick={() => {
                 onSelect(c);
                 setQuery('');
@@ -86,8 +95,8 @@ export function ContributorSearch({ workspaceId, excludeIds, onSelect }: Contrib
               <span className="beast-avatar beast-avatar-xs">
                 {c.displayName.slice(0, 2).toUpperCase()}
               </span>
-              <span className="beast-contributor-search-name">{c.displayName}</span>
-              <span className="beast-contributor-search-email">{c.emails[0]}</span>
+              <span className="beast-typeahead-name">{c.displayName}</span>
+              <span className="beast-typeahead-email">{c.emails[0]}</span>
             </li>
           ))}
         </ul>

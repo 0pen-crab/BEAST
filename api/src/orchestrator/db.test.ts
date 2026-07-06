@@ -82,7 +82,6 @@ describe('createScan', () => {
       localPath: '/tmp/repo',
       workspaceId: 5,
       repositoryId: null,
-      pullRequestId: null,
       scanType: 'full',
     });
   });

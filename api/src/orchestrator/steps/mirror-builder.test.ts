@@ -28,6 +28,7 @@ function makeCtx(overrides: Partial<PipelineContext> = {}): PipelineContext {
     toolsDir: '/workspace/scan-1/results',
     resultsDir: '/workspace/scan-1/results',
     profilePath: '/workspace/scan-1/repo-profile.md',
+    scanContextPath: '/workspace/scan-1/scan-context.md',
     // stubs
     repoUrl: '', repoName: '', branch: '', commitHash: '', localPath: '',
     teamName: '', workspaceName: '', workspaceId: 1, cloneUrl: '', reportLanguage: 'en',
@@ -83,10 +84,35 @@ describe('buildMirror', () => {
     }
   });
 
+  it('threads ctx.cancelSignal into the sshExec options (cancellation must abort the remote build)', async () => {
+    mockSshExec.mockResolvedValueOnce({ stdout: '5\n', stderr: '', code: 0 });
+    const controller = new AbortController();
+
+    await buildMirror(makeCtx({ cancelSignal: controller.signal }));
+
+    const options = mockSshExec.mock.calls[0][2] as Record<string, unknown>;
+    expect(options.signal).toBe(controller.signal);
+  });
+
   it('parses zero file count gracefully', async () => {
     mockSshExec.mockResolvedValueOnce({ stdout: '', stderr: '', code: 0 });
 
     const info = await buildMirror(makeCtx());
     expect(info.fileCount).toBe(0);
+  });
+
+  it('throws with stderr tail when the mirror script exits non-zero (dead python3 must not yield fileCount=0)', async () => {
+    mockSshExec.mockResolvedValueOnce({
+      stdout: '',
+      stderr: 'bash: python3: command not found',
+      code: 127,
+    });
+
+    const err = await buildMirror(makeCtx()).then(
+      () => { throw new Error('expected buildMirror to throw'); },
+      (e: unknown) => e as Error,
+    );
+    expect(err.message).toContain('exit 127');
+    expect(err.message).toContain('python3: command not found');
   });
 });

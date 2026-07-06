@@ -100,9 +100,7 @@ export const sources = pgTable('sources', {
   orgType: varchar('org_type', { length: 32 }),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   syncIntervalMinutes: integer('sync_interval_minutes').default(1440),
-  prCommentsEnabled: boolean('pr_comments_enabled').default(false),
   detectedScopes: text('detected_scopes').array().default(sql`'{}'`),
-  webhookId: varchar('webhook_id', { length: 256 }),
   credentialType: varchar('credential_type', { length: 32 }),
   credentialUsername: varchar('credential_username', { length: 256 }),
   tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
@@ -188,6 +186,22 @@ export const repositories = pgTable('repositories', {
 
 // ── 9. scans (UUID PK) ─────────────────────────────────────
 
+/**
+ * One surviving (post-retry) failure inside an otherwise-successful scan.
+ * Persisted on scans.step_errors when the scan finishes as
+ * "completed with errors" (completed_with_errors = true).
+ */
+export interface ScanStepError {
+  /** What failed: a security tool run or an AI Sniper module. */
+  kind: 'tool' | 'module';
+  /** Tool key (e.g. 'semgrep') or module name (e.g. 'src/api'). */
+  name: string;
+  /** Human-readable error detail, as complete as we have it. */
+  error: string;
+  /** True when the failure survived the end-of-step retry pass. */
+  failedAfterRetry: boolean;
+}
+
 export const scans = pgTable('scans', {
   id: uuid('id').primaryKey().defaultRandom(),
   status: text('status').notNull().default('queued'),
@@ -198,6 +212,12 @@ export const scans = pgTable('scans', {
   localPath: text('local_path'),
   error: text('error'),
   durationMs: integer('duration_ms'),
+  // "Completed with errors": status stays 'completed' (all status-matching
+  // queries/joins keep working); this additive flag + the structured error list
+  // distinguish a clean success from one where some tools/modules failed even
+  // after their retry pass.
+  completedWithErrors: boolean('completed_with_errors').notNull().default(false),
+  stepErrors: jsonb('step_errors').$type<ScanStepError[]>().notNull().default([]),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
   startedAt: timestamp('started_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
@@ -205,7 +225,6 @@ export const scans = pgTable('scans', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   repositoryId: integer('repository_id').references(() => repositories.id, { onDelete: 'set null' }),
   workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
-  pullRequestId: integer('pull_request_id'),
   scanType: varchar('scan_type', { length: 16 }).default('full'),
 }, (table) => [
   index('idx_scans_status').on(table.status),
@@ -252,27 +271,6 @@ export const scanModules = pgTable('scan_modules', {
 }, (table) => [
   index('idx_scan_modules_scan_id').on(table.scanId),
   uniqueIndex('uq_scan_modules_scan_idx').on(table.scanId, table.moduleIndex),
-]);
-
-// ── pull_requests ─────────────────────────────────────────
-export const pullRequests = pgTable('pull_requests', {
-  id: serial('id').primaryKey(),
-  repositoryId: integer('repository_id').notNull().references(() => repositories.id, { onDelete: 'cascade' }),
-  workspaceId: integer('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
-  externalId: integer('external_id').notNull(),
-  title: varchar('title', { length: 512 }).notNull(),
-  description: text('description'),
-  author: varchar('author', { length: 256 }).notNull(),
-  sourceBranch: varchar('source_branch', { length: 256 }).notNull(),
-  targetBranch: varchar('target_branch', { length: 256 }).notNull(),
-  status: varchar('status', { length: 32 }).notNull().default('open'),
-  prUrl: text('pr_url').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-}, (table) => [
-  index('idx_pull_requests_repository').on(table.repositoryId),
-  index('idx_pull_requests_workspace').on(table.workspaceId),
-  unique('pull_requests_repo_external_unique').on(table.repositoryId, table.externalId),
 ]);
 
 // ── 10. scan_files ──────────────────────────────────────────
@@ -400,10 +398,17 @@ export const contributors = pgTable('contributors', {
   scoreTesting: real('score_testing'),
   scoreInnovation: real('score_innovation'),
   feedback: text('feedback'),
+  // Set exactly when the compiled profile is written (feedback-worker).
+  // NULL = never compiled. Deliberately separate from updatedAt, which is
+  // bumped by unrelated writes (recomputeScores, team assignment) and is
+  // therefore useless as a "profile is fresh" signal.
+  feedbackCompiledAt: timestamp('feedback_compiled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index('idx_contributors_score').on(table.scoreOverall),
+  index('idx_contributors_team').on(table.teamId),
+  index('idx_contributors_workspace').on(table.workspaceId),
 ]);
 
 // ── 17. contributor_repo_stats ───────────────────────────────
@@ -482,6 +487,17 @@ export const scanEvents = pgTable('scan_events', {
   check('scan_events_level_check', sql`${table.level} IN ('info', 'warning', 'error')`),
 ]);
 
+// ── 21. worker_heartbeat ────────────────────────────────────
+// Single-row liveness signal (id = 1). The worker process upserts beat_at
+// roughly every minute; /api/health treats a beat older than ~3 minutes as
+// "worker down". Kept separate from scan_events on purpose — it's a fixed-size
+// heartbeat slot, not an event log.
+
+export const workerHeartbeat = pgTable('worker_heartbeat', {
+  id: integer('id').primaryKey(),
+  beatAt: timestamp('beat_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Inferred types ──────────────────────────────────────────
 
 export type Workspace = typeof workspaces.$inferSelect;
@@ -547,11 +563,12 @@ export type NewScanModule = typeof scanModules.$inferInsert;
 export type ScanEvent = typeof scanEvents.$inferSelect;
 export type NewScanEvent = typeof scanEvents.$inferInsert;
 
-export type PullRequest = typeof pullRequests.$inferSelect;
-export type NewPullRequest = typeof pullRequests.$inferInsert;
 
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type NewWorkspaceMember = typeof workspaceMembers.$inferInsert;
+
+export type WorkerHeartbeat = typeof workerHeartbeat.$inferSelect;
+export type NewWorkerHeartbeat = typeof workerHeartbeat.$inferInsert;
 
 export type Secret = typeof secrets.$inferSelect;
 export type NewSecret = typeof secrets.$inferInsert;

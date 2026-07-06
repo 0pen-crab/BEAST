@@ -61,10 +61,10 @@ describe('scanEventRoutes plugin', () => {
 // ── GET /scan-events ─────────────────────────────────────────
 
 describe('GET /scan-events', () => {
-  it('returns paginated results with count', async () => {
+  it('returns paginated results with count and joined repositoryId', async () => {
     const events = [
-      { id: 1, executionId: 'exec-1', level: 'info', source: 'scanner', message: 'Started' },
-      { id: 2, executionId: 'exec-1', level: 'error', source: 'scanner', message: 'Failed' },
+      { id: 1, executionId: 'exec-1', level: 'info', source: 'scanner', message: 'Started', repositoryId: 42 },
+      { id: 2, executionId: 'exec-1', level: 'error', source: 'scanner', message: 'Failed', repositoryId: null },
     ];
     // COUNT query chain: db.select({count}).from().where()
     mockDb.select.mockReturnValueOnce({
@@ -72,17 +72,18 @@ describe('GET /scan-events', () => {
         where: vi.fn().mockResolvedValue([{ count: '2' }]),
       }),
     });
-    // SELECT query chain: db.select().from().where().orderBy().limit().offset()
-    mockDb.select.mockReturnValueOnce({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              offset: vi.fn().mockResolvedValue(events),
-            }),
+    // SELECT query chain: db.select().from().leftJoin().where().orderBy().limit().offset()
+    const leftJoin = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        orderBy: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            offset: vi.fn().mockResolvedValue(events),
           }),
         }),
       }),
+    });
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({ leftJoin }),
     });
 
     const res = await app.inject({
@@ -95,6 +96,10 @@ describe('GET /scan-events', () => {
     expect(body).toHaveProperty('count', 2);
     expect(body).toHaveProperty('results');
     expect(body.results).toHaveLength(2);
+    // repositoryId (resolved via LEFT JOIN scans) is passed through untouched
+    expect(leftJoin).toHaveBeenCalled();
+    expect(body.results[0].repositoryId).toBe(42);
+    expect(body.results[1].repositoryId).toBeNull();
   });
 
   it('passes filter params and returns filtered results', async () => {
@@ -105,10 +110,12 @@ describe('GET /scan-events', () => {
     });
     mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              offset: vi.fn().mockResolvedValue([]),
+        leftJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockReturnValue({
+              limit: vi.fn().mockReturnValue({
+                offset: vi.fn().mockResolvedValue([]),
+              }),
             }),
           }),
         }),
@@ -139,6 +146,15 @@ describe('GET /scan-events', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/scan-events?offset=-1',
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a non-UUID scan_id with 400 (not a Postgres 22P02 → 500)', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/scan-events?scan_id=not-a-uuid',
     });
 
     expect(res.statusCode).toBe(400);
@@ -204,6 +220,29 @@ describe('POST /scan-events', () => {
     expect(mockDb.insert).toHaveBeenCalled();
   });
 
+  it('caps oversized messages at 4000 chars before the INSERT', async () => {
+    const valuesSpy = vi.fn().mockReturnValue({
+      returning: vi.fn().mockResolvedValue([{ id: 3 }]),
+    });
+    mockDb.insert.mockReturnValue({ values: valuesSpy });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/scan-events',
+      payload: {
+        level: 'error',
+        source: 'scanner',
+        message: 'm'.repeat(100_000),
+        workspace_id: 1,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const inserted = valuesSpy.mock.calls[0][0];
+    expect(inserted.message.length).toBeLessThan(4_100);
+    expect(inserted.message).toContain('… (truncated, 100000 chars total)');
+  });
+
   it('rejects invalid level value', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -230,16 +269,31 @@ describe('POST /scan-events', () => {
 
     expect(res.statusCode).toBe(400);
   });
+
+  it('rejects a non-UUID scan_id with 400 (not a Postgres 22P02 → 500)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/scan-events',
+      payload: {
+        scan_id: 'not-a-uuid',
+        level: 'info',
+        source: 'orchestrator',
+        message: 'Bad scan id',
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 // ── GET /scan-events/stats ───────────────────────────────────
 
 describe('GET /scan-events/stats', () => {
-  it('returns unresolved counts', async () => {
+  it('returns unresolved counts in camelCase (dashboard ScanEventStats contract)', async () => {
     mockDb.select.mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([
-          { unresolved: '5', unresolved_errors: '2', unresolved_warnings: '3', total: '10' },
+          { unresolved: '5', unresolvedErrors: '2', unresolvedWarnings: '3', total: '10' },
         ]),
       }),
     });
@@ -253,17 +307,20 @@ describe('GET /scan-events/stats', () => {
     const body = res.json();
     expect(body).toEqual({
       unresolved: 5,
-      unresolved_errors: 2,
-      unresolved_warnings: 3,
+      unresolvedErrors: 2,
+      unresolvedWarnings: 3,
       total: 10,
     });
+    // snake_case keys must be gone — they made the Events stat cards always show 0
+    expect(body).not.toHaveProperty('unresolved_errors');
+    expect(body).not.toHaveProperty('unresolved_warnings');
   });
 
   it('accepts workspace_id filter', async () => {
     mockDb.select.mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([
-          { unresolved: '1', unresolved_errors: '0', unresolved_warnings: '1', total: '3' },
+          { unresolved: '1', unresolvedErrors: '0', unresolvedWarnings: '1', total: '3' },
         ]),
       }),
     });

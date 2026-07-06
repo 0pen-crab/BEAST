@@ -113,11 +113,12 @@ function PipelineInner({ steps, size = 'sm', onStepClick }: PipelineProgressProp
   const aiResearch = getStep(steps, 'ai-research');
   const imp = getStep(steps, 'import');
   const triageReport = getStep(steps, 'triage-report');
+  const commit = getStep(steps, 'commit');
 
   const canClick = (s: PipelineStep) => !!onStepClick && s.status === 'completed';
   const isLg = size === 'lg';
 
-  // Layout: clone → analysis → fork(secTools, aiResearch) → import → triageReport
+  // Layout: clone → analysis → fork(secTools, aiResearch) → import → triageReport → commit
   const s = isLg ? 1.3 : 1;
 
   const nodes: Node[] = useMemo(() => [
@@ -127,6 +128,7 @@ function PipelineInner({ steps, size = 'sm', onStepClick }: PipelineProgressProp
     { id: 'airesearch', type: 'step', position: { x: 370 * s, y: 94 * s }, data: { step: aiResearch, size, clickable: canClick(aiResearch), onClick: () => onStepClick?.('ai-research') } },
     { id: 'import', type: 'step', position: { x: 580 * s, y: 55 * s }, data: { step: imp, size, clickable: canClick(imp), onClick: () => onStepClick?.('import') } },
     { id: 'triagereport', type: 'step', position: { x: 780 * s, y: 55 * s }, data: { step: triageReport, size, clickable: canClick(triageReport), onClick: () => onStepClick?.('triage-report') } },
+    { id: 'commit', type: 'step', position: { x: 960 * s, y: 55 * s }, data: { step: commit, size, clickable: canClick(commit), onClick: () => onStepClick?.('commit') } },
   ], [steps, size, onStepClick]);
 
   const cloneDone = clone.status === 'completed';
@@ -142,12 +144,13 @@ function PipelineInner({ steps, size = 'sm', onStepClick }: PipelineProgressProp
     { id: 'e-sectools-import', source: 'sectools', target: 'import', type: 'smoothstep', pathOptions: sq, style: edgeStyle(secToolsDone) },
     { id: 'e-airesearch-import', source: 'airesearch', target: 'import', type: 'smoothstep', pathOptions: sq, style: edgeStyle(aiResearchDone) },
     { id: 'e-import-triagereport', source: 'import', target: 'triagereport', type: 'smoothstep', pathOptions: sq, style: edgeStyle(imp.status === 'completed') },
+    { id: 'e-triagereport-commit', source: 'triagereport', target: 'commit', type: 'smoothstep', pathOptions: sq, style: edgeStyle(triageReport.status === 'completed') },
   ], [steps]);
 
   const h = isLg ? 190 : 150;
 
   return (
-    <div style={{ width: '100%', height: h }}>
+    <div className="beast-pipeline-flow" style={{ width: '100%', height: h }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}

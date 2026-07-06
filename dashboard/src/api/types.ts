@@ -145,6 +145,18 @@ export interface ScanModuleProgress {
   completed: number;
 }
 
+/** One surviving (post-retry) failure inside a scan that completed with errors. */
+export interface ScanStepError {
+  /** What failed: a security tool run or an AI Sniper module. */
+  kind: 'tool' | 'module';
+  /** Tool key (e.g. 'semgrep') or module name (e.g. 'src/api'). */
+  name: string;
+  /** Detailed error text (includes per-attempt info for retried modules). */
+  error: string;
+  /** True when the failure survived the end-of-step retry pass. */
+  failedAfterRetry: boolean;
+}
+
 export interface ScanDetail {
   id: string;
   status: ScanStatus;
@@ -161,6 +173,10 @@ export interface ScanDetail {
   repositoryId: number | null;
   workspaceId: number | null;
   scanType: string;
+  /** status='completed' but some tools/modules failed even after retry. */
+  completedWithErrors?: boolean;
+  /** The surviving failures when completedWithErrors is true. */
+  stepErrors?: ScanStepError[];
   steps: ScanStep[];
   moduleProgress: ScanModuleProgress;
 }
@@ -175,6 +191,8 @@ export interface ScanEvent {
   message: string;
   details: Record<string, unknown>;
   repoName: string | null;
+  /** Resolved via the event's scan (LEFT JOIN scans) — null for events without a scan. */
+  repositoryId?: number | null;
   workspaceId: number | null;
   resolved: boolean;
   resolvedAt: string | null;
@@ -203,48 +221,10 @@ export interface Source {
   baseUrl: string;
   orgName: string | null;
   orgType: string | null;
-  prCommentsEnabled: boolean;
   detectedScopes: string[];
   lastSyncedAt: string | null;
   syncIntervalMinutes: number;
   createdAt: string;
-}
-
-export interface PullRequestSummary {
-  id: number;
-  repositoryId: number;
-  workspaceId: number;
-  externalId: number;
-  title: string;
-  description: string | null;
-  author: string;
-  sourceBranch: string;
-  targetBranch: string;
-  status: 'open' | 'merged' | 'declined';
-  prUrl: string;
-  createdAt: string;
-  updatedAt: string;
-  latestScan: {
-    id: string;
-    status: string;
-    createdAt: string;
-  } | null;
-}
-
-export interface PullRequestDetail extends PullRequestSummary {
-  scans: Array<{
-    id: string;
-    status: string;
-    createdAt: string;
-    completedAt: string | null;
-  }>;
-}
-
-export interface SourceCapabilities {
-  repos: boolean;
-  pullRequests: boolean;
-  webhooks: boolean;
-  prComments: boolean;
 }
 
 export interface DiscoveredRepo {
@@ -283,6 +263,13 @@ export interface WorkspaceMember {
 export interface AddMemberResponse {
   member: WorkspaceMember;
   generatedPassword?: string;
+}
+
+/** A login account suggested by the add-member picker (not yet in the workspace). */
+export interface WorkspaceUserOption {
+  id: number;
+  username: string;
+  displayName: string | null;
 }
 
 export interface AdminUser {

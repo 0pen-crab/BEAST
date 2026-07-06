@@ -86,7 +86,7 @@ export function ContributorProfilePage() {
   return (
     <ErrorBoundary>
       <div className="beast-stack">
-        <BreadcrumbNav items={[{ label: 'Contributors', to: '/contributors' }, { label: dev?.displayName || dev?.emails?.[0] || '...' }]} />
+        <BreadcrumbNav items={[{ label: t('nav.contributors'), to: '/contributors' }, { label: dev?.displayName || dev?.emails?.[0] || '...' }]} />
 
         {/* Profile hero + stats 2x2 */}
         <div className="beast-grid-2">
@@ -158,12 +158,12 @@ export function ContributorProfilePage() {
           <div className="beast-stack-stretch beast-mt-section-header">
             <StatCard
               label="First Commit"
-              value={dev.firstSeen ? formatDateShort(dev.firstSeen) : '\u2014'}
+              value={dev.firstSeen ? formatDate(dev.firstSeen) : '\u2014'}
               icon={ClockIcon}
             />
             <StatCard
               label="Last Commit"
-              value={dev.lastSeen ? formatDateShort(dev.lastSeen) : '\u2014'}
+              value={dev.lastSeen ? formatDate(dev.lastSeen) : '\u2014'}
               icon={ClockIcon}
             />
           </div>
@@ -351,6 +351,7 @@ function OverallScore({ score }: { score: number | null }) {
 // Contribution Heatmap
 
 function ContributionHeatmap({ activity }: { activity: ContributorDailyActivity[] }) {
+  const { t } = useTranslation();
   const { grid, months, maxCount, totalCommits } = useMemo(() => {
     const activityMap = new Map<string, number>();
     let max = 0;
@@ -419,15 +420,15 @@ function ContributionHeatmap({ activity }: { activity: ContributorDailyActivity[
       <div className="beast-flex-between beast-mb-sm">
         <span className="beast-text-hint beast-mb-0">
           {totalCommits > 0
-            ? `${totalCommits} contribution${totalCommits !== 1 ? 's' : ''} in the last year`
-            : 'No contributions in the last year'}
+            ? t('contributors.contributionsLastYear', { count: totalCommits })
+            : t('contributors.noContributionsLastYear')}
         </span>
         <div className="beast-flex beast-flex-gap-xs">
-          <span className="beast-text-hint beast-mb-0">Less</span>
+          <span className="beast-text-hint beast-mb-0">{t('contributors.heatmapLess')}</span>
           {['#eeeeee', '#9be9a8', '#40c463', '#30a14e', '#216e39'].map((c) => (
             <span key={c} className="beast-heatmap-swatch" style={{ backgroundColor: c }} />
           ))}
-          <span className="beast-text-hint beast-mb-0">More</span>
+          <span className="beast-text-hint beast-mb-0">{t('contributors.heatmapMore')}</span>
         </div>
       </div>
 
@@ -656,9 +657,9 @@ function RepoCard({ repo }: { repo: ContributorRepoStats }) {
             )}
             {(repo.firstCommit || repo.lastCommit) && (
               <div className="beast-repo-card-dates">
-                {repo.firstCommit && formatDateShort(repo.firstCommit)}
+                {repo.firstCommit && formatDate(repo.firstCommit)}
                 {repo.firstCommit && repo.lastCommit && ' \u2014 '}
-                {repo.lastCommit && formatDateShort(repo.lastCommit)}
+                {repo.lastCommit && formatDate(repo.lastCommit)}
               </div>
             )}
           </div>
@@ -861,8 +862,3 @@ function formatLOC(n: number | string): string {
   return String(num);
 }
 
-function formatDateShort(d: string): string {
-  const dt = new Date(d);
-  const m = dt.getMonth() + 1;
-  return `${m < 10 ? '0' : ''}${m}.${dt.getFullYear()}`;
-}

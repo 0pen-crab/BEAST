@@ -34,10 +34,13 @@ const mockRunAiResearchStep = vi.fn().mockResolvedValue({
 const mockRunImportStep = vi.fn().mockResolvedValue({
   repositoryId: 1,
   workspaceId: 1,
-  findingsImported: 5,
-  testsCreated: 2,
+  findingsPrepared: 5,
+  testsPrepared: 2,
   resultFiles: [],
-  findingsPerContributor: {},
+  preparedTests: [],
+  preparedFindings: [],
+  analyzerAssessments: [],
+  emailAliases: {},
 });
 
 const mockRunTriageStep = vi.fn().mockResolvedValue({
@@ -47,6 +50,16 @@ const mockRunTriageStep = vi.fn().mockResolvedValue({
   reportsGenerated: true,
   assessmentsEnhanced: 1,
   durationMs: 8000,
+  decisions: [],
+  devAssessments: [],
+});
+
+const mockRunCommitStep = vi.fn().mockResolvedValue({
+  testsCreated: 2,
+  findingsNew: 4,
+  findingsUpdated: 1,
+  dismissed: 1,
+  assessedContributorIds: [],
 });
 
 vi.mock('./steps/clone.ts', () => ({
@@ -71,6 +84,26 @@ vi.mock('./steps/import-results.ts', () => ({
 
 vi.mock('./steps/triage-report.ts', () => ({
   runTriageStep: (...args: unknown[]) => mockRunTriageStep(...args),
+}));
+
+vi.mock('./steps/commit-results.ts', () => ({
+  runCommitStep: (...args: unknown[]) => mockRunCommitStep(...args),
+}));
+
+// ── ai-trace mock (clearTraces at pipeline start) ────────────────
+
+const mockClearTraces = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('./ai-trace.ts', () => ({
+  clearTraces: (...args: unknown[]) => mockClearTraces(...args),
+}));
+
+// ── feedback-worker mock (queued only after a fully successful scan) ──
+
+const mockQueueFeedbackCompilation = vi.fn();
+
+vi.mock('./feedback-worker.ts', () => ({
+  queueFeedbackCompilation: (...args: unknown[]) => mockQueueFeedbackCompilation(...args),
 }));
 
 // ── DB mock ─────────────────────────────────────────────────────
@@ -123,7 +156,6 @@ function makeScan(overrides: Record<string, unknown> = {}): any {
     createdAt: new Date(),
     repositoryId: null,
     workspaceId: null,
-    pullRequestId: null,
     scanType: 'full',
     ...overrides,
   };
@@ -156,10 +188,10 @@ describe('runPipeline', () => {
 
     await runPipeline(makeScan());
 
-    // 6 step rows created (clone, analysis, security-tools, ai-research, import, triage-report)
+    // 7 step rows created (clone, analysis, security-tools, ai-research, import, triage-report, commit)
     expect(mockDb.insert).toHaveBeenCalled();
-    // returning() called 6 times for step rows + values() calls for events
-    expect(insertCallCount).toBeGreaterThanOrEqual(6);
+    // returning() called 7 times for step rows + values() calls for events
+    expect(insertCallCount).toBeGreaterThanOrEqual(7);
   });
 
   it('calls all step functions in order', async () => {
@@ -184,19 +216,26 @@ describe('runPipeline', () => {
     });
     mockRunImportStep.mockImplementation(async () => {
       callOrder.push('import');
-      return { repositoryId: 1, workspaceId: 1, findingsImported: 0, testsCreated: 0, resultFiles: [], findingsPerContributor: {} };
+      return { repositoryId: 1, workspaceId: 1, findingsPrepared: 0, testsPrepared: 0, resultFiles: [], preparedTests: [], preparedFindings: [], analyzerAssessments: [], emailAliases: {} };
     });
     mockRunTriageStep.mockImplementation(async () => {
       callOrder.push('triage');
-      return { triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0 };
+      return { triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0, decisions: [], devAssessments: [] };
+    });
+    mockRunCommitStep.mockImplementation(async () => {
+      callOrder.push('commit');
+      return { testsCreated: 0, findingsNew: 0, findingsUpdated: 0, dismissed: 0, assessedContributorIds: [] };
     });
 
     await runPipeline(makeScan());
 
-    // clone and analysis are sequential, then security-tools + ai-research parallel, then import, then triage
+    // clone and analysis are sequential, then security-tools + ai-research parallel,
+    // then import, then triage, then commit LAST (repo data lands only there)
     expect(callOrder.indexOf('clone')).toBeLessThan(callOrder.indexOf('analysis'));
     expect(callOrder.indexOf('analysis')).toBeLessThan(callOrder.indexOf('import'));
     expect(callOrder.indexOf('import')).toBeLessThan(callOrder.indexOf('triage'));
+    expect(callOrder.indexOf('triage')).toBeLessThan(callOrder.indexOf('commit'));
+    expect(callOrder[callOrder.length - 1]).toBe('commit');
     // security-tools and ai-research both come after analysis
     expect(callOrder.indexOf('analysis')).toBeLessThan(callOrder.indexOf('security-tools'));
     expect(callOrder.indexOf('analysis')).toBeLessThan(callOrder.indexOf('ai-research'));
@@ -243,6 +282,26 @@ describe('runPipeline', () => {
     expect(mockRunTriageStep).toHaveBeenCalledTimes(1);
   });
 
+  it('calls commit step', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    await runPipeline(makeScan());
+
+    expect(mockRunCommitStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the scan when the commit step throws (always required)', async () => {
+    // commit is required:true — repo data landing is not optional. A commit
+    // failure fails the scan; the worker's cleanup then removes whatever a
+    // partial commit wrote (the tx normally rolled it back already).
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunCommitStep.mockRejectedValueOnce(new Error('commit tx failed'));
+
+    await expect(runPipeline(makeScan())).rejects.toThrow('commit tx failed');
+    expect(mockQueueFeedbackCompilation).not.toHaveBeenCalled();
+  });
+
   it('rethrows on clone error', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
@@ -259,31 +318,82 @@ describe('runPipeline', () => {
     await expect(runPipeline(makeScan())).rejects.toThrow('import failed');
   });
 
-  it('fails the scan when analysis step throws', async () => {
+  it('fails the scan when the analysis step throws and AI analysis is enabled (default)', async () => {
+    // makeScan has workspaceId:null → AI toggles default to true, so analysis is
+    // required: a step that was supposed to run and didn't must fail the whole
+    // scan, never silently degrade.
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunAnalysisStep.mockRejectedValueOnce(new Error('analyzer down'));
 
     await expect(runPipeline(makeScan())).rejects.toThrow('analyzer down');
-    // Steps after the failure must not run
     expect(mockRunImportStep).not.toHaveBeenCalled();
   });
 
-  it('fails the scan when security-tools step throws', async () => {
+  it('fails the scan when the security-tools step throws (always required)', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunSecToolsStep.mockRejectedValueOnce(new Error('All configured authentication methods failed'));
 
-    await expect(runPipeline(makeScan())).rejects.toThrow('authentication methods failed');
+    await expect(runPipeline(makeScan())).rejects.toThrow('All configured authentication methods failed');
     expect(mockRunImportStep).not.toHaveBeenCalled();
   });
 
-  it('fails the scan when triage step throws', async () => {
+  it('fails the scan when the ai-research step throws and AI scanning is enabled (default)', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunAiResearchStep.mockRejectedValueOnce(new Error('scanner down'));
+
+    await expect(runPipeline(makeScan())).rejects.toThrow('scanner down');
+    expect(mockRunImportStep).not.toHaveBeenCalled();
+  });
+
+  it('fails the scan when the triage step throws and AI triage is enabled (default)', async () => {
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunTriageStep.mockRejectedValueOnce(new Error('triage failed'));
 
     await expect(runPipeline(makeScan())).rejects.toThrow('triage failed');
+  });
+
+  // Developer profiles update only as a result of a FULLY successful scan —
+  // a failed scan must not leave partial side effects. The assessed ids now
+  // come from the COMMIT step (assessments land in the DB only there).
+  it('queues feedback compilation from the commit output after every step succeeded', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunCommitStep.mockResolvedValueOnce({
+      testsCreated: 0, findingsNew: 0, findingsUpdated: 0, dismissed: 0,
+      assessedContributorIds: [100, 200, 100],
+    });
+
+    await runPipeline(makeScan());
+
+    expect(mockQueueFeedbackCompilation).toHaveBeenCalledTimes(2); // deduped
+    expect(mockQueueFeedbackCompilation).toHaveBeenCalledWith(100);
+    expect(mockQueueFeedbackCompilation).toHaveBeenCalledWith(200);
+  });
+
+  it('does NOT queue feedback compilation when a later step fails the scan', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunTriageStep.mockRejectedValueOnce(new Error('triage failed'));
+
+    await expect(runPipeline(makeScan())).rejects.toThrow('triage failed');
+    // Commit never ran, so no assessments landed and nothing is queued
+    expect(mockRunCommitStep).not.toHaveBeenCalled();
+    expect(mockQueueFeedbackCompilation).not.toHaveBeenCalled();
+  });
+
+  it('fails the scan when a required step (clone) throws', async () => {
+    // clone is required:true — its failure is fatal and must propagate so the
+    // worker marks the scan failed. Subsequent steps must not run.
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunCloneStep.mockRejectedValueOnce(new Error('clone failed'));
+
+    await expect(runPipeline(makeScan())).rejects.toThrow('clone failed');
+    expect(mockRunImportStep).not.toHaveBeenCalled();
   });
 
   it('accumulates step outputs and passes to subsequent steps', async () => {
@@ -383,7 +493,10 @@ describe('runPipeline', () => {
     expect(mockDb.values).toHaveBeenCalled();
   });
 
-  it('parallel group: both steps run to completion, then pipeline fails on the rejection', async () => {
+  it('parallel group: a required step failure lets the sibling finish but fails the scan', async () => {
+    // security-tools is required:true. allSettled lets the parallel sibling
+    // (ai-research) run to completion, but the required rejection must still
+    // abort the scan before import.
     const { runPipeline } = await import('./pipeline.ts');
 
     mockRunSecToolsStep.mockRejectedValueOnce(new Error('sec-tools error'));
@@ -391,8 +504,63 @@ describe('runPipeline', () => {
     await expect(runPipeline(makeScan())).rejects.toThrow('sec-tools error');
     // ai-research was started in parallel and runs to completion (allSettled)
     expect(mockRunAiResearchStep).toHaveBeenCalledTimes(1);
-    // Subsequent sequential steps must NOT run after the parallel group fails
+    // The scan must NOT proceed to import after a required-step failure
     expect(mockRunImportStep).not.toHaveBeenCalled();
+  });
+
+  // ── Feature toggle off → step failure is non-fatal ────────────
+  // When a workspace disables an AI feature, its step is not required: even if
+  // the step throws, the scan completes (nothing it was "supposed to run" was
+  // lost). The workspace select in buildContext, checkCancelled reads and the
+  // existing-steps select all consume mockDb.where, so return one combined row
+  // that satisfies every query (same approach as the reportLanguage test).
+  function mockWorkspaceToggles(overrides: Record<string, unknown> = {}) {
+    mockDb.where.mockImplementation(() => Promise.resolve([{
+      status: 'running',
+      defaultLanguage: 'en',
+      aiAnalysisEnabled: true,
+      aiScanningEnabled: true,
+      aiTriageEnabled: true,
+      aiModelAnalyzer: 'sonnet',
+      aiModelScanner: 'opus',
+      aiModelTriage: 'opus',
+      scanDepth: 500,
+      ...overrides,
+    }]));
+  }
+
+  it('continues the scan when analysis throws but AI analysis is disabled for the workspace', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockWorkspaceToggles({ aiAnalysisEnabled: false });
+    mockRunAnalysisStep.mockRejectedValueOnce(new Error('analyzer down'));
+
+    // repositoryId stays null (makeScan default) so buildContext skips the
+    // repositories.sourceId lookup and the first where() is the workspace select.
+    await expect(runPipeline(makeScan({ workspaceId: 5 }))).resolves.toEqual({ completedWithErrors: false, stepErrors: [] });
+    expect(mockRunImportStep).toHaveBeenCalled();
+  });
+
+  it('continues the scan when ai-research throws but AI scanning is disabled for the workspace', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockWorkspaceToggles({ aiScanningEnabled: false });
+    mockRunAiResearchStep.mockRejectedValueOnce(new Error('scanner down'));
+
+    await expect(runPipeline(makeScan({ workspaceId: 5 }))).resolves.toEqual({ completedWithErrors: false, stepErrors: [] });
+    // Parallel sibling still ran, and the scan proceeded to import
+    expect(mockRunSecToolsStep).toHaveBeenCalledTimes(1);
+    expect(mockRunImportStep).toHaveBeenCalled();
+  });
+
+  it('continues the scan when triage throws but AI triage is disabled for the workspace', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockWorkspaceToggles({ aiTriageEnabled: false });
+    mockRunTriageStep.mockRejectedValueOnce(new Error('triage failed'));
+
+    await expect(runPipeline(makeScan({ workspaceId: 5 }))).resolves.toEqual({ completedWithErrors: false, stepErrors: [] });
+    expect(mockRunImportStep).toHaveBeenCalled();
   });
 
   // ── Resume / pause behavior ──────────────────────────────────
@@ -416,6 +584,7 @@ describe('runPipeline', () => {
           { id: 4, scanId: 'scan-1', stepName: 'ai-research', stepOrder: 4, status: 'pending' },
           { id: 5, scanId: 'scan-1', stepName: 'import', stepOrder: 5, status: 'pending' },
           { id: 6, scanId: 'scan-1', stepName: 'triage-report', stepOrder: 6, status: 'pending' },
+          { id: 7, scanId: 'scan-1', stepName: 'commit', stepOrder: 7, status: 'pending' },
         ]);
       }
       // Other reads (checkCancelled, loadOutput, etc) — pretend running
@@ -432,6 +601,115 @@ describe('runPipeline', () => {
     expect(mockRunSecToolsStep).toHaveBeenCalledTimes(1);
     expect(mockRunAiResearchStep).toHaveBeenCalledTimes(1);
     expect(mockRunImportStep).toHaveBeenCalledTimes(1);
+    expect(mockRunCommitStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('resume after triage: import + triage plans reload from step outputs and only commit runs', async () => {
+    // Pause during/after triage: the prepared plan (import output) and the
+    // decisions (triage output) live in scan_steps.output — the resumed run
+    // must hand them to the commit step without re-running import/triage.
+    const { runPipeline } = await import('./pipeline.ts');
+
+    const importOutput = {
+      repositoryId: 1, workspaceId: 1, findingsPrepared: 1, testsPrepared: 1,
+      resultFiles: [],
+      preparedTests: [{ key: 'gitleaks', tool: 'gitleaks', scanType: 'Gitleaks Scan', fileName: 'gitleaks-results.json', findingsCount: 1 }],
+      preparedFindings: [{ tempId: 0, testKey: 'gitleaks', title: 'S', severity: 'High', tool: 'gitleaks', fingerprint: 'fp-0' }],
+      analyzerAssessments: [], emailAliases: {},
+    };
+    const triageOutput = {
+      triaged: 1, dismissed: 1, kept: 0, reportsGenerated: true, assessmentsEnhanced: 0, durationMs: 5,
+      decisions: [{ finding_id: 0, action: 'false_positive', reason: 'fp' }],
+      devAssessments: [],
+    };
+
+    // loadOutput uses select().from().where() with a step id — emulate outputs
+    // per step by keying off the hydration order: hydration happens
+    // sequentially (clone..triage), each via one where() call.
+    let callCount = 0;
+    let hydrateCall = 0;
+    const outputs: Record<number, unknown> = {
+      1: { output: { repoPath: '/repo' } },
+      2: { output: { aiAvailable: true } },
+      3: { output: { toolResults: {} } },
+      4: { output: { scanCompleted: true } },
+      5: { output: importOutput },
+      6: { output: triageOutput },
+    };
+    mockDb.where.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve([
+          { id: 1, scanId: 'scan-1', stepName: 'clone', stepOrder: 1, status: 'completed', output: { repoPath: '/repo' } },
+          { id: 2, scanId: 'scan-1', stepName: 'analysis', stepOrder: 2, status: 'completed', output: { aiAvailable: true } },
+          { id: 3, scanId: 'scan-1', stepName: 'security-tools', stepOrder: 3, status: 'completed', output: { toolResults: {} } },
+          { id: 4, scanId: 'scan-1', stepName: 'ai-research', stepOrder: 4, status: 'completed', output: { scanCompleted: true } },
+          { id: 5, scanId: 'scan-1', stepName: 'import', stepOrder: 5, status: 'completed', output: importOutput },
+          { id: 6, scanId: 'scan-1', stepName: 'triage-report', stepOrder: 6, status: 'completed', output: triageOutput },
+          { id: 7, scanId: 'scan-1', stepName: 'commit', stepOrder: 7, status: 'pending' },
+        ]);
+      }
+      // Hydration loadOutput calls come right after the existing-steps select,
+      // one per completed step in order (clone, analysis, sec-tools, ai-research, import, triage).
+      if (hydrateCall < 6) {
+        hydrateCall++;
+        return Promise.resolve([outputs[hydrateCall]]);
+      }
+      return Promise.resolve([{ status: 'running' }]);
+    });
+
+    await runPipeline(makeScan());
+
+    // Only commit ran — with the reloaded plan + decisions in prev
+    expect(mockRunImportStep).not.toHaveBeenCalled();
+    expect(mockRunTriageStep).not.toHaveBeenCalled();
+    expect(mockRunCommitStep).toHaveBeenCalledTimes(1);
+    const commitPrev = mockRunCommitStep.mock.calls[0][0].prev;
+    expect(commitPrev.preparedFindings).toEqual(importOutput.preparedFindings);
+    expect(commitPrev.decisions).toEqual(triageOutput.decisions);
+  });
+
+  it('clears stale AI traces at the start of a FRESH run', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    // Fresh run: the initial scan_steps select finds NO existing rows.
+    let callCount = 0;
+    mockDb.where.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return Promise.resolve([]);
+      return Promise.resolve([{ status: 'running' }]);
+    });
+
+    await runPipeline(makeScan());
+
+    expect(mockClearTraces).toHaveBeenCalledTimes(1);
+    expect(mockClearTraces).toHaveBeenCalledWith('scan-1');
+  });
+
+  it('does NOT clear AI traces on a resumed run (would lose completed-wave traces)', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    // Simulate a resume: existing step rows are found for this scan.
+    let callCount = 0;
+    mockDb.where.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve([
+          { id: 1, scanId: 'scan-1', stepName: 'clone', stepOrder: 1, status: 'completed', output: { repoPath: '/repo' } },
+          { id: 2, scanId: 'scan-1', stepName: 'analysis', stepOrder: 2, status: 'pending' },
+          { id: 3, scanId: 'scan-1', stepName: 'security-tools', stepOrder: 3, status: 'pending' },
+          { id: 4, scanId: 'scan-1', stepName: 'ai-research', stepOrder: 4, status: 'pending' },
+          { id: 5, scanId: 'scan-1', stepName: 'import', stepOrder: 5, status: 'pending' },
+          { id: 6, scanId: 'scan-1', stepName: 'triage-report', stepOrder: 6, status: 'pending' },
+          { id: 7, scanId: 'scan-1', stepName: 'commit', stepOrder: 7, status: 'pending' },
+        ]);
+      }
+      return Promise.resolve([{ status: 'running' }]);
+    });
+
+    await runPipeline(makeScan());
+
+    expect(mockClearTraces).not.toHaveBeenCalled();
   });
 
   it('rethrows ScanPausedError without marking step failed', async () => {
@@ -468,6 +746,25 @@ describe('logScanEvent', () => {
     // Should not throw
     await logScanEvent('scan-1', null, 'error', 'test', {});
   });
+
+  it('caps the persisted message at 4000 chars (legacy 10MB messages froze the dashboard)', async () => {
+    const { logScanEvent } = await import('./pipeline.ts');
+
+    await logScanEvent('scan-1', 'import', 'error', 'm'.repeat(100_000), {}, 'repo', 1);
+
+    const inserted = mockDb.values.mock.calls.at(-1)![0];
+    expect(inserted.message.length).toBeLessThan(4_100);
+    expect(inserted.message).toContain('… (truncated, 100000 chars total)');
+  });
+
+  it('leaves short messages untouched and NUL-stripped', async () => {
+    const { logScanEvent } = await import('./pipeline.ts');
+
+    await logScanEvent('scan-1', 'clone', 'info', 'clone\u0000 done', {}, 'repo', 1);
+
+    const inserted = mockDb.values.mock.calls.at(-1)![0];
+    expect(inserted.message).toBe('clone done');
+  });
 });
 
 // ── buildContext ─────────────────────────────────────────────────
@@ -482,8 +779,50 @@ describe('buildContext', () => {
     expect(ctx.repoName).toBe('my-repo');
     expect(ctx.repoUrl).toBe('https://github.com/org/my-repo.git');
     expect(ctx.cloneUrl).toBe('https://github.com/org/my-repo.git');
-    expect(ctx.repoPath).toBe('/workspace/my-repo/repo');
+    // repositoryId is null → falls back to the repo-id key (repo-0)
+    expect(ctx.repoBaseDir).toBe('/workspace/repo-0/my-repo');
+    expect(ctx.repoPath).toBe('/workspace/repo-0/my-repo/repo');
     expect(ctx.reportLanguage).toBe('en');
+  });
+
+  // Same-named repos from different sources must never share a clone dir —
+  // paths are keyed by SOURCE id (globally unique), not by repo name.
+  it('keys all repo paths by source id', async () => {
+    const { buildContext } = await import('./pipeline.ts');
+
+    mockDb.where.mockResolvedValueOnce([{ sourceId: 7 }]);
+
+    const ctx = await buildContext(makeScan({ repositoryId: 10 }));
+
+    expect(ctx.repoBaseDir).toBe('/workspace/src-7/my-repo');
+    expect(ctx.repoPath).toBe('/workspace/src-7/my-repo/repo');
+    expect(ctx.workDir).toBe('/workspace/src-7/my-repo/scan-1');
+    expect(ctx.profilePath).toBe('/workspace/src-7/my-repo/repo-profile.md');
+    expect(ctx.scanContextPath).toBe('/workspace/src-7/my-repo/scan-context.md');
+  });
+
+  it('same repo name under two different sources yields two different paths', async () => {
+    const { buildContext } = await import('./pipeline.ts');
+
+    mockDb.where.mockResolvedValueOnce([{ sourceId: 1 }]);
+    const github = await buildContext(makeScan({ repositoryId: 10, repoName: 'mountain' }));
+    mockDb.where.mockResolvedValueOnce([{ sourceId: 2 }]);
+    const gitlab = await buildContext(makeScan({ repositoryId: 11, repoName: 'mountain' }));
+
+    expect(github.repoPath).toBe('/workspace/src-1/mountain/repo');
+    expect(gitlab.repoPath).toBe('/workspace/src-2/mountain/repo');
+    expect(github.repoPath).not.toBe(gitlab.repoPath);
+  });
+
+  it('falls back to the repository id when the repo has no source', async () => {
+    const { buildContext } = await import('./pipeline.ts');
+
+    mockDb.where.mockResolvedValueOnce([{ sourceId: null }]);
+
+    const ctx = await buildContext(makeScan({ repositoryId: 10 }));
+
+    expect(ctx.repoBaseDir).toBe('/workspace/repo-10/my-repo');
+    expect(ctx.repoPath).toBe('/workspace/repo-10/my-repo/repo');
   });
 
   it('builds context from scan with absolute localPath', async () => {
@@ -550,5 +889,80 @@ describe('buildContext', () => {
     expect(ctx.aiModelAnalyzer).toBe('sonnet');
     expect(ctx.aiModelScanner).toBe('opus');
     expect(ctx.aiModelTriage).toBe('opus');
+  });
+});
+
+// ── "Completed with errors" collection ───────────────────────────
+
+describe('runPipeline — completed with errors', () => {
+  it('returns completedWithErrors=false and no stepErrors on a clean run', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    const result = await runPipeline(makeScan());
+
+    expect(result).toEqual({ completedWithErrors: false, stepErrors: [] });
+
+    // Final event is the plain info "Scan completed" one
+    const eventMessages = mockDb.values.mock.calls
+      .map((c: any[]) => c[0]?.message)
+      .filter(Boolean);
+    expect(eventMessages.some((m: string) => m.includes('Scan completed for'))).toBe(true);
+    expect(eventMessages.some((m: string) => m.includes('completed with errors'))).toBe(false);
+  });
+
+  it('collects toolErrors + moduleErrors from step outputs and logs ONE detailed warning event', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunSecToolsStep.mockResolvedValueOnce({
+      toolResults: { semgrep: { status: 'failed', durationMs: 5, findingsCount: 0, error: 'network timeout' } },
+      totalDurationMs: 500,
+      toolWarnings: [],
+      toolErrors: [
+        { kind: 'tool', name: 'semgrep', error: 'failed after retry: network timeout', failedAfterRetry: true },
+      ],
+    });
+    mockRunAiResearchStep.mockResolvedValueOnce({
+      scanCompleted: true,
+      skipped: false,
+      durationMs: 5000,
+      moduleErrors: [
+        { kind: 'module', name: 'src/api', error: 'failed after retry — attempt 1: context overflow; attempt 2: context overflow', failedAfterRetry: true },
+      ],
+    });
+
+    const result = await runPipeline(makeScan());
+
+    expect(result.completedWithErrors).toBe(true);
+    expect(result.stepErrors).toHaveLength(2);
+    expect(result.stepErrors.map(e => e.name)).toEqual(['semgrep', 'src/api']);
+
+    // Commit still ran — succeeded tools/modules ARE committed, that's the point
+    expect(mockRunCommitStep).toHaveBeenCalledTimes(1);
+
+    // One completion warning event listing every surviving error
+    const warningEvents = mockDb.values.mock.calls
+      .map((c: any[]) => c[0])
+      .filter((v: any) => v?.level === 'warning' && String(v?.message).startsWith('Scan completed with errors:'));
+    expect(warningEvents).toHaveLength(1);
+    expect(warningEvents[0].message).toContain('semgrep (failed after retry: network timeout)');
+    expect(warningEvents[0].message).toContain('module src/api');
+    expect(warningEvents[0].details.stepErrors).toHaveLength(2);
+  });
+
+  it('tool errors alone flag the scan (no module errors involved)', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunSecToolsStep.mockResolvedValueOnce({
+      toolResults: {},
+      totalDurationMs: 1,
+      toolWarnings: [],
+      toolErrors: [{ kind: 'tool', name: 'gitleaks', error: 'oom', failedAfterRetry: true }],
+    });
+
+    const result = await runPipeline(makeScan());
+    expect(result.completedWithErrors).toBe(true);
+    expect(result.stepErrors).toEqual([
+      { kind: 'tool', name: 'gitleaks', error: 'oom', failedAfterRetry: true },
+    ]);
   });
 });

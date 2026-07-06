@@ -13,30 +13,30 @@ describe('ThemeProvider', () => {
     document.documentElement.className = '';
   });
 
-  it('defaults to dark theme', () => {
+  it('defaults to light theme', () => {
     const { result } = renderHook(() => useTheme(), { wrapper });
-    expect(result.current.theme).toBe('dark');
+    expect(result.current.theme).toBe('light');
   });
 
-  it('applies dark class to document root by default', () => {
+  it('applies light class to document root by default', () => {
     renderHook(() => useTheme(), { wrapper });
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    expect(document.documentElement.classList.contains('light')).toBe(true);
   });
 
-  it('toggles to light theme', () => {
+  it('toggles to dark theme', () => {
     const { result } = renderHook(() => useTheme(), { wrapper });
+    act(() => result.current.toggleTheme());
+    expect(result.current.theme).toBe('dark');
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    expect(document.documentElement.classList.contains('light')).toBe(false);
+  });
+
+  it('toggles back to light theme', () => {
+    const { result } = renderHook(() => useTheme(), { wrapper });
+    act(() => result.current.toggleTheme());
     act(() => result.current.toggleTheme());
     expect(result.current.theme).toBe('light');
     expect(document.documentElement.classList.contains('light')).toBe(true);
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
-  });
-
-  it('toggles back to dark theme', () => {
-    const { result } = renderHook(() => useTheme(), { wrapper });
-    act(() => result.current.toggleTheme());
-    act(() => result.current.toggleTheme());
-    expect(result.current.theme).toBe('dark');
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
 
   it('persists theme preference to localStorage', () => {

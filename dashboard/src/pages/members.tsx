@@ -9,9 +9,11 @@ import {
   useUpdateWorkspaceMember,
   useRemoveWorkspaceMember,
 } from '@/api/hooks';
-import type { WorkspaceMember } from '@/api/types';
+import type { WorkspaceMember, WorkspaceUserOption } from '@/api/types';
 import { formatDate } from '@/lib/format';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { TableSkeleton } from '@/components/skeleton';
+import { UserSearch } from '@/components/user-search';
 
 export function MembersPage() {
   const { t } = useTranslation();
@@ -40,7 +42,7 @@ export function MembersPage() {
 
         <div className="beast-table-wrap">
           {isLoading ? (
-            <div className="beast-empty">{t('common.loading')}</div>
+            <div className="beast-section-pad"><TableSkeleton rows={5} /></div>
           ) : !members || members.length === 0 ? (
             <div className="beast-empty">{t('members.noMembers')}</div>
           ) : (
@@ -76,50 +78,42 @@ export function MembersPage() {
 function AddMemberForm({ workspaceId }: { workspaceId: number }) {
   const { t } = useTranslation();
   const addMutation = useAddWorkspaceMember();
-  const [username, setUsername] = useState('');
+  const [selectedUser, setSelectedUser] = useState<WorkspaceUserOption | null>(null);
   const [role, setRole] = useState<string>('member');
   const [error, setError] = useState('');
-  const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
-  const [copied, setCopied] = useState(false);
 
   async function handleAdd() {
-    if (!username.trim()) return;
+    if (!selectedUser) return;
     setError('');
-    setCredentials(null);
 
     try {
-      const result = await addMutation.mutateAsync({ workspaceId, username: username.trim(), role });
-      if (result.generatedPassword) {
-        setCredentials({ username: username.trim(), password: result.generatedPassword });
-      }
-      setUsername('');
+      await addMutation.mutateAsync({ workspaceId, username: selectedUser.username, role });
+      setSelectedUser(null);
     } catch (err: any) {
       setError(err.message || t('common.error'));
-    }
-  }
-
-  async function handleCopy() {
-    if (!credentials) return;
-    try {
-      await navigator.clipboard.writeText(`${credentials.username}\n${credentials.password}`);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard API not available
     }
   }
 
   return (
     <div className="beast-stack">
       <div className="beast-inline-form">
-        <input
-          type="text"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-          placeholder={t('members.usernamePlaceholder')}
-          className="beast-input"
-        />
+        {selectedUser ? (
+          <span className="beast-selected-user">
+            <span className="beast-selected-user-label">
+              {selectedUser.username}
+            </span>
+            <button
+              type="button"
+              className="beast-selected-user-clear"
+              onClick={() => setSelectedUser(null)}
+              aria-label={t('members.clearSelection')}
+            >
+              &times;
+            </button>
+          </span>
+        ) : (
+          <UserSearch workspaceId={workspaceId} onSelect={setSelectedUser} />
+        )}
         <select
           value={role}
           onChange={(e) => setRole(e.target.value)}
@@ -130,7 +124,7 @@ function AddMemberForm({ workspaceId }: { workspaceId: number }) {
         </select>
         <button
           onClick={handleAdd}
-          disabled={!username.trim() || addMutation.isPending}
+          disabled={!selectedUser || addMutation.isPending}
           className="beast-btn beast-btn-primary"
         >
           {addMutation.isPending ? t('common.loading') : t('members.addMember')}
@@ -138,23 +132,6 @@ function AddMemberForm({ workspaceId }: { workspaceId: number }) {
       </div>
 
       {error && <div className="beast-error">{error}</div>}
-
-      {credentials && (
-        <div className="beast-banner beast-banner-success">
-          <div className="beast-banner-content">
-            <span>{t('members.addSuccess', { username: credentials.username })}</span>
-            <span className="beast-banner-detail">
-              {t('members.tempPassword')}: <code>{credentials.password}</code>
-            </span>
-          </div>
-          <button onClick={handleCopy} className="beast-btn beast-btn-sm beast-btn-outline">
-            {copied ? t('members.copied') : t('members.copyCredentials')}
-          </button>
-          <button onClick={() => setCredentials(null)} className="beast-btn-icon" aria-label="dismiss">
-            &times;
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -195,6 +172,7 @@ function MemberRow({
           <select
             value={member.role}
             onChange={(e) => handleRoleChange(e.target.value)}
+            disabled={updateMutation.isPending}
             aria-label={t('members.changeRole')}
             className="beast-select beast-select-sm"
           >

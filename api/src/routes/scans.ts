@@ -4,11 +4,32 @@ import { eq, and, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { scans, scanSteps, scanModules, repositories } from '../db/schema.ts';
 import { createScan, getScan, listScans } from '../orchestrator/db.ts';
+import { cleanupFailedScanData } from '../orchestrator/cleanup.ts';
 import { authorize, authorizeSuperAdmin, authorizePublic, ForbiddenError } from '../lib/authorize.ts';
+import { truncateScanErrorForList, trimStepPayloadForApi } from '../lib/sanitize.ts';
+import { resumeWorker } from './worker-status.ts';
 import * as fs from 'fs';
 import * as path from 'path';
 
 const ARTIFACTS_BASE = process.env.ARTIFACTS_PATH || '/data/scan-artifacts';
+
+/** True when a client-supplied path segment is a single safe name:
+ *  no separators, no parent-dir escapes, not empty. */
+function isSafePathSegment(segment: string): boolean {
+  return segment.length > 0
+    && !segment.includes('/')
+    && !segment.includes('\\')
+    && !segment.includes('..')
+    && segment !== '.';
+}
+
+/** Resolve `parts` under ARTIFACTS_BASE and ensure the result stays inside it. */
+function resolveInsideArtifactsBase(...parts: string[]): string | null {
+  const resolved = path.resolve(ARTIFACTS_BASE, ...parts);
+  const base = path.resolve(ARTIFACTS_BASE);
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) return null;
+  return resolved;
+}
 
 export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
   // GET /api/scans/stats — aggregate scan statistics
@@ -51,7 +72,6 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
         branch: z.string().optional(),
         commitHash: z.string().optional(),
         scanType: z.string().optional(),
-        pullRequestId: z.number().optional(),
         changedFiles: z.array(z.string()).optional(),
       }),
     },
@@ -75,6 +95,8 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
 
     await authorize(request, workspaceId, 'workspace_admin');
 
+    const scanType = body.scanType || 'full';
+
     // Local paths (from uploads) start with '/' — pass as localPath, not repoUrl
     const isLocalPath = repo.repoUrl?.startsWith('/') ?? false;
 
@@ -86,11 +108,9 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
       commitHash: body.commitHash?.trim() || undefined,
       workspaceId,
       repositoryId: body.repositoryId,
-      pullRequestId: body.pullRequestId,
-      scanType: body.scanType || 'full',
+      scanType,
     });
 
-    // Update repo status to queued
     await db.update(repositories)
       .set({ status: 'queued', updatedAt: sql`NOW()` })
       .where(eq(repositories.id, body.repositoryId));
@@ -102,14 +122,15 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/scans', {
     schema: {
       querystring: z.object({
-        limit: z.coerce.number().optional(),
-        offset: z.coerce.number().optional(),
+        limit: z.coerce.number().min(1).max(500).default(20),
+        offset: z.coerce.number().min(0).default(0),
         workspace_id: z.coerce.number().optional(),
         status: z.string().optional(),
+        repository_id: z.coerce.number().optional(),
       }),
     },
   }, async (request) => {
-    const { limit: rawLimit, offset: rawOffset, workspace_id: workspaceId, status } = request.query;
+    const { limit, offset, workspace_id: workspaceId, status, repository_id: repositoryId } = request.query;
 
     if (workspaceId) {
       await authorize(request, workspaceId, 'member');
@@ -117,16 +138,21 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
       authorizeSuperAdmin(request);
     }
 
-    const limit = Math.min(rawLimit || 20, 500);
-    const offset = rawOffset || 0;
-    return listScans(limit, offset, workspaceId, status);
+    // List rows never include step input/output (listScans selects scans only),
+    // but LEGACY failed scans can carry multi-MB error blobs — truncate at
+    // serialization so /scans?limit=10 stays a few KB, not 10.5MB.
+    const { count, results } = await listScans(limit, offset, workspaceId, status, repositoryId);
+    return {
+      count,
+      results: results.map((s) => ({ ...s, error: truncateScanErrorForList(s.error) })),
+    };
   });
 
   // GET /api/scans/:id — get single scan with step progress
   app.get('/scans/:id', {
     schema: {
       params: z.object({
-        id: z.string(),
+        id: z.string().uuid(),
       }),
     },
   }, async (request, reply) => {
@@ -139,10 +165,18 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!scan.workspaceId) throw new ForbiddenError('Scan has no workspace');
     await authorize(request, scan.workspaceId, 'member');
 
-    // Join scan_steps
-    const steps = await db.select().from(scanSteps)
+    // Join scan_steps. Step input/output is trimmed for SERVING only: the
+    // import step's staged plan (preparedFindings/resultFiles/… ≈10MB) lives
+    // in scan_steps.output as the commit/resume mechanism and must stay in
+    // the DB untouched — but serialized inline it made this endpoint 21–30MB.
+    const stepRows = await db.select().from(scanSteps)
       .where(eq(scanSteps.scanId, id))
       .orderBy(scanSteps.stepOrder);
+    const steps = stepRows.map((s) => ({
+      ...s,
+      input: trimStepPayloadForApi(s.input),
+      output: trimStepPayloadForApi(s.output),
+    }));
 
     // Sniper module progress (only meaningful when scan is paused or running mid-AI-research)
     const moduleRows = await db.select({ status: scanModules.status })
@@ -160,7 +194,7 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
   app.delete('/scans/:id', {
     schema: {
       params: z.object({
-        id: z.string(),
+        id: z.string().uuid(),
       }),
     },
   }, async (request, reply) => {
@@ -210,7 +244,7 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/scans/:id/cancel', {
     schema: {
       params: z.object({
-        id: z.string(),
+        id: z.string().uuid(),
       }),
     },
   }, async (request, reply) => {
@@ -223,7 +257,7 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!scan.workspaceId) throw new ForbiddenError('Scan has no workspace');
     await authorize(request, scan.workspaceId, 'workspace_admin');
 
-    if (scan.status !== 'running' && scan.status !== 'queued') {
+    if (scan.status !== 'running' && scan.status !== 'queued' && scan.status !== 'paused') {
       return reply.status(409).send({ error: 'Scan is not active' });
     }
 
@@ -233,14 +267,23 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
         status: 'failed',
         error: 'Cancelled by user',
         completedAt: sql`NOW()`,
+        resumesAt: null,
       })
       .where(eq(scans.id, id));
 
-    // Update repo status back
     if (scan.repositoryId) {
       await db.update(repositories)
         .set({ status: 'failed', updatedAt: sql`NOW()` })
         .where(eq(repositories.id, scan.repositoryId));
+    }
+
+    // A paused scan has NO active pipeline: no cancel-poller to abort it and no
+    // worker failure path to run afterwards (the worker only cleans scans it was
+    // actively running). Remove the partial repo data here, exactly like the
+    // worker's failure path would. Running/queued scans keep the existing flow —
+    // the pipeline notices the 'failed' status and the worker cleans up.
+    if (scan.status === 'paused') {
+      await cleanupFailedScanData(id, { repoName: scan.repoName, workspaceId: scan.workspaceId });
     }
 
     return { cancelled: true };
@@ -250,7 +293,7 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/scans/:id/resume', {
     schema: {
       params: z.object({
-        id: z.string(),
+        id: z.string().uuid(),
       }),
     },
   }, async (request, reply) => {
@@ -272,6 +315,12 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
     await db.update(scans)
       .set({ resumesAt: null, error: null })
       .where(eq(scans.id, id));
+
+    // Lift the GLOBAL worker pause too. A rate-limit pause sets an in-memory
+    // worker flag (via /worker/pause); pollForWork() bails on isWorkerPaused()
+    // before it ever queries for resumable scans. Clearing resumes_at alone
+    // leaves the scan stuck — the user's "Resume now" must also unpause the worker.
+    resumeWorker();
 
     return { resumed: true };
   });
@@ -313,7 +362,7 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/scans/:id/steps/:stepName/artifacts', {
     schema: {
       params: z.object({
-        id: z.string(),
+        id: z.string().uuid(),
         stepName: z.string(),
       }),
     },
@@ -328,7 +377,14 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!scan.workspaceId) throw new ForbiddenError('Scan has no workspace');
     await authorize(request, scan.workspaceId, 'member');
 
-    const dir = path.join(ARTIFACTS_BASE, id, stepName);
+    if (!isSafePathSegment(stepName)) {
+      return reply.status(400).send({ error: 'Invalid step name' });
+    }
+
+    const dir = resolveInsideArtifactsBase(id, stepName);
+    if (!dir) {
+      return reply.status(400).send({ error: 'Invalid step name' });
+    }
 
     if (!fs.existsSync(dir)) {
       return [];
@@ -346,7 +402,7 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get('/scans/:id/steps/:stepName/artifacts/:filename', {
     schema: {
       params: z.object({
-        id: z.string(),
+        id: z.string().uuid(),
         stepName: z.string(),
         filename: z.string(),
       }),
@@ -362,7 +418,14 @@ export const scanRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!scan.workspaceId) throw new ForbiddenError('Scan has no workspace');
     await authorize(request, scan.workspaceId, 'member');
 
-    const filePath = path.join(ARTIFACTS_BASE, id, stepName, filename);
+    if (!isSafePathSegment(stepName) || !isSafePathSegment(filename)) {
+      return reply.status(400).send({ error: 'Invalid step name or filename' });
+    }
+
+    const filePath = resolveInsideArtifactsBase(id, stepName, filename);
+    if (!filePath) {
+      return reply.status(400).send({ error: 'Invalid step name or filename' });
+    }
 
     if (!fs.existsSync(filePath)) {
       return reply.status(404).send({ error: 'Artifact not found' });

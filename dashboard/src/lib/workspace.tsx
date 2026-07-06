@@ -36,6 +36,8 @@ interface WorkspaceContextValue {
   switchWorkspace: (id: number) => void;
   isLoading: boolean;
   needsOnboarding: boolean;
+  /** True when the workspace list failed to load (network/server error) — NOT the same as an empty list. */
+  isError?: boolean;
   refetchWorkspaces: () => void;
 }
 
@@ -55,6 +57,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const {
     data: workspaces = [],
     isLoading,
+    isError,
     refetch,
   } = useQuery({
     queryKey: ['workspaces'],
@@ -75,9 +78,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [isLoading, workspaces, selectedId]);
 
-  // If selected workspace was deleted, reset to first remaining or clear
+  // If selected workspace was deleted, reset to first remaining or clear.
+  // Skipped on fetch failure — an error is not an empty list.
   useEffect(() => {
-    if (!isLoading && selectedId !== null) {
+    if (!isLoading && !isError && selectedId !== null) {
       const exists = workspaces.some((w) => w.id === selectedId);
       if (!exists) {
         if (workspaces.length > 0) {
@@ -90,7 +94,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-  }, [isLoading, workspaces, selectedId]);
+  }, [isLoading, isError, workspaces, selectedId]);
 
   const switchWorkspace = useCallback(
     (id: number) => {
@@ -106,7 +110,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const currentWorkspace =
     workspaces.find((w) => w.id === selectedId) ?? null;
-  const needsOnboarding = isAuthenticated && !isLoading && workspaces.length === 0;
+  const needsOnboarding =
+    isAuthenticated && !isLoading && !isError && workspaces.length === 0;
 
 
   return (
@@ -117,6 +122,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         switchWorkspace,
         isLoading: isAuthenticated && isLoading,
         needsOnboarding,
+        isError,
         refetchWorkspaces: refetch,
       }}
     >

@@ -224,75 +224,49 @@ else
   TOOL_STATUS["trivy-iac"]="skipped"; TOOL_EXIT["trivy-iac"]=""; TOOL_FILE["trivy-iac"]="null"; TOOL_DURATION["trivy-iac"]=0
 fi
 
-# -- JFrog CLI (SCA dependency scanning via Xray) -------------------------
-# Note: jf audit exits non-zero when it finds vulnerabilities OR when sub-scans
-# (SAST/Secrets/IaC) fail, but still produces valid SARIF with dependency results.
-# We can't use run_tool() here because it deletes output on non-zero exit.
+# -- JFrog Xray SCA (dependency CVEs) via REST scan/graph -----------------
+# We do NOT use `jf audit`: it unconditionally checks the contextual_analysis
+# (JFrog Advanced Security / JAS) entitlement and dies on 403 when a plan lacks
+# JAS. SCA is core Xray and JAS-independent, so jfrog-sca.mjs parses the repo's
+# lock files into a component graph and calls /xray/api/v1/scan/graph directly.
+# Needs only a token with Xray scan permissions — no JAS, no jf CLI, no curl.
 if is_enabled "jfrog"; then
   # Normalize JF_URL: ensure https:// prefix
   if [ -n "${JF_URL:-}" ] && [[ "$JF_URL" != http://* ]] && [[ "$JF_URL" != https://* ]]; then
     JF_URL="https://${JF_URL}"
     echo "[security-tools] JF_URL normalized to $JF_URL"
   fi
-  if command -v jf > /dev/null 2>&1 && [ -n "${JF_URL:-}" ] && [ -n "${JF_ACCESS_TOKEN:-}" ]; then
-    # Detect project types and warn about missing package managers
-    _jf_missing=""
-    [ -f "$REPO_PATH/pom.xml" ] && ! command -v mvn > /dev/null 2>&1 && _jf_missing="${_jf_missing} maven(mvn)"
-    [ -f "$REPO_PATH/build.gradle" ] && ! command -v gradle > /dev/null 2>&1 && _jf_missing="${_jf_missing} gradle"
-    [ -f "$REPO_PATH/go.mod" ] && ! command -v go > /dev/null 2>&1 && _jf_missing="${_jf_missing} go"
-    [ -f "$REPO_PATH/package-lock.json" ] && ! command -v npm > /dev/null 2>&1 && _jf_missing="${_jf_missing} npm"
-    [ -f "$REPO_PATH/yarn.lock" ] && ! command -v yarn > /dev/null 2>&1 && _jf_missing="${_jf_missing} yarn"
-    [ -f "$REPO_PATH/pnpm-lock.yaml" ] && ! command -v pnpm > /dev/null 2>&1 && _jf_missing="${_jf_missing} pnpm"
-    [ -f "$REPO_PATH/requirements.txt" ] && ! command -v pip > /dev/null 2>&1 && _jf_missing="${_jf_missing} pip"
-    [ -f "$REPO_PATH/Pipfile.lock" ] && ! command -v pipenv > /dev/null 2>&1 && _jf_missing="${_jf_missing} pipenv"
-    [ -f "$REPO_PATH/poetry.lock" ] && ! command -v poetry > /dev/null 2>&1 && _jf_missing="${_jf_missing} poetry"
-    [ -f "$REPO_PATH/composer.lock" ] && ! command -v composer > /dev/null 2>&1 && _jf_missing="${_jf_missing} composer"
-    [ -f "$REPO_PATH/Gemfile.lock" ] && ! command -v bundle > /dev/null 2>&1 && _jf_missing="${_jf_missing} bundler"
-    (ls "$REPO_PATH"/*.csproj 2>/dev/null | head -1 | grep -q .) && ! command -v dotnet > /dev/null 2>&1 && _jf_missing="${_jf_missing} dotnet"
-    if [ -n "$_jf_missing" ]; then
-      echo "[security-tools] WARNING: jf-audit SCA may fail — missing package managers:${_jf_missing}"
-    fi
-
+  if [ -n "${JF_URL:-}" ] && [ -n "${JF_ACCESS_TOKEN:-}" ]; then
     JF_OUT="$RESULTS_DIR/jf-audit-results.sarif"
     JF_ERR=$(mktemp)
-    echo "[security-tools] Running jf-audit..."
+    echo "[security-tools] Running JFrog Xray SCA (scan/graph, JAS-free)..."
     jf_exit=0
     jf_start_ms=$(date +%s%3N)
-    (cd "$REPO_PATH" && CI=true jf audit --url="$JF_URL" --access-token="$JF_ACCESS_TOKEN" --vuln --format=sarif) > "$JF_OUT" 2>"$JF_ERR" || jf_exit=$?
+    JF_URL="$JF_URL" JF_ACCESS_TOKEN="$JF_ACCESS_TOKEN" \
+      node /scripts/jfrog-sca.mjs "$REPO_PATH" "$JF_OUT" 2>"$JF_ERR" || jf_exit=$?
     jf_end_ms=$(date +%s%3N)
     jf_stderr=$(head -c 2000 "$JF_ERR" 2>/dev/null || true)
     rm -f "$JF_ERR"
 
     TOOL_DURATION["jf-audit"]=$((jf_end_ms - jf_start_ms))
 
-    # Accept results if valid SARIF was produced, regardless of exit code
-    if [ -s "$JF_OUT" ] && python3 -c "import json; json.load(open('$JF_OUT'))" 2>/dev/null; then
+    if [ $jf_exit -eq 0 ] && [ -s "$JF_OUT" ] && python3 -c "import json; json.load(open('$JF_OUT'))" 2>/dev/null; then
       TOOL_STATUS["jf-audit"]="success"
-      TOOL_EXIT["jf-audit"]=$jf_exit
+      TOOL_EXIT["jf-audit"]=0
       TOOL_FILE["jf-audit"]="jf-audit-results.sarif"
-      echo "[security-tools] jf-audit complete (exit $jf_exit, valid SARIF)"
-    elif [ $jf_exit -ne 0 ]; then
-      # Capture error: try stderr first, fall back to whatever is in the output file
-      jf_error_msg="$jf_stderr"
-      if [ -z "$jf_error_msg" ] && [ -s "$JF_OUT" ]; then
-        jf_error_msg=$(head -c 2000 "$JF_OUT" 2>/dev/null || true)
-      fi
+      echo "[security-tools] JFrog SCA complete (valid SARIF)"
+    else
       write_empty_result "$JF_OUT" "jf-audit" "failed" "$jf_exit"
       TOOL_STATUS["jf-audit"]="failed"
       TOOL_EXIT["jf-audit"]=$jf_exit
       TOOL_FILE["jf-audit"]="jf-audit-results.sarif"
-      TOOL_ERROR["jf-audit"]=$(echo "$jf_error_msg" | head -1 | cut -c1-300)
-      echo "[security-tools] jf-audit failed with exit code $jf_exit: ${TOOL_ERROR["jf-audit"]}"
-    else
-      write_empty_result "$JF_OUT" "jf-audit" "failed" "0"
-      TOOL_STATUS["jf-audit"]="failed"
-      TOOL_EXIT["jf-audit"]=0
-      TOOL_FILE["jf-audit"]="jf-audit-results.sarif"
-      TOOL_ERROR["jf-audit"]="produced empty/invalid output"
-      echo "[security-tools] jf-audit produced empty/invalid output"
+      # SCREAM the real cause: grab the actual error line, not the first banner line.
+      TOOL_ERROR["jf-audit"]=$(echo "$jf_stderr" | grep -iE "error|forbidden|denied|timed out|not set" | tail -1 | cut -c1-300)
+      [ -z "${TOOL_ERROR["jf-audit"]}" ] && TOOL_ERROR["jf-audit"]=$(echo "$jf_stderr" | tail -1 | cut -c1-300)
+      echo "[security-tools] JFrog SCA failed (exit $jf_exit): ${TOOL_ERROR["jf-audit"]}"
     fi
   else
-    echo "[security-tools] Skipping jf audit (JF_URL/JF_ACCESS_TOKEN not set)"
+    echo "[security-tools] Skipping JFrog SCA (JF_URL/JF_ACCESS_TOKEN not set)"
     TOOL_STATUS["jf-audit"]="skipped"
     TOOL_EXIT["jf-audit"]=""
     TOOL_FILE["jf-audit"]="null"
@@ -333,9 +307,16 @@ fi
 if is_enabled "checkov"; then
   run_tool "checkov" "$RESULTS_DIR/checkov-results.sarif" \
     checkov -d "$REPO_PATH" --soft-fail -o sarif --output-file-path "$RESULTS_DIR"
+  # Checkov writes results_sarif.sarif, not the outfile run_tool watched, so
+  # run_tool may have recorded a bogus failure. If the real output exists,
+  # override to success AND clear the stale failure fields — otherwise the
+  # summary claims success while still carrying an error/exit from the
+  # failure path.
   if [[ -f "$RESULTS_DIR/results_sarif.sarif" ]]; then
     mv "$RESULTS_DIR/results_sarif.sarif" "$RESULTS_DIR/checkov-results.sarif"
     TOOL_STATUS["checkov"]="success"
+    TOOL_EXIT["checkov"]=0
+    TOOL_ERROR["checkov"]=""
   fi
 else
   TOOL_STATUS["checkov"]="skipped"; TOOL_EXIT["checkov"]=""; TOOL_FILE["checkov"]="null"; TOOL_DURATION["checkov"]=0

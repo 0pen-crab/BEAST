@@ -195,6 +195,41 @@ describe('generateFindingsCsv', () => {
     expect(csv).toContain('sk-secret123');
   });
 
+  describe('formula injection hardening', () => {
+    it.each([
+      ['=SUM(A1:A9)'],
+      ['+1+2'],
+      ['-1-2'],
+      ['@cmd|calc'],
+    ])('prefixes cell starting with a formula character (%s) with a single quote', (payload) => {
+      const csv = generateFindingsCsv([makeFinding({ title: payload })]);
+      expect(csv).toContain(`'${payload}`);
+      // The raw payload must never appear at the start of a cell
+      expect(csv.split('\n')[1].split(',')).not.toContain(payload);
+    });
+
+    it('escapes formula payloads in the description column', () => {
+      const csv = generateFindingsCsv([makeFinding({ description: '=HYPERLINK("http://evil")' })]);
+      expect(csv).toContain('\'=HYPERLINK(');
+    });
+
+    it('escapes formula payloads in the secret column', () => {
+      const csv = generateFindingsCsv([makeFinding({ secretValue: '=2+5' })]);
+      expect(csv).toContain("'=2+5");
+    });
+
+    it('quote-prefixes before RFC 4180 quoting when the value also contains a comma', () => {
+      const csv = generateFindingsCsv([makeFinding({ title: '=CMD(), boom' })]);
+      expect(csv).toContain('"\'=CMD(), boom"');
+    });
+
+    it('does not prefix ordinary values', () => {
+      const csv = generateFindingsCsv([makeFinding({ title: 'Plain title' })]);
+      expect(csv).not.toContain("'Plain title");
+      expect(csv).toContain('Plain title');
+    });
+  });
+
   it('generates multiple data rows', () => {
     const findings = [
       makeFinding({ id: 1, title: 'First' }),

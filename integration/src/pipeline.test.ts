@@ -65,9 +65,9 @@ describe('pipeline: full scan of an intentionally-vulnerable repo', () => {
 
   // ── Pipeline steps ─────────────────────────────────────────────
 
-  it('has all 6 pipeline steps', () => {
+  it('has all 7 pipeline steps', () => {
     const steps = completedScan.steps;
-    expect(steps).toHaveLength(6);
+    expect(steps).toHaveLength(7);
 
     const names = steps.map((s: any) => s.stepName);
     expect(names).toEqual([
@@ -77,6 +77,7 @@ describe('pipeline: full scan of an intentionally-vulnerable repo', () => {
       'ai-research',
       'import',
       'triage-report',
+      'commit',
     ]);
   });
 
@@ -95,6 +96,18 @@ describe('pipeline: full scan of an intentionally-vulnerable repo', () => {
   it('import step completed', () => {
     const imp = completedScan.steps.find((s: any) => s.stepName === 'import');
     expect(imp.status).toBe('completed');
+  });
+
+  it('commit step ran (repo data lands only at commit)', () => {
+    const commit = completedScan.steps.find((s: any) => s.stepName === 'commit');
+    expect(commit).toBeDefined();
+    // On a completed scan the commit step must have succeeded; a failed scan
+    // may have failed earlier, but commit must never be left mid-flight.
+    if (completedScan.status === 'completed') {
+      expect(commit.status).toBe('completed');
+    } else {
+      expect(['pending', 'failed', 'completed']).toContain(commit.status);
+    }
   });
 
   // ── Tests (per-tool result records) ────────────────────────────

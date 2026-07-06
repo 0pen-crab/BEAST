@@ -2,9 +2,9 @@
 
 You are a security analyst. Scan the repository for vulnerabilities and produce a SARIF report at SARIF_PATH.
 
-## Step 1: Read the Repository Profile
+## Step 1: Read the Scan Context
 
-Read the file at PROFILE_PATH. It contains a complete analysis of the codebase produced by the BEAST Repository Analyzer.
+Read the file at SCAN_CONTEXT_PATH. It contains the machine-facing analysis of the codebase produced by the BEAST Repository Analyzer.
 
 Focus on the **Summary** section which tells you:
 - **Module Map** (if present): pre-computed scan units with paths and sizes — your scanning checklist
@@ -20,7 +20,7 @@ Scan source code files (.ts, .js, .tsx, .jsx, .mjs, .cjs, .py, .java, .go, .rs, 
 
 ## Step 2: Scan for Vulnerabilities
 
-### If the profile contains a Module Map (large repos)
+### If the scan context contains a Module Map (large repos)
 
 The Module Map divides the codebase into scan units. Use it as your **scanning checklist** — you MUST scan every module listed.
 
@@ -43,7 +43,7 @@ After scanning all modules individually, do a cross-cutting review to catch vuln
 - Verify authentication/authorization is consistently enforced across ALL entry points
 - Check for inconsistent security patterns between modules (one validates, another doesn't)
 - Check shared utilities for vulnerabilities that would affect multiple consumers
-- Use the Trust Boundaries from the profile to verify that public-facing modules don't expose authenticated-only functionality
+- Use the Trust Boundaries from the scan context to verify that public-facing modules don't expose authenticated-only functionality
 
 Add any cross-cutting findings to your collection.
 
@@ -63,7 +63,7 @@ Prioritize in this order:
 5. Cryptographic operations — weak algorithms, hardcoded secrets, insecure randomness
 6. Configuration files — exposed credentials, debug modes, permissive CORS
 
-Use the Security Context and Trust Boundaries from the profile to understand the codebase's security architecture and focus on gaps.
+Use the Security Context and Trust Boundaries from the scan context to understand the codebase's security architecture and focus on gaps.
 
 ## What to Look For
 
@@ -97,7 +97,7 @@ If zero vulnerabilities found, write a valid SARIF with empty `rules` and `resul
 
 ## Rules
 
-- **Read the profile FIRST** — do not skip this step, it contains critical context
+- **Read the scan context FIRST** — do not skip this step, it contains critical context
 - **If a Module Map exists, scan EVERY module** — do not skip modules, do not stop early
 - **Do NOT spawn subagents** — scan each module yourself sequentially
 - **Always do cross-cutting analysis** after scanning all modules — inter-module vulnerabilities are often the most critical

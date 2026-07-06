@@ -1,5 +1,34 @@
 import { readdirSync, existsSync } from 'fs';
 import { join } from 'path';
+import { withRetry } from '../lib/retry.ts';
+
+// ── Resilient fetch ──────────────────────────────────────────
+
+class HttpServerError extends Error {
+  constructor(public readonly response: Response) {
+    super(`HTTP ${response.status}`);
+    this.name = 'HttpServerError';
+  }
+}
+
+/**
+ * fetch with retry on transient failures: network errors (fetch rejections) and
+ * HTTP 5xx. 4xx responses are returned immediately and never retried. After
+ * exhausting retries on 5xx, the last response is returned so callers surface
+ * their provider-specific error message; a persistent network error is rethrown.
+ */
+async function fetchWithRetry(url: string, init?: { headers?: Record<string, string> }): Promise<Response> {
+  try {
+    return await withRetry(async () => {
+      const res = await fetch(url, init);
+      if (res.status >= 500) throw new HttpServerError(res);
+      return res;
+    });
+  } catch (err) {
+    if (err instanceof HttpServerError) return err.response;
+    throw err;
+  }
+}
 
 // ── Common types ─────────────────────────────────────────────
 
@@ -138,7 +167,7 @@ export class GitHubClient {
   }
 
   async detectOrgType(name: string): Promise<OrgType> {
-    const res = await fetch(`${this.baseUrl}/users/${encodeURIComponent(name)}`, { headers: this.headers() });
+    const res = await fetchWithRetry(`${this.baseUrl}/users/${encodeURIComponent(name)}`, { headers: this.headers() });
     if (!res.ok) {
       if (res.status === 403 || res.status === 429) {
         throw new Error('RATE_LIMITED');
@@ -160,7 +189,7 @@ export class GitHubClient {
 
     let page = 1;
     while (true) {
-      const res = await fetch(`${endpoint}?per_page=100&page=${page}`, { headers });
+      const res = await fetchWithRetry(`${endpoint}?per_page=100&page=${page}`, { headers });
       if (!res.ok) {
         if (res.status === 403 || res.status === 429) {
           throw new Error('RATE_LIMITED');
@@ -194,7 +223,7 @@ export class GitHubClient {
     const headers = { ...this.headers() };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${this.baseUrl}/repos/${owner}/${repoSlug}`, { headers });
+    const res = await fetchWithRetry(`${this.baseUrl}/repos/${owner}/${repoSlug}`, { headers });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       console.error(`[GitHub] getRepo ${owner}/${repoSlug} failed: ${res.status} ${body.slice(0, 500)}`);
@@ -231,13 +260,17 @@ export class GitLabClient {
   }
 
   async detectOrgType(name: string): Promise<OrgType> {
-    const groupRes = await fetch(`${this.baseUrl}/api/v4/groups/${encodeURIComponent(name)}`, { headers: this.headers() });
+    const groupRes = await fetchWithRetry(`${this.baseUrl}/api/v4/groups/${encodeURIComponent(name)}`, { headers: this.headers() });
     if (groupRes.ok) return 'group';
+    // A rate-limited response must not masquerade as "not found"
+    if (groupRes.status === 429) throw new Error('RATE_LIMITED');
 
-    const userRes = await fetch(`${this.baseUrl}/api/v4/users?username=${encodeURIComponent(name)}`, { headers: this.headers() });
+    const userRes = await fetchWithRetry(`${this.baseUrl}/api/v4/users?username=${encodeURIComponent(name)}`, { headers: this.headers() });
     if (userRes.ok) {
       const users = await userRes.json();
       if (Array.isArray(users) && users.length > 0) return 'user';
+    } else if (userRes.status === 429) {
+      throw new Error('RATE_LIMITED');
     }
 
     throw new Error(`GitLab: could not find user or group "${name}"`);
@@ -252,11 +285,14 @@ export class GitLabClient {
     if (orgType === 'group') {
       let page = 1;
       while (true) {
-        const res = await fetch(
+        const res = await fetchWithRetry(
           `${this.baseUrl}/api/v4/groups/${encodeURIComponent(name)}/projects?include_subgroups=true&per_page=100&page=${page}&statistics=true`,
           { headers },
         );
-        if (!res.ok) throw new Error(`GitLab API error: ${res.status}`);
+        if (!res.ok) {
+          if (res.status === 429) throw new Error('RATE_LIMITED');
+          throw new Error(`GitLab API error: ${res.status}`);
+        }
         const data = await res.json();
         if (!Array.isArray(data) || data.length === 0) break;
 
@@ -277,19 +313,25 @@ export class GitLabClient {
         page++;
       }
     } else {
-      const userRes = await fetch(`${this.baseUrl}/api/v4/users?username=${encodeURIComponent(name)}`, { headers });
-      if (!userRes.ok) throw new Error(`GitLab API error: ${userRes.status}`);
+      const userRes = await fetchWithRetry(`${this.baseUrl}/api/v4/users?username=${encodeURIComponent(name)}`, { headers });
+      if (!userRes.ok) {
+        if (userRes.status === 429) throw new Error('RATE_LIMITED');
+        throw new Error(`GitLab API error: ${userRes.status}`);
+      }
       const users = await userRes.json();
       if (!users[0]) throw new Error(`GitLab user "${name}" not found`);
       const userId = users[0].id;
 
       let page = 1;
       while (true) {
-        const res = await fetch(
+        const res = await fetchWithRetry(
           `${this.baseUrl}/api/v4/users/${userId}/projects?per_page=100&page=${page}&statistics=true`,
           { headers },
         );
-        if (!res.ok) throw new Error(`GitLab API error: ${res.status}`);
+        if (!res.ok) {
+          if (res.status === 429) throw new Error('RATE_LIMITED');
+          throw new Error(`GitLab API error: ${res.status}`);
+        }
         const data = await res.json();
         if (!Array.isArray(data) || data.length === 0) break;
 
@@ -330,8 +372,9 @@ export class GitLabClient {
     let page = 1;
     while (true) {
       const url = `${this.baseUrl}/api/v4/projects?per_page=100&page=${page}&statistics=true`;
-      const res = await fetch(url, { headers });
+      const res = await fetchWithRetry(url, { headers });
       if (!res.ok) {
+        if (res.status === 429) throw new Error('RATE_LIMITED');
         const body = await res.text().catch(() => '');
         throw new Error(`GitLab API error: ${res.status} ${body.slice(0, 200)}`);
       }
@@ -362,8 +405,11 @@ export class GitLabClient {
     if (token) headers['PRIVATE-TOKEN'] = token;
 
     const projectPath = encodeURIComponent(`${namespace}/${repoSlug}`);
-    const res = await fetch(`${this.baseUrl}/api/v4/projects/${projectPath}?statistics=true`, { headers });
-    if (!res.ok) throw new Error(`GitLab API error: ${res.status}`);
+    const res = await fetchWithRetry(`${this.baseUrl}/api/v4/projects/${projectPath}?statistics=true`, { headers });
+    if (!res.ok) {
+      if (res.status === 429) throw new Error('RATE_LIMITED');
+      throw new Error(`GitLab API error: ${res.status}`);
+    }
     const r = await res.json();
 
     return {
@@ -415,8 +461,11 @@ export class BitBucketClient {
     let url: string | null = `${this.baseUrl}/repositories/${encodeURIComponent(name)}?pagelen=100`;
 
     while (url) {
-      const res = await fetch(url, { headers });
-      if (!res.ok) throw new Error(`BitBucket API error: ${res.status}`);
+      const res = await fetchWithRetry(url, { headers });
+      if (!res.ok) {
+        if (res.status === 429) throw new Error('RATE_LIMITED');
+        throw new Error(`BitBucket API error: ${res.status}`);
+      }
       const data: any = await res.json();
 
       for (const r of data.values ?? []) {
@@ -447,8 +496,11 @@ export class BitBucketClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(`${this.baseUrl}/repositories/${workspace}/${repoSlug}`, { headers });
-    if (!res.ok) throw new Error(`BitBucket API error: ${res.status}`);
+    const res = await fetchWithRetry(`${this.baseUrl}/repositories/${workspace}/${repoSlug}`, { headers });
+    if (!res.ok) {
+      if (res.status === 429) throw new Error('RATE_LIMITED');
+      throw new Error(`BitBucket API error: ${res.status}`);
+    }
     const r: any = await res.json();
 
     const rawCloneLink = r.links?.clone?.find((l: { name: string; href: string }) => l.name === 'https')?.href ?? r.links?.html?.href;
@@ -466,17 +518,27 @@ export class BitBucketClient {
     };
   }
 
-  async validateToken(workspaceSlug: string): Promise<{ valid: boolean; username: string | null }> {
+  async validateToken(
+    workspaceSlug: string,
+  ): Promise<{ valid: boolean; username: string | null; reason?: 'invalid_token' | 'forbidden' | 'not_found' | 'network' | 'http_error'; detail?: string }> {
+    let res: Response;
     try {
-      const res = await fetch(
+      res = await fetch(
         `${this.baseUrl}/repositories/${encodeURIComponent(workspaceSlug)}?pagelen=1`,
         { headers: this.headers() },
       );
-      if (!res.ok) return { valid: false, username: null };
-      return { valid: true, username: this.email ?? null };
-    } catch {
-      return { valid: false, username: null };
+    } catch (err) {
+      // fetch only rejects on transport failures (DNS, connection refused, TLS/cert
+      // errors) — NOT on a bad token. The token may be perfectly fine; the problem is
+      // the network or a TLS-inspecting proxy/certificate. Must not be reported as
+      // "invalid token".
+      return { valid: false, username: null, reason: 'network', detail: err instanceof Error ? err.message : String(err) };
     }
+    if (res.ok) return { valid: true, username: this.email ?? null };
+    if (res.status === 401) return { valid: false, username: null, reason: 'invalid_token' };
+    if (res.status === 403) return { valid: false, username: null, reason: 'forbidden' };
+    if (res.status === 404) return { valid: false, username: null, reason: 'not_found' };
+    return { valid: false, username: null, reason: 'http_error', detail: `HTTP ${res.status}` };
   }
 
   async detectScopes(workspaceSlug?: string): Promise<string[]> {
@@ -488,64 +550,6 @@ export class BitBucketClient {
     if (!res.ok) return [];
     const scopeHeader = res.headers.get('x-oauth-scopes') ?? '';
     return scopeHeader.split(',').map(s => s.trim()).filter(Boolean);
-  }
-
-  async registerWorkspaceWebhook(
-    workspaceSlug: string,
-    webhookSecret: string,
-    callbackUrl: string,
-  ): Promise<{ id: string }> {
-    const res = await fetch(
-      `${this.baseUrl}/workspaces/${encodeURIComponent(workspaceSlug)}/hooks`,
-      {
-        method: 'POST',
-        headers: { ...this.headers(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description: 'BEAST Security Scanner',
-          url: callbackUrl,
-          active: true,
-          secret: webhookSecret,
-          events: ['pullrequest:created', 'pullrequest:updated'],
-        }),
-      },
-    );
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Failed to register webhook: ${res.status} ${err}`);
-    }
-    const data = await res.json();
-    return { id: data.uuid };
-  }
-
-  async deleteWorkspaceWebhook(workspaceSlug: string, webhookId: string): Promise<void> {
-    const res = await fetch(
-      `${this.baseUrl}/workspaces/${encodeURIComponent(workspaceSlug)}/hooks/${encodeURIComponent(webhookId)}`,
-      { method: 'DELETE', headers: this.headers() },
-    );
-    if (!res.ok && res.status !== 404) {
-      throw new Error(`Failed to delete webhook: ${res.status}`);
-    }
-  }
-
-  async getPullRequestDiff(workspaceSlug: string, repoSlug: string, prId: number): Promise<string> {
-    const res = await fetch(
-      `${this.baseUrl}/repositories/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}/pullrequests/${prId}/diff`,
-      { headers: this.headers() },
-    );
-    if (!res.ok) throw new Error(`Failed to fetch PR diff: ${res.status}`);
-    return res.text();
-  }
-
-  async postPullRequestComment(workspaceSlug: string, repoSlug: string, prId: number, content: string): Promise<void> {
-    const res = await fetch(
-      `${this.baseUrl}/repositories/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}/pullrequests/${prId}/comments`,
-      {
-        method: 'POST',
-        headers: { ...this.headers(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: { raw: content } }),
-      },
-    );
-    if (!res.ok) throw new Error(`Failed to post PR comment: ${res.status}`);
   }
 }
 

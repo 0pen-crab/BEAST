@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useImportFromSource } from '@/api/hooks';
 import type { DiscoveredRepo } from '@/api/types';
-import { formatBytes, formatDateShort } from '@/lib/format';
+import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 interface RepoPickerProps {
@@ -144,7 +144,7 @@ export function RepoPicker({
             </div>
             {repo.lastActivityAt && (
               <span className="text-[11px] text-th-text-muted whitespace-nowrap shrink-0">
-                {t('repoPicker.updated', 'Updated')} {formatDateShort(repo.lastActivityAt)}
+                {t('repoPicker.updated', 'Updated')} {formatDate(repo.lastActivityAt)}
               </span>
             )}
             {repo.imported && (

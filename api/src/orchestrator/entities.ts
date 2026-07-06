@@ -1,13 +1,13 @@
 import { createHash, randomBytes } from 'crypto';
-import { eq, ne, and, asc, desc, sql, type SQL } from 'drizzle-orm';
+import { eq, ne, and, asc, desc, isNull, sql, type SQL } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import {
   workspaces, teams, repositories, tests, findings, findingNotes,
   scanFiles, scanNotes, users, sessions, sources,
-  workspaceEvents, pullRequests, workspaceMembers, workspaceTools,
+  workspaceEvents, workspaceMembers, workspaceTools,
   type Workspace, type Team, type Repository, type Test, type Finding,
   type FindingNote, type ScanFile, type ScanNote, type User, type Session,
-  type Source, type WorkspaceEvent, type PullRequest,
+  type Source, type WorkspaceEvent,
   type WorkspaceMember,
 } from '../db/schema.ts';
 import { getRecommendedToolKeys, getAllToolKeys } from '../lib/tool-registry.ts';
@@ -88,9 +88,13 @@ export async function getRepository(id: number): Promise<Repository | null> {
   return rows[0] ?? null;
 }
 
-export async function findRepositoryByName(teamId: number, name: string): Promise<Repository | null> {
-  const rows = await db.select().from(repositories)
-    .where(and(eq(repositories.teamId, teamId), eq(repositories.name, name)));
+// The unique constraint is (teamId, name, sourceId) — a team can hold the same repo
+// name from different sources (e.g. a Bitbucket "trinity" and a local-upload "trinity").
+// Pass sourceId to disambiguate; without it this returns an arbitrary same-name repo.
+export async function findRepositoryByName(teamId: number, name: string, sourceId?: number): Promise<Repository | null> {
+  const conditions: SQL[] = [eq(repositories.teamId, teamId), eq(repositories.name, name)];
+  if (sourceId != null) conditions.push(eq(repositories.sourceId, sourceId));
+  const rows = await db.select().from(repositories).where(and(...conditions));
   return rows[0] ?? null;
 }
 
@@ -108,9 +112,13 @@ export async function listRepositoriesByTeam(teamId: number): Promise<Repository
 export async function getRepoCloneCredentials(
   repoName: string,
   repoUrl?: string,
+  repositoryId?: number,
 ): Promise<{ provider: string; token: string; email?: string } | null> {
-  const conditions: SQL[] = [eq(repositories.name, repoName)];
-  if (repoUrl) conditions.push(eq(repositories.repoUrl, repoUrl));
+  // Prefer the unique repository_id when the caller knows it (the scan does) — name+url
+  // can collide across teams/sources and return the wrong repo's credentials.
+  const conditions: SQL[] = repositoryId
+    ? [eq(repositories.id, repositoryId)]
+    : [eq(repositories.name, repoName), ...(repoUrl ? [eq(repositories.repoUrl, repoUrl)] : [])];
 
   const rows = await db.select({
     sourceId: repositories.sourceId,
@@ -136,8 +144,8 @@ export async function getRepoCloneCredentials(
   };
 }
 
-export async function ensureRepository(teamId: number, name: string, repoUrl?: string): Promise<Repository> {
-  const existing = await findRepositoryByName(teamId, name);
+export async function ensureRepository(teamId: number, name: string, repoUrl?: string, sourceId?: number): Promise<Repository> {
+  const existing = await findRepositoryByName(teamId, name, sourceId);
   if (existing) return existing;
   return createRepository(teamId, name, repoUrl);
 }
@@ -214,7 +222,7 @@ interface CreateFindingData {
 
 const VALID_SEVERITIES = ['Critical', 'High', 'Medium', 'Low', 'Info'] as const;
 
-function normalizeSeverity(raw: string): string {
+export function normalizeSeverity(raw: string): string {
   const capitalized = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   if ((VALID_SEVERITIES as readonly string[]).includes(capitalized)) return capitalized;
   return 'Info';
@@ -409,10 +417,34 @@ export async function addScanFile(data: {
   filePath?: string;
   content?: string;
 }): Promise<ScanFile> {
+  const fileType = data.fileType ?? null;
+
+  // Replace-by-name: resumed scans re-run steps whose files were already
+  // persisted (e.g. AI traces like analyzer.jsonl). A plain insert would leave
+  // duplicate rows per wave, so update the existing row instead.
+  const existingRows = await db.select({ id: scanFiles.id })
+    .from(scanFiles)
+    .where(and(
+      eq(scanFiles.scanId, data.scanId),
+      eq(scanFiles.fileName, data.fileName),
+      fileType === null ? isNull(scanFiles.fileType) : eq(scanFiles.fileType, fileType),
+    ));
+
+  if (existingRows.length > 0) {
+    const [row] = await db.update(scanFiles)
+      .set({
+        filePath: data.filePath ?? null,
+        content: data.content ?? null,
+      })
+      .where(eq(scanFiles.id, existingRows[0].id))
+      .returning();
+    return row;
+  }
+
   const [row] = await db.insert(scanFiles).values({
     scanId: data.scanId,
     fileName: data.fileName,
-    fileType: data.fileType ?? null,
+    fileType,
     filePath: data.filePath ?? null,
     content: data.content ?? null,
   }).returning();
@@ -558,6 +590,36 @@ export async function listWorkspaceMembers(workspaceId: number): Promise<Array<W
     .where(eq(workspaceMembers.workspaceId, workspaceId));
 }
 
+// Candidate users for the "add member" picker: every login account that is NOT
+// already a member of this workspace, optionally narrowed by a search term that
+// matches username or display name. The requesting user (excludeUserId) is left
+// out — you don't add yourself. Ordered by username, capped by limit.
+export async function searchUsersNotInWorkspace(
+  workspaceId: number,
+  search: string,
+  limit: number,
+  excludeUserId?: number,
+): Promise<Array<{ id: number; username: string; displayName: string | null }>> {
+  const conditions: SQL[] = [
+    sql`${users.id} NOT IN (SELECT user_id FROM workspace_members WHERE workspace_id = ${workspaceId})`,
+  ];
+  if (excludeUserId !== undefined) {
+    conditions.push(ne(users.id, excludeUserId));
+  }
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(sql`(${users.username} ILIKE ${pattern} OR ${users.displayName} ILIKE ${pattern})`);
+  }
+  return db.select({
+    id: users.id,
+    username: users.username,
+    displayName: users.displayName,
+  }).from(users)
+    .where(and(...conditions))
+    .orderBy(asc(users.username))
+    .limit(limit);
+}
+
 export async function listUserWorkspaces(userId: number): Promise<Array<WorkspaceMember & { name: string; description: string | null; defaultLanguage: string | null }>> {
   return db.select({
     id: workspaceMembers.id,
@@ -677,9 +739,7 @@ export async function listSources(workspaceId: number): Promise<Source[]> {
 export async function updateSource(id: number, data: {
   syncIntervalMinutes?: number;
   lastSyncedAt?: string;
-  prCommentsEnabled?: boolean;
   detectedScopes?: string[];
-  webhookId?: string;
   credentialType?: string;
   credentialUsername?: string | null;
   tokenExpiresAt?: string | null;
@@ -687,9 +747,7 @@ export async function updateSource(id: number, data: {
   const setObj: Record<string, unknown> = {};
   if (data.syncIntervalMinutes !== undefined) setObj.syncIntervalMinutes = data.syncIntervalMinutes;
   if (data.lastSyncedAt !== undefined) setObj.lastSyncedAt = new Date(data.lastSyncedAt);
-  if (data.prCommentsEnabled !== undefined) setObj.prCommentsEnabled = data.prCommentsEnabled;
   if (data.detectedScopes !== undefined) setObj.detectedScopes = data.detectedScopes;
-  if (data.webhookId !== undefined) setObj.webhookId = data.webhookId;
   if (data.credentialType !== undefined) setObj.credentialType = data.credentialType;
   if (data.credentialUsername !== undefined) setObj.credentialUsername = data.credentialUsername;
   if (data.tokenExpiresAt !== undefined) setObj.tokenExpiresAt = data.tokenExpiresAt ? new Date(data.tokenExpiresAt) : null;
@@ -747,85 +805,6 @@ export async function listWorkspaceEvents(
     .offset(offset);
 
   return { count: countResult.count, results };
-}
-
-// ── Pull Requests ─────────────────────────────────────────
-
-export async function createPullRequest(data: {
-  repositoryId: number;
-  workspaceId: number;
-  externalId: number;
-  title: string;
-  description?: string;
-  author: string;
-  sourceBranch: string;
-  targetBranch: string;
-  status: string;
-  prUrl: string;
-}): Promise<PullRequest> {
-  const [row] = await db.insert(pullRequests).values({
-    repositoryId: data.repositoryId,
-    workspaceId: data.workspaceId,
-    externalId: data.externalId,
-    title: data.title,
-    description: data.description ?? null,
-    author: data.author,
-    sourceBranch: data.sourceBranch,
-    targetBranch: data.targetBranch,
-    status: data.status,
-    prUrl: data.prUrl,
-  }).returning();
-  return row;
-}
-
-export async function getPullRequest(id: number): Promise<PullRequest | null> {
-  const rows = await db.select().from(pullRequests).where(eq(pullRequests.id, id));
-  return rows[0] ?? null;
-}
-
-export async function listPullRequestsByRepository(repositoryId: number): Promise<PullRequest[]> {
-  return db.select().from(pullRequests)
-    .where(eq(pullRequests.repositoryId, repositoryId))
-    .orderBy(desc(pullRequests.updatedAt));
-}
-
-export async function upsertPullRequest(data: {
-  repositoryId: number;
-  workspaceId: number;
-  externalId: number;
-  title: string;
-  description?: string;
-  author: string;
-  sourceBranch: string;
-  targetBranch: string;
-  status: string;
-  prUrl: string;
-}): Promise<PullRequest> {
-  const existing = await db.select().from(pullRequests)
-    .where(and(
-      eq(pullRequests.repositoryId, data.repositoryId),
-      eq(pullRequests.externalId, data.externalId),
-    ))
-    .limit(1);
-
-  if (existing[0]) {
-    const [updated] = await db.update(pullRequests)
-      .set({
-        title: data.title,
-        description: data.description ?? null,
-        author: data.author,
-        sourceBranch: data.sourceBranch,
-        targetBranch: data.targetBranch,
-        status: data.status,
-        prUrl: data.prUrl,
-        updatedAt: new Date(),
-      })
-      .where(eq(pullRequests.id, existing[0].id))
-      .returning();
-    return updated;
-  }
-
-  return createPullRequest(data);
 }
 
 // ── Workspace Tools ──────────────────────────────────────────

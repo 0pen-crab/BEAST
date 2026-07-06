@@ -50,6 +50,25 @@ export async function fetchApi<T>(url: string): Promise<T> {
 }
 
 /**
+ * Raw GET helper — like fetchApi but returns the Response untouched,
+ * for non-JSON payloads (plain text logs, CSV/blob downloads).
+ * Throws the same parsed error message as fetchApi on non-2xx.
+ */
+export async function fetchApiRaw(url: string, init?: RequestInit): Promise<Response> {
+  const res = await apiFetch(url, init);
+  if (!res.ok) {
+    const text = await res.text().catch((err) => {
+      console.error('[api] Failed to read error response body:', err);
+      return `HTTP ${res.status}`;
+    });
+    let message = text;
+    try { const parsed = JSON.parse(text); message = parsed.message ?? parsed.error ?? text; } catch { /* response is not JSON */ }
+    throw new Error(message);
+  }
+  return res;
+}
+
+/**
  * Typed mutation helper — POST/PUT/PATCH/DELETE with auth + JSON body.
  */
 export async function mutateApi<T>(url: string, options: RequestInit): Promise<T> {

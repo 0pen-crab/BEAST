@@ -73,7 +73,8 @@ export function ToolCard({
               </span>
             </div>
             <p className="mt-0.5 text-xs text-th-text-muted">
-              {tool.description}
+              {/* Translated by toolKey; the backend registry description is the fallback */}
+              {t(`tools.descriptions.${tool.key}`, tool.description)}
             </p>
           </div>
         </div>

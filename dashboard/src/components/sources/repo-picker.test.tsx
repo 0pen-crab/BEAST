@@ -50,7 +50,7 @@ describe('RepoPicker selectionMode', () => {
         selectionMode selected={new Set()} onSelectionChange={vi.fn()}
       />,
     );
-    // repo-a renders a formatted "Mar 15"-style date; repo-b (null) renders nothing
-    expect(screen.getByText(/Mar 15/)).toBeInTheDocument();
+    // repo-a renders the app-standard DD.MM.YYYY date; repo-b (null) renders nothing
+    expect(screen.getByText(/15\.03\.2026/)).toBeInTheDocument();
   });
 });

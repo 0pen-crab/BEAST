@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 
@@ -24,18 +25,52 @@ function paginationRange(current: number, total: number): (number | '...')[] {
 
 export function Pagination({ page, totalPages, onPageChange }: PaginationProps) {
   const { t } = useTranslation();
+  const rootRef = useRef<HTMLDivElement>(null);
 
   if (totalPages <= 1) return null;
 
+  // The app's layout scrolls an inner container (<main class="overflow-y-auto">),
+  // not the window — window.scrollTo is a no-op there. Scroll the nearest
+  // scrollable ancestor and fall back to the window.
+  const scrollToTop = () => {
+    let el: HTMLElement | null = rootRef.current?.parentElement ?? null;
+    while (el) {
+      const { overflowY } = window.getComputedStyle(el);
+      if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+        el.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+      el = el.parentElement;
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Change page and bring the user back to the top of the results.
+  // No-op when the target is already the current page.
+  const goTo = (target: number) => {
+    if (target === page) return;
+    onPageChange(target);
+    scrollToTop();
+  };
+
   return (
     <>
-      <div className="beast-pagination">
+      <div className="beast-pagination" ref={rootRef}>
         <button
+          type="button"
           className="beast-pagination-btn"
           disabled={page === 0}
-          onClick={() => onPageChange(0)}
+          onClick={() => goTo(0)}
         >
           {t('common.first')}
+        </button>
+        <button
+          type="button"
+          className="beast-pagination-btn"
+          disabled={page === 0}
+          onClick={() => goTo(page - 1)}
+        >
+          {t('common.previous')}
         </button>
 
         {paginationRange(page, totalPages).map((item, i) =>
@@ -44,8 +79,11 @@ export function Pagination({ page, totalPages, onPageChange }: PaginationProps) 
           ) : (
             <button
               key={item}
+              type="button"
               className={cn('beast-pagination-btn', page === item && 'beast-pagination-active')}
-              onClick={() => onPageChange(item as number)}
+              aria-label={`${t('common.page')} ${(item as number) + 1}`}
+              aria-current={page === item ? 'page' : undefined}
+              onClick={() => goTo(item as number)}
             >
               {(item as number) + 1}
             </button>
@@ -53,9 +91,18 @@ export function Pagination({ page, totalPages, onPageChange }: PaginationProps) 
         )}
 
         <button
+          type="button"
           className="beast-pagination-btn"
           disabled={page >= totalPages - 1}
-          onClick={() => onPageChange(totalPages - 1)}
+          onClick={() => goTo(page + 1)}
+        >
+          {t('common.next')}
+        </button>
+        <button
+          type="button"
+          className="beast-pagination-btn"
+          disabled={page >= totalPages - 1}
+          onClick={() => goTo(totalPages - 1)}
         >
           {t('common.last')}
         </button>

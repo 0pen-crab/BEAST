@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import { ProtectedRoute } from './protected-route';
 
@@ -14,6 +14,19 @@ vi.mock('@/lib/workspace', () => ({
 
 vi.mock('@/lib/permissions', () => ({
   isSuperAdmin: vi.fn((role: string) => role === 'super_admin'),
+}));
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => {
+      const map: Record<string, string> = {
+        'workspace.loadErrorTitle': "Couldn't load workspaces",
+        'workspace.loadErrorDetail': 'Workspace list could not be fetched.',
+        'common.retry': 'Retry',
+      };
+      return map[key] ?? key;
+    },
+  }),
 }));
 
 import { useAuth } from '@/lib/auth';
@@ -150,6 +163,58 @@ describe('ProtectedRoute', () => {
 
     renderWithRouter(['/admin/workspaces']);
     expect(screen.getByText('Admin Workspaces Page')).toBeInTheDocument();
+  });
+
+  it('renders a retry screen instead of onboarding message when the workspace fetch failed', () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      token: 'tok',
+      user: { id: 1, username: 'alice', displayName: null, role: 'member' },
+      login: vi.fn(),
+      logout: vi.fn(),
+      mustChangePassword: false,
+      clearMustChangePassword: vi.fn(),
+    });
+    mockUseWorkspace.mockReturnValue({
+      workspaces: [],
+      currentWorkspace: null,
+      switchWorkspace: vi.fn(),
+      isLoading: false,
+      needsOnboarding: false,
+      isError: true,
+      refetchWorkspaces: vi.fn(),
+    });
+
+    renderWithRouter();
+    expect(screen.getByText("Couldn't load workspaces")).toBeInTheDocument();
+    expect(screen.queryByText('No workspace assigned')).not.toBeInTheDocument();
+    expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
+  });
+
+  it('retry button refetches workspaces', () => {
+    const refetch = vi.fn();
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      token: 'tok',
+      user: { id: 1, username: 'alice', displayName: null, role: 'member' },
+      login: vi.fn(),
+      logout: vi.fn(),
+      mustChangePassword: false,
+      clearMustChangePassword: vi.fn(),
+    });
+    mockUseWorkspace.mockReturnValue({
+      workspaces: [],
+      currentWorkspace: null,
+      switchWorkspace: vi.fn(),
+      isLoading: false,
+      needsOnboarding: false,
+      isError: true,
+      refetchWorkspaces: refetch,
+    });
+
+    renderWithRouter();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it('renders outlet content when authenticated and loaded', () => {

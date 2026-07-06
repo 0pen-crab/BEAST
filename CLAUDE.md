@@ -64,6 +64,9 @@ Every time i paste you a link like "check this error", the best way to open it -
 
 
 ## HTML, CSS, Frontend and UI/UX
-
 NO FUCKING INLINE STYLES OR TAILWIND MODIFICATORS SUCH AS text-sm, mb-4 or other shit.
 The main reference for any UI element is this toolkit - http://localhost:8000/toolkit.html , refer to it if you need some elements. Use existing classes. If there is no element you are loking for, consider adding it to toolkit first, and then use in the actual page. Make reusable components, classes, modificators, I DARE YOU.
+
+
+## Boy Scout Rule
+Leave the place cleaner than you found it. If while working with code you found a place which can be easily improved or simplified - do it. Especially this applies to tests which are failing outside of the scope of current task. If you see broken test - fix it, no matter who broke it.

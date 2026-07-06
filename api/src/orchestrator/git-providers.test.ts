@@ -489,24 +489,35 @@ describe('git-providers', () => {
       );
     });
 
-    it('validateToken returns false for invalid token', async () => {
+    it('validateToken flags a 401 as an invalid token', async () => {
       const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 401 });
-      vi.stubGlobal('fetch', mockFetch);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 401 }));
 
       const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'bad-token', 'user@example.com');
       const result = await client.validateToken('myworkspace');
-      expect(result).toEqual({ valid: false, username: null });
+      expect(result).toMatchObject({ valid: false, reason: 'invalid_token' });
     });
 
-    it('validateToken returns false on network error', async () => {
+    it('validateToken reports a network/TLS failure as "network", NOT an invalid token', async () => {
+      // fetch rejects on a TLS/cert/connection error — the token may be perfectly fine.
       const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockRejectedValueOnce(new Error('Network error'));
-      vi.stubGlobal('fetch', mockFetch);
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('SELF_SIGNED_CERT_IN_CHAIN')));
 
       const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token', 'user@example.com');
       const result = await client.validateToken('myworkspace');
-      expect(result).toEqual({ valid: false, username: null });
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('network');
+      expect(result.reason).not.toBe('invalid_token');
+      expect(result.detail).toContain('SELF_SIGNED_CERT_IN_CHAIN');
+    });
+
+    it('validateToken distinguishes 403 (forbidden) and 404 (not found)', async () => {
+      const { BitBucketClient } = await import('./git-providers.ts');
+      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token', 'user@example.com');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 403 }));
+      expect((await client.validateToken('ws')).reason).toBe('forbidden');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 404 }));
+      expect((await client.validateToken('ws')).reason).toBe('not_found');
     });
 
     it('detectScopes parses x-oauth-scopes header', async () => {
@@ -545,48 +556,6 @@ describe('git-providers', () => {
       const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token', 'user@example.com');
       const scopes = await client.detectScopes('myworkspace');
       expect(scopes).toEqual([]);
-    });
-
-    it('headers() produces Basic base64(email:token) when email is set', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({
-        ok: true,
-        text: async () => 'diff content',
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const email = 'dev@company.com';
-      const token = 'my-app-password';
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', token, email);
-      await client.getPullRequestDiff('ws', 'repo', 1);
-
-      const expectedAuth = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: expectedAuth }),
-        }),
-      );
-    });
-
-    it('headers() produces Bearer token when no email is provided', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({
-        ok: true,
-        text: async () => 'diff content',
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const token = 'oauth-token-123';
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', token);
-      await client.getPullRequestDiff('ws', 'repo', 1);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({ Authorization: `Bearer ${token}` }),
-        }),
-      );
     });
 
     it('listRepos uses Basic auth when email is set', async () => {
@@ -664,125 +633,6 @@ describe('git-providers', () => {
       vi.unstubAllGlobals();
     });
 
-    it('registerWorkspaceWebhook calls POST to workspace hooks endpoint', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ uuid: '{webhook-uuid}' }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      const result = await client.registerWorkspaceWebhook('my-workspace', 'secret123', 'https://beast.example.com/api/webhooks/bitbucket');
-      expect(result).toEqual({ id: '{webhook-uuid}' });
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.bitbucket.org/2.0/workspaces/my-workspace/hooks',
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.stringContaining('"secret":"secret123"'),
-        }),
-      );
-    });
-
-    it('registerWorkspaceWebhook throws on error', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({
-        ok: false,
-        status: 403,
-        text: async () => 'Forbidden',
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      await expect(client.registerWorkspaceWebhook('ws', 'secret', 'https://cb.example.com'))
-        .rejects.toThrow('Failed to register webhook: 403 Forbidden');
-    });
-
-    it('deleteWorkspaceWebhook sends DELETE request', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({ ok: true });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      await client.deleteWorkspaceWebhook('my-workspace', '{webhook-uuid}');
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.bitbucket.org/2.0/workspaces/my-workspace/hooks/%7Bwebhook-uuid%7D',
-        expect.objectContaining({ method: 'DELETE' }),
-      );
-    });
-
-    it('deleteWorkspaceWebhook ignores 404', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 404 });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      // Should not throw for 404
-      await expect(client.deleteWorkspaceWebhook('ws', 'id')).resolves.toBeUndefined();
-    });
-
-    it('deleteWorkspaceWebhook throws on non-404 error', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 500 });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      await expect(client.deleteWorkspaceWebhook('ws', 'id'))
-        .rejects.toThrow('Failed to delete webhook: 500');
-    });
-
-    it('getPullRequestDiff fetches PR diff', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({
-        ok: true,
-        text: async () => 'diff --git a/file.ts b/file.ts\n+added line',
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      const diff = await client.getPullRequestDiff('my-workspace', 'my-repo', 42);
-      expect(diff).toContain('+added line');
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/42/diff',
-        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer token' }) }),
-      );
-    });
-
-    it('getPullRequestDiff throws on error', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 404 });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      await expect(client.getPullRequestDiff('ws', 'repo', 1))
-        .rejects.toThrow('Failed to fetch PR diff: 404');
-    });
-
-    it('postPullRequestComment posts comment', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({}) });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      await client.postPullRequestComment('my-workspace', 'my-repo', 42, 'Security scan passed');
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/42/comments',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ content: { raw: 'Security scan passed' } }),
-        }),
-      );
-    });
-
-    it('postPullRequestComment throws on error', async () => {
-      const { BitBucketClient } = await import('./git-providers.ts');
-      const mockFetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 403 });
-      vi.stubGlobal('fetch', mockFetch);
-
-      const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token');
-      await expect(client.postPullRequestComment('ws', 'repo', 1, 'comment'))
-        .rejects.toThrow('Failed to post PR comment: 403');
-    });
   });
 
   describe('createClient factory', () => {
@@ -795,7 +645,7 @@ describe('git-providers', () => {
       const { createClient } = await import('./git-providers.ts');
       const mockFetch = vi.fn().mockResolvedValueOnce({
         ok: true,
-        text: async () => 'diff',
+        headers: { get: () => '' },
       });
       vi.stubGlobal('fetch', mockFetch);
 
@@ -803,7 +653,7 @@ describe('git-providers', () => {
       const token = 'factory-token';
       const client = createClient('bitbucket', 'https://api.bitbucket.org/2.0', token, email);
       // Trigger a fetch to verify the auth header
-      await (client as any).getPullRequestDiff('ws', 'repo', 1);
+      await (client as any).detectScopes('ws');
 
       const expectedAuth = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
       expect(mockFetch).toHaveBeenCalledWith(
@@ -818,13 +668,13 @@ describe('git-providers', () => {
       const { createClient } = await import('./git-providers.ts');
       const mockFetch = vi.fn().mockResolvedValueOnce({
         ok: true,
-        text: async () => 'diff',
+        headers: { get: () => '' },
       });
       vi.stubGlobal('fetch', mockFetch);
 
       const token = 'bearer-token';
       const client = createClient('bitbucket', 'https://api.bitbucket.org/2.0', token);
-      await (client as any).getPullRequestDiff('ws', 'repo', 1);
+      await (client as any).detectScopes('ws');
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.any(String),
@@ -962,6 +812,161 @@ describe('git-providers', () => {
       const client = new BitBucketClient('https://api.bitbucket.org/2.0', 'token', 'user@example.com');
       const repos = await client.listRepos('test-workspace', 'workspace');
       expect(repos[0].url).toBe('https://bitbucket.org/test-workspace/my-repo.git');
+    });
+  });
+
+  describe('retry behavior (fetchWithRetry)', () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    });
+
+    it('GitHub getRepo retries on 500 and succeeds on the second attempt', async () => {
+      vi.useFakeTimers();
+      const { GitHubClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'server error' })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: 1, name: 'myrepo', html_url: 'https://github.com/o/myrepo', description: null, default_branch: 'main' }),
+        });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitHubClient('https://api.github.com');
+      const promise = client.getRepo('o', 'myrepo');
+      await vi.advanceTimersByTimeAsync(500);
+      const repo = await promise;
+
+      expect(repo.name).toBe('myrepo');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
+    });
+
+    it('GitHub getRepo retries network errors and succeeds', async () => {
+      vi.useFakeTimers();
+      const { GitHubClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn()
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: 1, name: 'r', html_url: 'u', description: null, default_branch: 'main' }),
+        });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitHubClient('https://api.github.com');
+      const promise = client.getRepo('o', 'r');
+      await vi.advanceTimersByTimeAsync(500);
+      const repo = await promise;
+
+      expect(repo.name).toBe('r');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
+    });
+
+    it('does NOT retry 4xx responses', async () => {
+      const { GitHubClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => 'nope' });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitHubClient('https://api.github.com');
+      await expect(client.getRepo('o', 'missing')).rejects.toThrow(/404/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('surfaces the 5xx status after exhausting retries (3 attempts)', async () => {
+      vi.useFakeTimers();
+      const { GitLabClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 502, text: async () => 'bad gateway' });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new GitLabClient('https://gitlab.com');
+      const promise = client.getRepo('g', 'r');
+      const guard = promise.catch(() => {});
+      await vi.advanceTimersByTimeAsync(1500); // 500 + 1000 backoff
+      await expect(promise).rejects.toThrow(/502/);
+      await guard;
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      vi.useRealTimers();
+    });
+
+    it('propagates a persistent network error after retries', async () => {
+      vi.useFakeTimers();
+      const { BitBucketClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockRejectedValue(new TypeError('getaddrinfo ENOTFOUND'));
+      vi.stubGlobal('fetch', mockFetch);
+
+      const client = new BitBucketClient('https://api.bitbucket.org/2.0');
+      const promise = client.getRepo('ws', 'r');
+      const guard = promise.catch(() => {});
+      await vi.advanceTimersByTimeAsync(1500);
+      await expect(promise).rejects.toThrow('getaddrinfo ENOTFOUND');
+      await guard;
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      vi.useRealTimers();
+    });
+  });
+
+  describe('rate-limit classification is consistent across providers', () => {
+    beforeEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    });
+
+    it('GitLab getRepo throws RATE_LIMITED on 429', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => '' }));
+      const client = new GitLabClient('https://gitlab.com');
+      await expect(client.getRepo('g', 'r')).rejects.toThrow('RATE_LIMITED');
+    });
+
+    it('GitLab listRepos (group) throws RATE_LIMITED on 429', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => '' }));
+      const client = new GitLabClient('https://gitlab.com');
+      await expect(client.listRepos('g', 'group')).rejects.toThrow('RATE_LIMITED');
+    });
+
+    it('GitLab listRepos (user) throws RATE_LIMITED on 429', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => '' }));
+      const client = new GitLabClient('https://gitlab.com');
+      await expect(client.listRepos('someone', 'user')).rejects.toThrow('RATE_LIMITED');
+    });
+
+    it('GitLab listAccessibleRepos throws RATE_LIMITED on 429', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => '' }));
+      const client = new GitLabClient('https://gitlab.com');
+      await expect(client.listAccessibleRepos()).rejects.toThrow('RATE_LIMITED');
+    });
+
+    it('GitLab detectOrgType throws RATE_LIMITED on 429 instead of "not found"', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => '' }));
+      const client = new GitLabClient('https://gitlab.com');
+      await expect(client.detectOrgType('g')).rejects.toThrow('RATE_LIMITED');
+    });
+
+    it('Bitbucket getRepo throws RATE_LIMITED on 429', async () => {
+      const { BitBucketClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => '' }));
+      const client = new BitBucketClient('https://api.bitbucket.org/2.0');
+      await expect(client.getRepo('ws', 'r')).rejects.toThrow('RATE_LIMITED');
+    });
+
+    it('Bitbucket listRepos throws RATE_LIMITED on 429', async () => {
+      const { BitBucketClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429, text: async () => '' }));
+      const client = new BitBucketClient('https://api.bitbucket.org/2.0');
+      await expect(client.listRepos('ws', 'workspace')).rejects.toThrow('RATE_LIMITED');
+    });
+
+    it('GitLab non-429 errors keep the generic API error message', async () => {
+      const { GitLabClient } = await import('./git-providers.ts');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => '' }));
+      const client = new GitLabClient('https://gitlab.com');
+      await expect(client.getRepo('g', 'r')).rejects.toThrow('GitLab API error: 404');
     });
   });
 

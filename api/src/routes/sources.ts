@@ -40,8 +40,6 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
           url: z.string().optional(),
           access_token: z.string().optional(),
           username: z.string().optional(),
-          pr_comments_enabled: z.boolean().optional(),
-          webhook_url: z.string().optional(),
         }).refine(
           (data) => data.url || (data.provider && (data.org_name || data.base_url)),
           { message: 'Provide either url (public) or provider + (org_name or base_url) (private)' },
@@ -114,7 +112,21 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         bbClient = new BitBucketClient(baseUrl, body.access_token, body.username);
         const validation = await bbClient.validateToken(orgName);
         if (!validation.valid) {
-          return reply.status(400).send({ error: 'Invalid Bitbucket API token. Ensure the email and token are correct.' });
+          // Don't blame the token for what may be a network/cert problem — say what
+          // actually failed so the user fixes the right thing.
+          const messages: Record<string, string> = {
+            invalid_token: 'Invalid Bitbucket API token. Ensure the email and token are correct.',
+            forbidden: 'The token is valid but lacks access to this workspace (check its scopes/permissions).',
+            not_found: `Bitbucket workspace "${orgName}" was not found. Check the organization name.`,
+            network: 'Could not reach Bitbucket — a network or TLS/certificate error occurred. The token may be fine; check connectivity, proxy, or certificate.',
+            http_error: 'Bitbucket returned an unexpected error while validating the token.',
+          };
+          const reason = validation.reason ?? 'invalid_token';
+          return reply.status(reason === 'network' ? 502 : 400).send({
+            error: messages[reason] ?? messages.invalid_token,
+            reason,
+            detail: validation.detail,
+          });
         }
         detectedScopes = await bbClient.detectScopes(orgName);
         if (!detectedScopes.some(s => s.includes('repository'))) {
@@ -174,46 +186,6 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       // Store detected scopes
       if (detectedScopes.length > 0) {
         await updateSource(source.id, { detectedScopes });
-      }
-
-      // Bitbucket: register workspace webhook if scope allows
-      if (provider === 'bitbucket' && body.access_token && body.webhook_url) {
-        const hasWebhookScope = detectedScopes.some(s => s.includes('webhook'));
-        if (hasWebhookScope) {
-          try {
-            if (!bbClient) bbClient = new BitBucketClient(baseUrl, body.access_token, body.username);
-            const crypto = await import('crypto');
-            const webhookSecret = crypto.randomBytes(32).toString('hex');
-            const hookResult = await bbClient.registerWorkspaceWebhook(orgName, webhookSecret, body.webhook_url);
-            await setSecret({
-              name: `Webhook secret for ${orgName}`,
-              value: webhookSecret,
-              workspaceId: body.workspace_id,
-              ownerType: 'source',
-              ownerId: source.id,
-              label: 'webhook_secret',
-            });
-            await updateSource(source.id, { webhookId: hookResult.id });
-          } catch (err: any) {
-            console.error('[sources] Webhook registration failed:', err.message);
-            await createWorkspaceEvent(body.workspace_id, 'webhook_registration_failed', {
-              provider: 'bitbucket',
-              org_name: orgName,
-              source_id: source.id,
-              error: err.message,
-            });
-          }
-        }
-      }
-
-      // PR comments setting
-      if (body.pr_comments_enabled !== undefined) {
-        const canComment = detectedScopes.some(s => s.includes('pullrequest:write'));
-        if (body.pr_comments_enabled && !canComment) {
-          console.warn('PR comments requested but token lacks pullrequest:write scope');
-        } else {
-          await updateSource(source.id, { prCommentsEnabled: body.pr_comments_enabled });
-        }
       }
 
       // Discover repos (but do NOT import them into DB)
@@ -280,9 +252,6 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
 
       const capabilities = {
         repos: true,
-        pull_requests: detectedScopes.some(s => s.includes('pullrequest:read')),
-        webhooks: detectedScopes.some(s => s.includes('webhook')),
-        pr_comments: detectedScopes.some(s => s.includes('pullrequest:write')),
       };
 
       return reply.status(201).send({
@@ -519,7 +488,6 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({
           sync_interval_minutes: z.number().optional(),
           access_token: z.string().optional(),
-          pr_comments_enabled: z.boolean().optional(),
         }),
       },
     },
@@ -533,10 +501,6 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
 
       if (body.sync_interval_minutes !== undefined) {
         await updateSource(id, { syncIntervalMinutes: body.sync_interval_minutes });
-      }
-
-      if (body.pr_comments_enabled !== undefined) {
-        await updateSource(id, { prCommentsEnabled: body.pr_comments_enabled });
       }
 
       if (body.access_token) {
@@ -648,37 +612,40 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
     const wsId = Number(workspaceId);
     await authorize(request, wsId, 'workspace_admin');
 
-    // Detect archive type from filename
-    const filename = data.filename.toLowerCase();
-    let archiveType: 'zip' | 'tar' | 'tar.gz';
-    if (filename.endsWith('.zip')) archiveType = 'zip';
-    else if (filename.endsWith('.tar.gz') || filename.endsWith('.tgz')) archiveType = 'tar.gz';
-    else if (filename.endsWith('.tar')) archiveType = 'tar';
-    else return reply.status(400).send({ error: 'Unsupported archive format. Use .zip, .tar, or .tar.gz' });
-
     const { randomUUID } = await import('crypto');
     const { mkdirSync, createWriteStream, readdirSync, statSync, existsSync, rmSync } = await import('fs');
     const { join, relative, basename } = await import('path');
-    const { execSync } = await import('child_process');
+    const { execFileSync } = await import('child_process');
     const { pipeline } = await import('stream/promises');
 
+    // The client controls data.filename — strip any path components before it
+    // touches the filesystem, and validate the extension against an allowlist.
+    const safeFilename = basename(data.filename);
+    const lowerName = safeFilename.toLowerCase();
+    let archiveType: 'zip' | 'tar' | 'tar.gz';
+    if (lowerName.endsWith('.zip')) archiveType = 'zip';
+    else if (lowerName.endsWith('.tar.gz') || lowerName.endsWith('.tgz')) archiveType = 'tar.gz';
+    else if (lowerName.endsWith('.tar')) archiveType = 'tar';
+    else return reply.status(400).send({ error: 'Unsupported archive format. Use .zip, .tar, or .tar.gz' });
+
     const uploadId = randomUUID();
-    const uploadDir = join('/workspace', 'uploads', uploadId);
+    const uploadDir = join(process.env.UPLOADS_PATH || '/workspace/uploads', uploadId);
     mkdirSync(uploadDir, { recursive: true });
 
     // Stream archive file to disk (avoids loading entire file into memory)
-    const archivePath = join(uploadDir, data.filename);
+    const archivePath = join(uploadDir, safeFilename);
     await pipeline(data.file, createWriteStream(archivePath));
 
-    // Extract using the right tool for the archive type
+    // Extract with execFileSync + argv array — NO shell, so quotes/metacharacters
+    // in the (client-controlled) filename cannot inject commands.
     const extractDir = join(uploadDir, 'extracted');
     mkdirSync(extractDir, { recursive: true });
     if (archiveType === 'zip') {
-      execSync(`unzip -q "${archivePath}" -d "${extractDir}"`);
+      execFileSync('unzip', ['-q', archivePath, '-d', extractDir]);
     } else if (archiveType === 'tar.gz') {
-      execSync(`tar -xzf "${archivePath}" -C "${extractDir}"`);
+      execFileSync('tar', ['-xzf', archivePath, '-C', extractDir]);
     } else {
-      execSync(`tar -xf "${archivePath}" -C "${extractDir}"`);
+      execFileSync('tar', ['-xf', archivePath, '-C', extractDir]);
     }
 
     // macOS Finder injects __MACOSX/ alongside the real tree when zipping. Remove
@@ -728,13 +695,13 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       } else {
         const name = topEntries.length === 1
           ? topEntries[0].replace(/-(main|master|develop|dev)$/, '')
-          : data.filename.replace(/\.zip$/i, '').replace(/-(main|master|develop|dev)$/, '');
+          : safeFilename.replace(/\.zip$/i, '').replace(/-(main|master|develop|dev)$/, '');
         const path = topEntries.length === 1 ? join(extractDir, topEntries[0]) : extractDir;
         repoPaths = [{ name, path }];
       }
     }
 
-    const folderName = data.filename.replace(/\.zip$/i, '');
+    const folderName = safeFilename.replace(/\.zip$/i, '');
 
     // Create a single source for the upload
     const [source] = await db.insert(sourcesTable).values({

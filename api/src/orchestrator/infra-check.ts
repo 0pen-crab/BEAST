@@ -14,6 +14,22 @@ interface InfraTarget {
   config: SSHConfig;
 }
 
+/** The two SSH-probed infra hosts. Kept as a const so message producers
+ * (logFailure) and consumers (infraTargetFromMessage / health checks) agree. */
+export const INFRA_TARGET_NAMES = ['security-tools', 'claude-runner'] as const;
+export type InfraTargetName = (typeof INFRA_TARGET_NAMES)[number];
+
+/**
+ * Map a persisted infra-check event message back to its target host.
+ * Messages are written by logFailure below as `Cannot reach <target>: <error>`.
+ */
+export function infraTargetFromMessage(message: string): InfraTargetName | null {
+  for (const name of INFRA_TARGET_NAMES) {
+    if (message.startsWith(`Cannot reach ${name}:`)) return name;
+  }
+  return null;
+}
+
 const PING_TIMEOUT_MS = 5000;
 
 async function probe(target: InfraTarget): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -44,6 +60,8 @@ async function logFailure(targetName: string, error: string): Promise<void> {
     console.error(`[infra-check] ${targetName} unreachable: ${error} (no workspaces yet, not persisting)`);
     return;
   }
+  // Format is load-bearing: infraTargetFromMessage() and resolvePreviousIssues()
+  // both match on the `Cannot reach <target>:` prefix.
   const message = `Cannot reach ${targetName}: ${error}`;
   for (const ws of workspaces) {
     await db.insert(scanEvents).values({

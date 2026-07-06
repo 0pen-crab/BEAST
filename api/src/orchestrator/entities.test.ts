@@ -438,6 +438,26 @@ describe('getRepoCloneCredentials', () => {
     expect(getSecret).toHaveBeenCalledWith('source', 5, 'access_token');
   });
 
+  it('resolves credentials via the repository_id branch when an id is provided', async () => {
+    // When the caller passes a unique repositoryId, the lookup must not fall back to
+    // name matching (which can hit the wrong repo when names collide across sources).
+    let selectCallNum = 0;
+    mockDb.select.mockImplementation(() => {
+      selectCallNum++;
+      if (selectCallNum === 1) {
+        return { from: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ sourceId: 9 }]) }) }) };
+      }
+      return { from: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ provider: 'github', credentialUsername: null }]) }) }) };
+    });
+    (getSecret as any).mockResolvedValue('ghp_token');
+
+    const { getRepoCloneCredentials } = await entities();
+    const result = await getRepoCloneCredentials('trinity', undefined, 157);
+
+    expect(result).toEqual({ provider: 'github', token: 'ghp_token', email: undefined });
+    expect(getSecret).toHaveBeenCalledWith('source', 9, 'access_token');
+  });
+
   it('returns null when repository has no linked source', async () => {
     mockDb.select.mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -622,6 +642,18 @@ describe('updateTestFindingsCount', () => {
 });
 
 // ── Findings ───────────────────────────────────────────────────────
+
+// Exported so the import step can prepare findings with the exact severity
+// the commit step will write (plan values must match DB values).
+describe('normalizeSeverity', () => {
+  it('normalizes casing and falls back to Info for unknown values', async () => {
+    const { normalizeSeverity } = await entities();
+    expect(normalizeSeverity('high')).toBe('High');
+    expect(normalizeSeverity('CRITICAL')).toBe('Critical');
+    expect(normalizeSeverity('Info')).toBe('Info');
+    expect(normalizeSeverity('banana')).toBe('Info');
+  });
+});
 
 describe('createFinding', () => {
   it('computes fingerprint and inserts finding', async () => {
@@ -965,8 +997,9 @@ describe('getFindingNotes', () => {
 // ── Scan Files ─────────────────────────────────────────────────────
 
 describe('addScanFile', () => {
-  it('inserts a scan file with all fields', async () => {
+  it('inserts a scan file with all fields when no matching row exists', async () => {
     const row = { id: 1, scanId: 'scan-1', fileName: 'report.md' };
+    mockSelectFromWhere([]); // no existing (scanId, fileType, fileName) row
     const valuesFn = vi.fn().mockReturnValue({
       returning: vi.fn().mockResolvedValue([row]),
     });
@@ -992,6 +1025,7 @@ describe('addScanFile', () => {
   });
 
   it('defaults optional fields to null', async () => {
+    mockSelectFromWhere([]);
     const valuesFn = vi.fn().mockReturnValue({
       returning: vi.fn().mockResolvedValue([{ id: 2 }]),
     });
@@ -1005,6 +1039,30 @@ describe('addScanFile', () => {
       filePath: null,
       content: null,
     }));
+  });
+
+  it('replaces content of an existing (scanId, fileType, fileName) row instead of inserting a duplicate', async () => {
+    // Resume scenario: an analyzer.jsonl trace row already exists for this scan.
+    mockSelectFromWhere([{ id: 42 }]);
+    const updatedRow = { id: 42, scanId: 'scan-1', fileName: 'analyzer.jsonl', fileType: 'ai-trace', content: 'new content' };
+    const setFn = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([updatedRow]),
+      }),
+    });
+    mockDb.update.mockReturnValue({ set: setFn });
+
+    const { addScanFile } = await entities();
+    const result = await addScanFile({
+      scanId: 'scan-1',
+      fileName: 'analyzer.jsonl',
+      fileType: 'ai-trace',
+      content: 'new content',
+    });
+
+    expect(result).toEqual(updatedRow);
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(setFn).toHaveBeenCalledWith(expect.objectContaining({ content: 'new content' }));
   });
 });
 
@@ -1318,24 +1376,6 @@ describe('updateSource', () => {
     expect(passedArg.lastSyncedAt.toISOString()).toBe('2026-01-01T00:00:00.000Z');
   });
 
-  it('sets prCommentsEnabled', async () => {
-    const row = { id: 1, prCommentsEnabled: true };
-    const setFn = vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([row]),
-      }),
-    });
-    mockDb.update.mockReturnValue({ set: setFn });
-
-    const { updateSource } = await entities();
-    const result = await updateSource(1, { prCommentsEnabled: true });
-
-    expect(result).toEqual(row);
-    expect(setFn).toHaveBeenCalledWith(expect.objectContaining({
-      prCommentsEnabled: true,
-    }));
-  });
-
   it('sets detectedScopes array', async () => {
     const scopes = ['repository:read', 'pullrequest:read', 'webhook:read_write'];
     const row = { id: 1, detectedScopes: scopes };
@@ -1408,7 +1448,7 @@ describe('updateSource', () => {
   });
 
   it('sets multiple fields in one call', async () => {
-    const row = { id: 1, syncIntervalMinutes: 30, prCommentsEnabled: true, webhookId: 'wh-1' };
+    const row = { id: 1, syncIntervalMinutes: 30 };
     const setFn = vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({
         returning: vi.fn().mockResolvedValue([row]),
@@ -1420,9 +1460,7 @@ describe('updateSource', () => {
     const result = await updateSource(1, {
       syncIntervalMinutes: 30,
       lastSyncedAt: '2026-06-15T12:00:00Z',
-      prCommentsEnabled: true,
       detectedScopes: ['repository:read'],
-      webhookId: 'wh-1',
       credentialType: 'pat',
       credentialUsername: 'user@test.com',
     });
@@ -1432,9 +1470,7 @@ describe('updateSource', () => {
     expect(passedArg.syncIntervalMinutes).toBe(30);
     expect(passedArg.lastSyncedAt).toBeInstanceOf(Date);
     expect(passedArg.lastSyncedAt.toISOString()).toBe('2026-06-15T12:00:00.000Z');
-    expect(passedArg.prCommentsEnabled).toBe(true);
     expect(passedArg.detectedScopes).toEqual(['repository:read']);
-    expect(passedArg.webhookId).toBe('wh-1');
     expect(passedArg.credentialType).toBe('pat');
     expect(passedArg.credentialUsername).toBe('user@test.com');
   });
@@ -1565,179 +1601,6 @@ describe('listWorkspaceEvents', () => {
     const result = await listWorkspaceEvents(10, { eventType: 'scan.started', limit: 5, offset: 10 });
 
     expect(result.count).toBe(5);
-  });
-});
-
-// ── Pull Requests ───────────────────────────────────────────────────
-
-describe('createPullRequest', () => {
-  it('inserts a pull request with all fields and returns the row', async () => {
-    const row = {
-      id: 1, repositoryId: 10, workspaceId: 5, externalId: 42,
-      title: 'Fix auth bug', author: 'dev1',
-      sourceBranch: 'fix/auth', targetBranch: 'main',
-      status: 'open', prUrl: 'https://bitbucket.org/org/repo/pull-requests/42',
-    };
-    const valuesFn = vi.fn().mockReturnValue({
-      returning: vi.fn().mockResolvedValue([row]),
-    });
-    mockDb.insert.mockReturnValue({ values: valuesFn });
-
-    const { createPullRequest } = await entities();
-    const result = await createPullRequest({
-      repositoryId: 10,
-      workspaceId: 5,
-      externalId: 42,
-      title: 'Fix auth bug',
-      description: 'Fixes the auth bug',
-      author: 'dev1',
-      sourceBranch: 'fix/auth',
-      targetBranch: 'main',
-      status: 'open',
-      prUrl: 'https://bitbucket.org/org/repo/pull-requests/42',
-    });
-
-    expect(result).toEqual(row);
-    expect(valuesFn).toHaveBeenCalledWith(expect.objectContaining({
-      repositoryId: 10,
-      workspaceId: 5,
-      externalId: 42,
-      title: 'Fix auth bug',
-      description: 'Fixes the auth bug',
-      author: 'dev1',
-      sourceBranch: 'fix/auth',
-      targetBranch: 'main',
-      status: 'open',
-      prUrl: 'https://bitbucket.org/org/repo/pull-requests/42',
-    }));
-  });
-
-  it('defaults description to null when omitted', async () => {
-    const valuesFn = vi.fn().mockReturnValue({
-      returning: vi.fn().mockResolvedValue([{ id: 2 }]),
-    });
-    mockDb.insert.mockReturnValue({ values: valuesFn });
-
-    const { createPullRequest } = await entities();
-    await createPullRequest({
-      repositoryId: 10,
-      workspaceId: 5,
-      externalId: 99,
-      title: 'PR without description',
-      author: 'dev2',
-      sourceBranch: 'feature/x',
-      targetBranch: 'main',
-      status: 'open',
-      prUrl: 'https://bitbucket.org/org/repo/pull-requests/99',
-    });
-
-    expect(valuesFn).toHaveBeenCalledWith(expect.objectContaining({
-      description: null,
-    }));
-  });
-});
-
-describe('getPullRequest', () => {
-  it('returns pull request when found by id', async () => {
-    const row = { id: 1, title: 'Fix auth bug' };
-    mockSelectFromWhere([row]);
-
-    const { getPullRequest } = await entities();
-    const result = await getPullRequest(1);
-    expect(result).toEqual(row);
-  });
-
-  it('returns null when pull request not found', async () => {
-    mockSelectFromWhere([]);
-
-    const { getPullRequest } = await entities();
-    const result = await getPullRequest(999);
-    expect(result).toBeNull();
-  });
-});
-
-describe('listPullRequestsByRepository', () => {
-  it('returns pull requests ordered by updatedAt desc', async () => {
-    const rows = [{ id: 2, title: 'Newer PR' }, { id: 1, title: 'Older PR' }];
-    mockSelectFromWhereOrderBy(rows);
-
-    const { listPullRequestsByRepository } = await entities();
-    const result = await listPullRequestsByRepository(10);
-    expect(result).toEqual(rows);
-  });
-
-  it('returns empty array when no pull requests exist', async () => {
-    mockSelectFromWhereOrderBy([]);
-
-    const { listPullRequestsByRepository } = await entities();
-    const result = await listPullRequestsByRepository(999);
-    expect(result).toEqual([]);
-  });
-});
-
-describe('upsertPullRequest', () => {
-  it('updates existing PR when found by repositoryId + externalId', async () => {
-    const existing = { id: 10, repositoryId: 5, externalId: 42 };
-    const updated = { id: 10, title: 'Updated title', status: 'merged' };
-
-    // SELECT (lookup by repositoryId + externalId) — needs where().limit() chain
-    mockDb.select.mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([existing]),
-        }),
-      }),
-    });
-    // UPDATE
-    mockUpdateSetWhereReturning([updated]);
-
-    const { upsertPullRequest } = await entities();
-    const result = await upsertPullRequest({
-      repositoryId: 5,
-      workspaceId: 1,
-      externalId: 42,
-      title: 'Updated title',
-      description: 'Updated desc',
-      author: 'dev1',
-      sourceBranch: 'fix/auth',
-      targetBranch: 'main',
-      status: 'merged',
-      prUrl: 'https://bitbucket.org/org/repo/pull-requests/42',
-    });
-
-    expect(result).toEqual(updated);
-    expect(mockDb.update).toHaveBeenCalled();
-  });
-
-  it('creates new PR when no existing match is found', async () => {
-    const created = { id: 20, title: 'Brand new PR' };
-
-    // SELECT returns empty (no match) — needs where().limit() chain
-    mockDb.select.mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([]),
-        }),
-      }),
-    });
-    // createPullRequest INSERT
-    mockInsertReturning([created]);
-
-    const { upsertPullRequest } = await entities();
-    const result = await upsertPullRequest({
-      repositoryId: 5,
-      workspaceId: 1,
-      externalId: 100,
-      title: 'Brand new PR',
-      author: 'dev2',
-      sourceBranch: 'feature/new',
-      targetBranch: 'main',
-      status: 'open',
-      prUrl: 'https://bitbucket.org/org/repo/pull-requests/100',
-    });
-
-    expect(result).toEqual(created);
-    expect(mockDb.insert).toHaveBeenCalled();
   });
 });
 

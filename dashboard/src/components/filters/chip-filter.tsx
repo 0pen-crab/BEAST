@@ -1,12 +1,16 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+export type FilterOption = { value: string; label: string; icon?: ReactNode; group?: string };
+
 export type FilterColumn = {
   key: string;
   label: string;
   type?: 'select' | 'range';
   multi?: boolean;
-  options: { value: string; label: string; icon?: ReactNode }[];
+  /** Single-select only: show a search box and filter the options list as you type. */
+  searchable?: boolean;
+  options: FilterOption[];
   minPlaceholder?: string;
   maxPlaceholder?: string;
 };
@@ -43,6 +47,7 @@ export function ChipFilter({
   const [rangeMin, setRangeMin] = useState('');
   const [rangeMax, setRangeMax] = useState('');
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
+  const [valueSearch, setValueSearch] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -52,6 +57,7 @@ export function ChipFilter({
     setRangeMin('');
     setRangeMax('');
     setMultiSelected(new Set());
+    setValueSearch('');
   };
 
   useEffect(() => {
@@ -68,14 +74,26 @@ export function ChipFilter({
     return () => document.removeEventListener('mousedown', handler);
   }, [selectedColumn, multiSelected, onAdd]);
 
+  // Escape cancels any open dropdown (outside-click already closes them).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') resetDropdown();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   const availableColumns = columns.filter(
     (col) => !activeFilters.some((f) => f.key === col.key),
   );
 
   const handleAddClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // Capture the open state BEFORE resetting — resetDropdown() sets it to
+    // false, so a functional toggle afterwards would always re-open it.
+    const wasOpen = showColumnPicker;
     resetDropdown();
-    setShowColumnPicker((prev) => !prev);
+    setShowColumnPicker(!wasOpen);
   };
 
   const handleColumnPick = (col: FilterColumn) => {
@@ -84,6 +102,7 @@ export function ChipFilter({
     setRangeMin('');
     setRangeMax('');
     setMultiSelected(new Set());
+    setValueSearch('');
   };
 
   // Single-select: pick and close
@@ -103,6 +122,19 @@ export function ChipFilter({
     });
   };
 
+  // Multi-select: toggle a whole category at once. If every value in the group is
+  // already selected, clear them; otherwise add them all.
+  const handleGroupToggle = (values: string[]) => {
+    setMultiSelected((prev) => {
+      const next = new Set(prev);
+      const allSelected = values.every((v) => next.has(v));
+      for (const v of values) {
+        if (allSelected) next.delete(v); else next.add(v);
+      }
+      return next;
+    });
+  };
+
   // Multi-select: apply selection
   const handleMultiApply = () => {
     if (!selectedColumn || multiSelected.size === 0) return;
@@ -118,6 +150,35 @@ export function ChipFilter({
 
   const isRange = selectedColumn?.type === 'range';
   const isMulti = selectedColumn?.multi === true;
+
+  // Any list dropdown (single or multi) gets a search box once it grows past a
+  // handful of options, or when a column opts in explicitly via `searchable`.
+  const SEARCH_THRESHOLD = 8;
+  const q = valueSearch.trim().toLowerCase();
+  const matchesQuery = (o: FilterOption) => !q || o.label.toLowerCase().includes(q);
+  const showSearch = !!selectedColumn && !isRange &&
+    (selectedColumn.searchable === true || selectedColumn.options.length > SEARCH_THRESHOLD);
+
+  // Single-select options, narrowed by the search box.
+  const filteredOptions = (selectedColumn?.options ?? []).filter(matchesQuery);
+  // Flat multi-select options, narrowed by the search box.
+  const multiFlatOptions = (selectedColumn?.options ?? []).filter(matchesQuery);
+
+  // When options carry a `group`, render them grouped under category headers
+  // (each with a select-all checkbox). Order follows first appearance. Query
+  // filtering applies within groups; empty groups are dropped.
+  const multiGroups = (() => {
+    if (!isMulti || !selectedColumn?.options.some((o) => o.group)) return null;
+    const groups: { label: string; options: FilterOption[] }[] = [];
+    for (const opt of selectedColumn.options) {
+      if (!matchesQuery(opt)) continue;
+      const label = opt.group ?? '';
+      let g = groups.find((x) => x.label === label);
+      if (!g) { g = { label, options: [] }; groups.push(g); }
+      g.options.push(opt);
+    }
+    return groups;
+  })();
 
   return (
     <div className="beast-dropdown-wrap" ref={wrapRef}>
@@ -182,16 +243,33 @@ export function ChipFilter({
           <div className="beast-filter-dropdown-header">
             {selectedColumn.label}
           </div>
-          {selectedColumn.options.map((opt) => (
-            <button
-              key={opt.value}
-              className="beast-filter-dropdown-item"
-              onClick={() => handleValuePick(opt.value)}
-            >
-              {opt.icon}
-              {opt.label}
-            </button>
-          ))}
+          {showSearch && (
+            <input
+              type="text"
+              className="beast-filter-dropdown-search"
+              placeholder={t('common.search', 'Search…')}
+              value={valueSearch}
+              onChange={(e) => setValueSearch(e.target.value)}
+              autoFocus
+            />
+          )}
+          <div className="beast-filter-dropdown-list">
+            {filteredOptions.map((opt) => (
+              <button
+                key={opt.value}
+                className="beast-filter-dropdown-item"
+                onClick={() => handleValuePick(opt.value)}
+              >
+                {opt.icon}
+                {opt.label}
+              </button>
+            ))}
+            {filteredOptions.length === 0 && (
+              <div className="beast-filter-dropdown-empty">
+                {t('common.noResults', 'No matches')}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -201,18 +279,68 @@ export function ChipFilter({
           <div className="beast-filter-dropdown-header">
             {selectedColumn.label}
           </div>
-          {selectedColumn.options.map((opt) => (
-            <label key={opt.value} className="beast-filter-dropdown-check">
-              <input
-                type="checkbox"
-                className="beast-checkbox"
-                checked={multiSelected.has(opt.value)}
-                onChange={() => handleMultiToggle(opt.value)}
-              />
-              {opt.icon}
-              {opt.label}
-            </label>
-          ))}
+          {showSearch && (
+            <input
+              type="text"
+              className="beast-filter-dropdown-search"
+              placeholder={t('common.search', 'Search…')}
+              value={valueSearch}
+              onChange={(e) => setValueSearch(e.target.value)}
+              autoFocus
+            />
+          )}
+          <div className="beast-filter-dropdown-list">
+          {multiGroups
+            ? multiGroups.map((g) => {
+                const values = g.options.map((o) => o.value);
+                const allSelected = values.every((v) => multiSelected.has(v));
+                const someSelected = values.some((v) => multiSelected.has(v));
+                return (
+                  <div key={g.label}>
+                    <label className="beast-filter-dropdown-group">
+                      <input
+                        type="checkbox"
+                        className="beast-checkbox"
+                        checked={allSelected}
+                        ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                        onChange={() => handleGroupToggle(values)}
+                        aria-label={g.label}
+                      />
+                      {g.label}
+                    </label>
+                    {g.options.map((opt) => (
+                      <label key={opt.value} className="beast-filter-dropdown-check beast-filter-dropdown-check--sub">
+                        <input
+                          type="checkbox"
+                          className="beast-checkbox"
+                          checked={multiSelected.has(opt.value)}
+                          onChange={() => handleMultiToggle(opt.value)}
+                        />
+                        {opt.icon}
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+                );
+              })
+            : multiFlatOptions.map((opt) => (
+                <label key={opt.value} className="beast-filter-dropdown-check">
+                  <input
+                    type="checkbox"
+                    className="beast-checkbox"
+                    checked={multiSelected.has(opt.value)}
+                    onChange={() => handleMultiToggle(opt.value)}
+                  />
+                  {opt.icon}
+                  {opt.label}
+                </label>
+              ))}
+          {((multiGroups && multiGroups.length === 0) || (!multiGroups && multiFlatOptions.length === 0)) && (
+            <div className="beast-filter-dropdown-empty">
+              {t('common.noResults', 'No matches')}
+            </div>
+          )}
+          </div>
           <div className="beast-filter-range-actions">
             <button
               className="beast-btn beast-btn-primary beast-btn-sm"
@@ -234,9 +362,9 @@ export function ChipFilter({
           </div>
           <div className="beast-filter-range">
             <input
-              type="text"
+              type="number"
               className="beast-input beast-input-sm"
-              placeholder={selectedColumn.minPlaceholder ?? 'Min'}
+              placeholder={selectedColumn.minPlaceholder ?? t('common.min', 'Min')}
               value={rangeMin}
               onChange={(e) => setRangeMin(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleRangeApply()}
@@ -244,9 +372,9 @@ export function ChipFilter({
             />
             <span className="beast-filter-range-sep">&mdash;</span>
             <input
-              type="text"
+              type="number"
               className="beast-input beast-input-sm"
-              placeholder={selectedColumn.maxPlaceholder ?? 'Max'}
+              placeholder={selectedColumn.maxPlaceholder ?? t('common.max', 'Max')}
               value={rangeMax}
               onChange={(e) => setRangeMax(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleRangeApply()}

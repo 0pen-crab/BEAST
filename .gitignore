@@ -28,3 +28,8 @@ custom-rules/*.yml
 
 # Release notes draft (maintained by /add-notes, consumed by /release)
 RELEASE.md
+
+# Enamine-specific MITM proxy CA (local deploy only — never commit)
+certs/
+_cert-deploy/
+docker-compose.override.yml

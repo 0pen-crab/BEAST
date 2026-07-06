@@ -37,7 +37,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY prompts/ /prompts/
 COPY hooks/ /opt/beast/
 RUN chmod +x /opt/beast/*.sh
-
 EXPOSE 22
 
 CMD ["/usr/local/bin/entrypoint.sh"]

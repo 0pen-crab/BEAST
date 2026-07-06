@@ -65,9 +65,19 @@ export function classifyFile(f: FileMetadata): ClassifiedFile {
 
 /**
  * Load raw metadata.jsonl from the claude-runner over SSH and parse each line.
+ *
+ * Throws on non-zero exit (missing/unreadable file) — a failed `cat` must not
+ * be silently treated as "no files", or the scan completes with zero modules.
+ * A genuinely empty file (exit 0, empty stdout) still returns [].
  */
-export async function loadMetadataJsonl(metadataPath: string): Promise<FileMetadata[]> {
-  const result = await sshExec(getClaudeRunnerConfig(), `cat ${JSON.stringify(metadataPath)}`);
+export async function loadMetadataJsonl(metadataPath: string, cancelSignal?: AbortSignal): Promise<FileMetadata[]> {
+  const result = await sshExec(getClaudeRunnerConfig(), `cat ${JSON.stringify(metadataPath)}`, { signal: cancelSignal });
+  if (result.code !== 0) {
+    const stderrTail = result.stderr.length > 2048 ? '...' + result.stderr.slice(-2048) : result.stderr;
+    throw new Error(
+      `Failed to read mirror metadata at ${metadataPath} (exit ${result.code}): ${stderrTail.trim() || '(no stderr)'}`,
+    );
+  }
   const lines = result.stdout.split('\n');
   const files: FileMetadata[] = [];
   for (const line of lines) {
@@ -86,11 +96,11 @@ export async function loadMetadataJsonl(metadataPath: string): Promise<FileMetad
  * Run the pre-classifier over all files and write a classified metadata file
  * next to the original. Returns the full classified list and bucket counts.
  */
-export async function preClassifyAll(metadataPath: string, classifiedOutPath: string): Promise<{
+export async function preClassifyAll(metadataPath: string, classifiedOutPath: string, cancelSignal?: AbortSignal): Promise<{
   files: ClassifiedFile[];
   counts: Record<ScanCategory, number>;
 }> {
-  const raw = await loadMetadataJsonl(metadataPath);
+  const raw = await loadMetadataJsonl(metadataPath, cancelSignal);
   const files = raw.map(classifyFile);
 
   const counts: Record<ScanCategory, number> = { TRASH: 0, DOCS: 0, INTERESTING: 0, UNCLEAR: 0 };
@@ -98,7 +108,7 @@ export async function preClassifyAll(metadataPath: string, classifiedOutPath: st
 
   // Write one JSON per line so large repos don't pressure memory on re-read
   const content = files.map(f => JSON.stringify(f)).join('\n') + '\n';
-  await sshWriteFile(getClaudeRunnerConfig(), classifiedOutPath, content);
+  await sshWriteFile(getClaudeRunnerConfig(), classifiedOutPath, content, cancelSignal);
 
   return { files, counts };
 }

@@ -10,6 +10,8 @@ import { EmptyState } from '@/components/empty-state';
 import { Pagination } from '@/components/pagination';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/format';
+import { findMergeCandidates } from '@/lib/merge-candidates';
+import type { MergeCandidateGroup } from '@/lib/merge-candidates';
 import type { Contributor } from '@/api/contributor-types';
 
 const PAGE_SIZE = 25;
@@ -159,6 +161,11 @@ export function ContributorsPage() {
   const [showMerge, setShowMerge] = useState(false);
   const [bulkLoading, setBulkLoading] = useState<string | null>(null);
 
+  // Duplicate suggestions panel — session-only state (no persistence, KISS)
+  const [duplicatesExpanded, setDuplicatesExpanded] = useState(false);
+  const [dismissedGroups, setDismissedGroups] = useState<Set<string>>(new Set());
+  const [suggestionGroup, setSuggestionGroup] = useState<MergeCandidateGroup<Contributor> | null>(null);
+
   const { currentWorkspace } = useWorkspace();
   const { data, isLoading } = useContributors({
     limit: 200,
@@ -183,6 +190,16 @@ export function ContributorsPage() {
   };
 
   const allContributors = data?.results ?? [];
+
+  const candidateGroups = useMemo(
+    () => findMergeCandidates(allContributors),
+    [allContributors],
+  );
+  const visibleGroups = candidateGroups.filter((g) => !dismissedGroups.has(g.id));
+
+  const dismissGroup = (groupId: string) => {
+    setDismissedGroups((prev) => new Set(prev).add(groupId));
+  };
 
   const filtered = useMemo(() => {
     let list = allContributors;
@@ -270,10 +287,21 @@ export function ContributorsPage() {
           <div>
             <h1 className="beast-page-title">{t('contributors.title')}</h1>
             <p className="beast-page-subtitle">
-              {data ? `${filtered.length} contributor${filtered.length !== 1 ? 's' : ''}` : t('contributors.subtitle')}
+              {data ? t('contributors.count', { count: filtered.length }) : t('contributors.subtitle')}
             </p>
           </div>
         </div>
+
+        {/* Possible duplicate identities — suggestions only, merge stays a human decision */}
+        {visibleGroups.length > 0 && (
+          <DuplicateSuggestionsPanel
+            groups={visibleGroups}
+            expanded={duplicatesExpanded}
+            onToggle={() => setDuplicatesExpanded((v) => !v)}
+            onMerge={setSuggestionGroup}
+            onDismiss={dismissGroup}
+          />
+        )}
 
         {/* Filters */}
         <div className="beast-filter-row">
@@ -438,7 +466,119 @@ export function ContributorsPage() {
           error={mergeMutation.error?.message ?? null}
         />
       )}
+
+      {suggestionGroup && currentWorkspace && (
+        <MergeContributorModal
+          mode="bulk"
+          candidates={suggestionGroup.members}
+          // Heuristic: preselect the contributor with the MOST COMMITS as the
+          // merge target — the richer history is most likely the canonical
+          // identity. The human can still pick a different target in the modal.
+          initialTargetId={
+            [...suggestionGroup.members]
+              .sort((a, b) => b.totalCommits - a.totalCommits)[0]?.id
+          }
+          workspaceId={currentWorkspace.id}
+          onConfirm={async (sourceIds, targetId) => {
+            let failed = false;
+            for (const sourceId of sourceIds) {
+              try {
+                await mergeMutation.mutateAsync({ sourceId, targetId });
+              } catch {
+                failed = true;
+              }
+            }
+            if (!failed) {
+              dismissGroup(suggestionGroup.id);
+              setSuggestionGroup(null);
+            }
+          }}
+          onClose={() => setSuggestionGroup(null)}
+          loading={mergeMutation.isPending}
+          error={mergeMutation.error?.message ?? null}
+        />
+      )}
     </ErrorBoundary>
+  );
+}
+
+// ── Duplicate suggestions panel ──────────────────────────────────
+
+const REASON_KEYS: Record<MergeCandidateGroup['reason'], string> = {
+  sameName: 'contributors.duplicateReasonSameName',
+  sameEmailLocal: 'contributors.duplicateReasonSameEmailLocal',
+  initialPattern: 'contributors.duplicateReasonInitialPattern',
+};
+
+function DuplicateSuggestionsPanel({
+  groups,
+  expanded,
+  onToggle,
+  onMerge,
+  onDismiss,
+}: {
+  groups: MergeCandidateGroup<Contributor>[];
+  expanded: boolean;
+  onToggle: () => void;
+  onMerge: (group: MergeCandidateGroup<Contributor>) => void;
+  onDismiss: (groupId: string) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="beast-pause-banner" data-testid="duplicate-suggestions">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="beast-pause-banner-title beast-th-sort"
+        style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}
+      >
+        <span>{expanded ? '▾' : '▸'}</span>
+        {t('contributors.duplicatesBanner', { count: groups.length })}
+      </button>
+
+      {expanded && (
+        <div className="beast-stack-sm" style={{ marginTop: '10px' }}>
+          {groups.map((group) => (
+            <div
+              key={group.id}
+              data-testid="duplicate-group"
+              className="beast-card"
+              style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px' }}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', flex: 1, minWidth: 0 }}>
+                {group.members.map((m) => (
+                  <div key={m.id} style={{ minWidth: 0 }}>
+                    <span className="beast-td-primary">{m.displayName}</span>
+                    <p className="beast-page-subtitle">{m.emails[0]}</p>
+                  </div>
+                ))}
+              </div>
+              <span className="beast-badge beast-badge-sm beast-badge-amber">
+                {t(REASON_KEYS[group.reason])}
+              </span>
+              <button
+                type="button"
+                onClick={() => onMerge(group)}
+                className="beast-btn beast-btn-outline beast-btn-sm"
+              >
+                {t('contributors.merge')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onDismiss(group.id)}
+                aria-label={t('contributors.dismissSuggestion')}
+                title={t('contributors.dismissSuggestion')}
+                className="beast-btn beast-btn-ghost beast-btn-xs"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

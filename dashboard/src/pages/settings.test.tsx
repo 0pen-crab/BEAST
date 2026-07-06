@@ -165,8 +165,9 @@ describe('SettingsPage', () => {
     const addBtn = screen.getByText('sources.addSource');
     await user.click(addBtn);
 
-    // SourceForm tabs should appear
-    expect(screen.getByText('sources.publicSource')).toBeInTheDocument();
+    // SourceForm tabs should appear (single repo / git server / local upload)
+    expect(screen.getByText('sources.singleRepo')).toBeInTheDocument();
+    expect(screen.getByText('sources.gitServer')).toBeInTheDocument();
     expect(screen.getByText('repos.addRepoUpload')).toBeInTheDocument();
   });
 
@@ -174,7 +175,7 @@ describe('SettingsPage', () => {
     const { useSources } = await import('@/api/hooks');
     vi.mocked(useSources).mockReturnValue({
       data: [
-        { id: 1, provider: 'github', baseUrl: 'https://api.github.com', orgName: 'my-org', orgType: 'organization', workspaceId: 1, syncIntervalMinutes: 1440, lastSyncedAt: null, prCommentsEnabled: false, detectedScopes: [], webhookSecret: null, webhookId: null, createdAt: '2026-01-01' },
+        { id: 1, provider: 'github', baseUrl: 'https://api.github.com', orgName: 'my-org', orgType: 'organization', workspaceId: 1, syncIntervalMinutes: 1440, lastSyncedAt: null, detectedScopes: [], createdAt: '2026-01-01' },
       ],
       isLoading: false,
     } as any);

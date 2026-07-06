@@ -12,14 +12,15 @@ All input/output paths are specified in the prompt.
 
 Read the findings file at the path specified in the prompt. It contains:
 - `findings`: pre-parsed array (id, title, severity, description, file_path, line, tool, confidence, verified)
-- `repo_name`, `repo_path`, `profile_path`, `results_dir`
+- `repo_name`, `repo_path`, `scan_context_path`, `results_dir`
 - `baseline_assessments`: existing contributor assessments — enhance the `feedback` field in Phase 3
+- `existing_ai_findings` (optional): AI (BEAST) findings already stored from PREVIOUS scans of this repository (id, title, file_path, severity, description). These ids are DATABASE ids, completely separate from the `findings` ids. Used ONLY for cross-scan matching (see below).
 
 If the findings path is "NONE", skip Phase 1 — write an empty triage output and proceed to Phase 2.
 
 ### Step 1: Read Context
 
-1. Read `profile_path` for codebase architecture, tech stack, and known patterns
+1. Read `scan_context_path` for codebase architecture, tech stack, security context, and trust boundaries
 2. Skim `results_dir/code-analysis.sarif` for full finding details
 3. Skim other tool result files in `results_dir` for raw detection context if needed
 
@@ -53,6 +54,20 @@ For each finding, decide:
 
 **Trivy / JFrog Xray**: CVE/dependency findings. Keep unless the vulnerable code path is unreachable or dependency is dev-only.
 
+### Cross-Scan Matching (BEAST findings only)
+
+AI-generated findings cannot be matched across scans automatically: their titles are rephrased on every run and line numbers shift. YOU perform that matching.
+
+If the input contains `existing_ai_findings`, then for every finding in `findings` whose `tool` is `beast`, check whether it describes the SAME underlying issue as one of the `existing_ai_findings`. If it does, add `same_as: <existing id>` to that finding's decision entry.
+
+Matching rules — be CONSERVATIVE:
+- **Match** when it is clearly the same vulnerability: same `file_path` AND same vulnerability class (e.g. both are SQL injection in the same query-building function). Titles will be worded differently and line numbers may have shifted — match on MEANING, not exact wording or exact line.
+- **When unsure → do NOT set `same_as`** (treat as a new finding). A wrong match silently merges two different vulnerabilities; a missed match only creates one extra row.
+- At most ONE new finding may point at a given existing id. If several new findings look similar to the same existing one, pick the single best match; the rest get no `same_as`.
+- `same_as` values MUST come from `existing_ai_findings` ids — NEVER from the `findings` array ids (that's what `duplicate_of` is for).
+- `same_as` applies ONLY to `tool: beast` findings. Never set it on findings from other tools.
+- `same_as` is INDEPENDENT of `action`: still triage the finding normally (`keep`/`false_positive`/`risk_accept`/`duplicate`). A matched finding that is still a real issue is `keep` + `same_as`.
+
 ### Email Aliases (merged contributors)
 
 The input may contain `email_aliases` — a map of primary email to other emails that belong to the same person (merged contributors). Example: `{"b@company.com": ["a.old@company.com", "a@gmail.com"]}` means all three emails are the same contributor.
@@ -78,12 +93,15 @@ Write JSON to TRIAGE_OUTPUT_PATH:
     { "finding_id": 123, "action": "false_positive", "reason": "..." },
     { "finding_id": 234, "action": "duplicate", "reason": "Same secret as #230 (BEAST caught the same hardcoded password in same file:line)", "duplicate_of": 230 },
     { "finding_id": 345, "action": "risk_accept", "reason": "..." },
-    { "finding_id": 456, "action": "keep", "reason": "...", "contributor_email": "dev@example.com", "contributor_name": "Jane Smith" }
+    { "finding_id": 456, "action": "keep", "reason": "...", "contributor_email": "dev@example.com", "contributor_name": "Jane Smith" },
+    { "finding_id": 567, "action": "keep", "reason": "...", "same_as": 4211, "contributor_email": "dev@example.com" }
   ]
 }
 ```
 
 `duplicate_of` is REQUIRED for every `action: "duplicate"` entry — the integer id of the surviving finding.
+
+`same_as` is OPTIONAL and only valid on `tool: beast` findings: the integer DATABASE id (from `existing_ai_findings`) of the previously stored AI finding this one is a re-detection of. Omit it entirely when there is no confident match.
 
 Triage EVERY finding. Always write the file even if all are kept.
 
@@ -103,8 +121,19 @@ The report is pure analysis — individual findings are already stored in the sy
 2-3 paragraphs covering:
 - What this codebase does and why its security posture matters (e.g. shared library = multiplier effect)
 - Overall security assessment — one clear verdict (satisfactory / needs attention / unsatisfactory / critical)
-- Triage breakdown: how many total findings came in, how many kept open vs. dismissed (false positives, duplicates, risk-accepted), severity distribution of open findings
+- Triage narrative: what kinds of issues dominated and why findings were dismissed (false positives, duplicates, risk-accepted) — qualitative only, NO counts or totals
 - The most significant risk in one sentence
+
+## Security Context
+
+A human-readable overview of how the application handles security, drawn from the scan context and the code you read. Plain prose or a short bullet list — how authentication and authorization work, how user input enters and is validated, how data is stored and queried, error handling and logging posture. Keep it concise (a reader who never opens the code should understand the security model).
+
+## Trust Boundaries
+
+Describe who can reach what, in plain language:
+- **Public-facing**: what any unauthenticated user can reach
+- **Authenticated**: what requires a logged-in user
+- **Admin-only**: privileged surfaces
 
 ## Critical Problems
 
@@ -134,6 +163,7 @@ Write the assessments to `TOOLS_DIR/contributor-assessments.json` as a valid JSO
 
 ### Rules
 
+- Do NOT include aggregate counts, totals, per-severity numbers, percentages, or statistics tables anywhere in the report — a verified statistics section is appended automatically from the scan database. Write analysis and per-finding detail, never totals.
 - Do NOT invent findings — only report what tools actually detected
 - Do NOT drop legitimate findings — every real vulnerability must appear
 - Cross-reference findings between tools to increase confidence

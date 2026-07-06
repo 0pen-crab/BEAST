@@ -1,25 +1,43 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { useScans, useScanDetail, useScanStats, useScanLogs, useScanLogContent, useCancelScan, useRemoveScan, useResumeScan } from '@/api/hooks';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useCurrentWorkspaceRole, canWrite } from '@/lib/permissions';
 import { PipelineProgress, type PipelineStep } from '@/components/pipeline-progress';
+import { CardSkeleton } from '@/components/skeleton';
 import { formatDateTime } from '@/lib/format';
-import type { ScanDetail, ScanStep } from '@/api/types';
+import i18n from '@/lib/i18n';
+import type { ScanDetail, ScanStep, ScanStepError } from '@/api/types';
 
-const PIPELINE_STAGES: { key: string; label: string }[] = [
-  { key: 'clone', label: 'Clone Repo' },
-  { key: 'analysis', label: 'Repo Analysis' },
-  { key: 'security-tools', label: 'Security Tools' },
-  { key: 'ai-research', label: 'AI Research' },
-  { key: 'import', label: 'Import Findings' },
-  { key: 'triage-report', label: 'Triage & Report' },
+/** Translate function shape (react-i18next `t`) — kept loose so helpers stay simple. */
+type TFn = (key: string, options?: Record<string, unknown>) => string;
+
+// Keep in sync with the orchestrator's STEPS (api/src/orchestrator/pipeline.ts).
+// Exported for tests. 'commit' is the final step that writes scan results to
+// the DB — everything before it only prepares data.
+// Labels live in the locale files under `scans.stages.*`.
+export const PIPELINE_STAGES: { key: string; labelKey: string }[] = [
+  { key: 'clone', labelKey: 'scans.stages.clone' },
+  { key: 'analysis', labelKey: 'scans.stages.analysis' },
+  { key: 'security-tools', labelKey: 'scans.stages.security-tools' },
+  { key: 'ai-research', labelKey: 'scans.stages.ai-research' },
+  { key: 'import', labelKey: 'scans.stages.import' },
+  { key: 'triage-report', labelKey: 'scans.stages.triage-report' },
+  { key: 'commit', labelKey: 'scans.stages.commit' },
 ];
 
+/** Localized label for a pipeline step key; falls back to the raw step name. */
+function stageLabel(stepKey: string | null | undefined, t: TFn): string {
+  if (!stepKey) return '';
+  const stage = PIPELINE_STAGES.find(s => s.key === stepKey);
+  return stage ? t(stage.labelKey) : stepKey;
+}
+
 /** Map scan steps to PipelineProgress steps */
-function toPipelineSteps(scanSteps: ScanStep[], showDurations?: boolean): PipelineStep[] {
+function toPipelineSteps(scanSteps: ScanStep[], t: TFn, showDurations?: boolean): PipelineStep[] {
   return PIPELINE_STAGES.map((stage) => {
     const step = scanSteps.find(s => s.stepName === stage.key);
     const status = step?.status ?? 'pending';
@@ -32,7 +50,7 @@ function toPipelineSteps(scanSteps: ScanStep[], showDurations?: boolean): Pipeli
 
     return {
       key: stage.key,
-      label: stage.label,
+      label: t(stage.labelKey),
       status: status === 'running' ? 'running'
         : status === 'completed' ? 'completed'
         : status === 'failed' ? 'failed'
@@ -69,10 +87,51 @@ function useLiveElapsed(startedAt: string | null): number | null {
 
 export function ScansPage() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<'active' | 'completed' | 'failed'>('active');
   const { user } = useAuth();
   const wsRole = useCurrentWorkspaceRole();
   const canEdit = user ? canWrite(user.role, wsRole ?? undefined) : false;
+
+  // The active tab lives in the URL (?tab=completed|failed, default active is
+  // kept out of it) so refresh / shared links restore the view — same
+  // convention as the repo page.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: 'active' | 'completed' | 'failed' =
+    tabParam === 'completed' || tabParam === 'failed' ? tabParam : 'active';
+
+  // Manual tab switches push a history entry (back button friendly) and drop
+  // any ?scan= deep link so it doesn't re-force its own tab afterwards.
+  const selectTab = (tabKey: 'active' | 'completed' | 'failed') => {
+    const next = new URLSearchParams(searchParams);
+    if (tabKey === 'active') next.delete('tab');
+    else next.set('tab', tabKey);
+    next.delete('scan');
+    setSearchParams(next);
+  };
+
+  // Deep link from the dashboard: /scans?scan={id} — pick the right tab,
+  // scroll the scan into view and highlight it briefly. While ?scan= is
+  // present it wins over ?tab= (the tab is rewritten in place, no new
+  // history entry).
+  const targetScanId = searchParams.get('scan');
+  const { data: targetScan } = useScanDetail(targetScanId);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!targetScan) return;
+    const scanTab = targetScan.status === 'completed' ? 'completed'
+      : targetScan.status === 'failed' ? 'failed'
+      : 'active';
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (scanTab === 'active') next.delete('tab');
+      else next.set('tab', scanTab);
+      return next;
+    }, { replace: true });
+    setHighlightId(targetScan.id);
+    const timer = setTimeout(() => setHighlightId(null), 2500);
+    return () => clearTimeout(timer);
+  }, [targetScan?.id, targetScan?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ErrorBoundary>
@@ -83,14 +142,14 @@ export function ScansPage() {
         </div>
 
         <StatsBar />
-        <RunningScans canEdit={canEdit} />
+        <RunningScans canEdit={canEdit} highlightId={highlightId} />
 
         <div>
           <div className="beast-tab-bar beast-tab-bar-spaced">
             {(['active', 'completed', 'failed'] as const).map((tabKey) => (
               <button
                 key={tabKey}
-                onClick={() => setTab(tabKey)}
+                onClick={() => selectTab(tabKey)}
                 className={cn('beast-tab', tab === tabKey && 'beast-tab-active')}
               >
                 {tabKey === 'active' ? t('scans.queue') : tabKey === 'completed' ? t('scans.completed') : t('scans.failed')}
@@ -98,9 +157,9 @@ export function ScansPage() {
             ))}
           </div>
 
-          {tab === 'active' && <ScanTable status="queued" canEdit={canEdit} />}
-          {tab === 'completed' && <ScanTable status="completed" canEdit={canEdit} />}
-          {tab === 'failed' && <ScanTable status="failed" canEdit={canEdit} />}
+          {tab === 'active' && <ScanTable status="queued" canEdit={canEdit} highlightId={highlightId} />}
+          {tab === 'completed' && <ScanTable status="completed" canEdit={canEdit} highlightId={highlightId} />}
+          {tab === 'failed' && <ScanTable status="failed" canEdit={canEdit} highlightId={highlightId} />}
         </div>
       </div>
     </ErrorBoundary>
@@ -112,7 +171,15 @@ export function ScansPage() {
 function StatsBar() {
   const { t } = useTranslation();
   const { data: stats } = useScanStats();
-  if (!stats) return null;
+  if (!stats) {
+    return (
+      <div className="beast-grid-7">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <CardSkeleton key={i} />
+        ))}
+      </div>
+    );
+  }
 
   const cards: { label: string; value: string | number; sub?: string; accent?: string }[] = [
     { label: t('scans.totalScans'), value: stats.total },
@@ -160,7 +227,7 @@ function StatsBar() {
 
 // ── Running Scans (live cards) ─────────────────────────────────
 
-function RunningScans({ canEdit }: { canEdit: boolean }) {
+function RunningScans({ canEdit, highlightId }: { canEdit: boolean; highlightId?: string | null }) {
   const { t } = useTranslation();
   const { data: runningData } = useScans({ status: 'running', limit: 10 });
   const { data: pausedData } = useScans({ status: 'paused', limit: 10 });
@@ -176,18 +243,29 @@ function RunningScans({ canEdit }: { canEdit: boolean }) {
       </h2>
       <div className="beast-stack-xs">
         {active.map((scan) => (
-          <RunningScanCard key={scan.id} scan={scan} canEdit={canEdit} onCancel={() => cancelScan.mutate(scan.id)} />
+          <RunningScanCard
+            key={scan.id}
+            scan={scan}
+            canEdit={canEdit}
+            highlighted={highlightId === scan.id}
+            onCancel={() => cancelScan.mutate(scan.id)}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function RunningScanCard({ scan, canEdit, onCancel }: { scan: ScanDetail; canEdit: boolean; onCancel: () => void }) {
+function RunningScanCard({ scan, canEdit, highlighted, onCancel }: { scan: ScanDetail; canEdit: boolean; highlighted?: boolean; onCancel: () => void }) {
   const { t } = useTranslation();
   const { data: detail } = useScanDetail(scan.id);
   const live = detail ?? scan;
   const steps = live.steps ?? [];
+  const cardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (highlighted) cardRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }, [highlighted]);
 
   const elapsed = useLiveElapsed(live.startedAt);
   const currentStep = steps.find(s => s.status === 'running');
@@ -195,29 +273,32 @@ function RunningScanCard({ scan, canEdit, onCancel }: { scan: ScanDetail; canEdi
   const isPaused = live.status === 'paused';
 
   return (
-    <div className={cn('beast-running-card', isPaused && 'beast-running-card-paused')}>
+    <div ref={cardRef} className={cn('beast-running-card', isPaused && 'beast-running-card-paused', highlighted && 'beast-row-highlight')}>
       <div className="beast-running-card-row">
         <div className="beast-flex beast-flex-gap-sm">
           <span className="beast-running-icon">
             {isPaused ? '\u23F8' : '\u25B6'}
           </span>
           <div>
-            <p className="beast-running-name">{live.repoName}</p>
+            <div className="beast-flex beast-flex-gap-sm">
+              <p className="beast-running-name">{live.repoName}</p>
+              <ScanTypeBadge scanType={live.scanType} />
+            </div>
             <p className="beast-text-hint">
               {live.id.slice(0, 8)}
-              {elapsed != null && <span> &middot; <span data-testid="live-elapsed">{formatDuration(elapsed)}</span> elapsed</span>}
+              {elapsed != null && <span> &middot; <span data-testid="live-elapsed">{formatDuration(elapsed)}</span> {t('scans.elapsed')}</span>}
             </p>
           </div>
         </div>
         <div className="beast-flex beast-flex-gap">
           <div>
-            <p className="beast-running-step">{currentStep?.stepName ?? (isPaused ? t('scans.paused') : '...')}</p>
-            <p className="beast-text-hint">{completedSteps}/{PIPELINE_STAGES.length} steps</p>
+            <p className="beast-running-step">{currentStep ? stageLabel(currentStep.stepName, t) : (isPaused ? t('scans.paused') : '...')}</p>
+            <p className="beast-text-hint">{t('scans.stepsProgress', { completed: completedSteps, total: PIPELINE_STAGES.length })}</p>
           </div>
-          {canEdit && !isPaused && (
+          {canEdit && (
             <button
               onClick={onCancel}
-              title="Cancel scan"
+              title={t('scans.cancelScan')}
               className="beast-btn beast-btn-danger beast-btn-sm"
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 4l8 8M12 4l-8 8" /></svg>
@@ -230,7 +311,7 @@ function RunningScanCard({ scan, canEdit, onCancel }: { scan: ScanDetail; canEdi
 
       {/* Pipeline step progress */}
       <div className="beast-running-card-body">
-        <PipelineProgress steps={toPipelineSteps(steps)} />
+        <PipelineProgress steps={toPipelineSteps(steps, t)} />
       </div>
     </div>
   );
@@ -260,7 +341,7 @@ function PauseBanner({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) 
             <p className="beast-pause-banner-countdown-value">
               {countdown != null && countdown > 0
                 ? formatCountdown(countdown)
-                : new Date(scan.resumesAt).toLocaleTimeString()}
+                : formatDateTime(scan.resumesAt)}
             </p>
           </div>
         )}
@@ -323,9 +404,11 @@ function formatCountdown(seconds: number): string {
 
 // ── Scan Table (shared for queued/completed/failed) ────────────
 
-function ScanTable({ status, canEdit }: { status: string; canEdit: boolean }) {
+function ScanTable({ status, canEdit, highlightId }: { status: string; canEdit: boolean; highlightId?: string | null }) {
   const { t } = useTranslation();
   const { data, isLoading } = useScans({ status, limit: 200 });
+  const removeScan = useRemoveScan();
+  const [confirmRemove, setConfirmRemove] = useState<ScanDetail | null>(null);
   const scanList = data?.results ?? [];
 
   if (isLoading) return <TableSkeleton />;
@@ -336,11 +419,21 @@ function ScanTable({ status, canEdit }: { status: string; canEdit: boolean }) {
     return <EmptyState text={msg} />;
   }
 
+  const handleRemoveConfirmed = () => {
+    if (!confirmRemove) return;
+    removeScan.mutate(confirmRemove.id, { onSettled: () => setConfirmRemove(null) });
+  };
+
+  // Queue tab: the API returns queued scans in FIFO order (created_at asc),
+  // so the row index IS the queue position.
+  const isQueue = status === 'queued';
+
   return (
     <div className="beast-table-wrap">
       <table className="beast-table">
         <thead>
           <tr>
+            {isQueue && <th className="beast-th-queue-pos">#</th>}
             <th>{t('scans.repository')}</th>
             <th>{t('common.status')}</th>
             <th>
@@ -354,22 +447,66 @@ function ScanTable({ status, canEdit }: { status: string; canEdit: boolean }) {
           </tr>
         </thead>
         <tbody>
-          {scanList.map((scan) => (
-            <ScanRow key={scan.id} scan={scan} canEdit={canEdit} />
+          {scanList.map((scan, index) => (
+            <ScanRow
+              key={scan.id}
+              scan={scan}
+              canEdit={canEdit}
+              highlighted={highlightId === scan.id}
+              position={isQueue ? index + 1 : undefined}
+              onRemove={() => setConfirmRemove(scan)}
+            />
           ))}
         </tbody>
       </table>
+
+      {/* Remove confirmation (same pattern as the repo delete dialog) */}
+      {confirmRemove && (
+        <div className="beast-overlay" onClick={() => setConfirmRemove(null)}>
+          <div className="beast-modal beast-modal-sm" onClick={(e) => e.stopPropagation()}>
+            <h3 className="beast-modal-title">{t('scans.removeScan')}</h3>
+            <p className="beast-modal-body">
+              {t('scans.removeScanConfirm')} <strong>{confirmRemove.repoName}</strong>?
+            </p>
+            <div className="beast-modal-actions">
+              <button
+                onClick={() => setConfirmRemove(null)}
+                className="beast-btn beast-btn-outline beast-btn-sm"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={handleRemoveConfirmed}
+                disabled={removeScan.isPending}
+                className="beast-btn beast-btn-danger beast-btn-sm"
+              >
+                {removeScan.isPending ? t('scans.removing') : t('common.remove')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
+function ScanRow({ scan, canEdit, highlighted, position, onRemove }: { scan: ScanDetail; canEdit: boolean; highlighted?: boolean; position?: number; onRemove: () => void }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const { data: detail } = useScanDetail(expanded ? scan.id : null);
-  const removeScan = useRemoveScan();
   const cancelScan = useCancelScan();
   const live = detail ?? scan;
   const steps = live.steps ?? [];
+  const rowRef = useRef<HTMLTableRowElement | null>(null);
+
+  useEffect(() => {
+    if (highlighted) {
+      rowRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+      // A ?scan= deep link should land the user IN the step detail, not just
+      // at a briefly-highlighted collapsed row. Never auto-collapses.
+      setExpanded(true);
+    }
+  }, [highlighted]);
 
   const dur = live.durationMs
     ? Math.round(live.durationMs / 1000)
@@ -378,11 +515,16 @@ function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
     : null;
 
   const failedStep = steps.find(s => s.status === 'failed');
-  const statusIcon = live.status === 'completed' ? '\u2713'
+  // "Completed with errors": still status='completed', but some tools/modules
+  // failed after retry \u2014 distinct amber icon/badge instead of the green check.
+  const withErrors = live.status === 'completed' && !!live.completedWithErrors;
+  const statusIcon = withErrors ? '\u26a0'
+    : live.status === 'completed' ? '\u2713'
     : live.status === 'failed' ? '\u2717'
     : live.status === 'paused' ? '\u23f8'
     : '\u2022';
-  const statusColor = live.status === 'completed' ? 'status-completed'
+  const statusColor = withErrors ? 'status-paused'
+    : live.status === 'completed' ? 'status-completed'
     : live.status === 'failed' ? 'status-failed'
     : live.status === 'paused' ? 'status-paused'
     : 'status-running';
@@ -392,35 +534,44 @@ function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
   return (
     <>
       <tr
+        ref={rowRef}
         onClick={() => setExpanded(!expanded)}
         className={cn(
           'border-b border-th-border-subtle hover:bg-th-hover transition-colors cursor-pointer',
           expanded && 'bg-th-hover',
+          highlighted && 'beast-row-highlight',
         )}
       >
+        {position != null && (
+          <td className="beast-td-queue-pos tabular-nums">{position}</td>
+        )}
         <td>
           <div className="beast-flex beast-flex-gap-sm">
             <span className={cn('status-pill beast-flex-center beast-status-icon-sm', statusColor)}>
               {statusIcon}
             </span>
             <span className="beast-td-primary">{scan.repoName}</span>
+            <ScanTypeBadge scanType={scan.scanType} />
           </div>
         </td>
         <td>
-          <span className={cn(
-            'status-pill',
-            live.status === 'queued' && 'status-queued',
-            live.status === 'running' && 'status-running',
-            live.status === 'paused' && 'status-paused',
-            live.status === 'completed' && 'status-completed',
-            live.status === 'failed' && 'status-failed',
-          )}>
-            {live.status}
+          <span
+            className={cn(
+              'status-pill',
+              live.status === 'queued' && 'status-queued',
+              live.status === 'running' && 'status-running',
+              live.status === 'paused' && 'status-paused',
+              live.status === 'completed' && (withErrors ? 'status-paused' : 'status-completed'),
+              live.status === 'failed' && 'status-failed',
+            )}
+            title={withErrors ? t('scans.completedWithErrorsTooltip') : undefined}
+          >
+            {withErrors ? t('scans.completedWithErrors') : t(`status.${live.status}`)}
           </span>
         </td>
         <td>
           {live.status === 'failed'
-            ? <span className="beast-td-code beast-td-code-truncate">{failedStep?.error ?? live.error ?? 'Unknown'}</span>
+            ? <span className="beast-td-code beast-td-code-truncate">{failedStep?.error ?? live.error ?? t('scans.unknown')}</span>
             : <span className="tabular-nums">{dur != null ? formatDuration(dur) : '--'}</span>
           }
         </td>
@@ -434,17 +585,17 @@ function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
           <td>
             {live.status === 'queued' && (
               <button
-                onClick={(e) => { e.stopPropagation(); removeScan.mutate(scan.id); }}
-                title="Remove"
+                onClick={(e) => { e.stopPropagation(); onRemove(); }}
+                title={t('scans.removeFromQueue')}
                 className="beast-btn beast-btn-ghost"
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 4l8 8M12 4l-8 8" /></svg>
               </button>
             )}
-            {live.status === 'running' && (
+            {(live.status === 'running' || live.status === 'paused') && (
               <button
                 onClick={(e) => { e.stopPropagation(); cancelScan.mutate(scan.id); }}
-                title="Cancel"
+                title={t('scans.cancelScan')}
                 className="beast-btn beast-btn-ghost"
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="4" y="4" width="8" height="8" /></svg>
@@ -455,10 +606,10 @@ function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={canEdit ? 6 : 5}>
+          <td colSpan={5 + (canEdit ? 1 : 0) + (position != null ? 1 : 0)}>
             {steps.length > 0
-              ? <StepTimelineDetail scanId={scan.id} steps={steps} error={live.error} />
-              : <p className="beast-page-subtitle">Loading...</p>
+              ? <StepTimelineDetail scanId={scan.id} steps={steps} error={live.error} stepErrors={live.stepErrors} />
+              : <p className="beast-page-subtitle">{t('common.loading')}</p>
             }
           </td>
         </tr>
@@ -467,9 +618,26 @@ function ScanRow({ scan, canEdit }: { scan: ScanDetail; canEdit: boolean }) {
   );
 }
 
+// ── Scan Type Badge ────────────────────────────────────────────
+
+function ScanTypeBadge({ scanType }: { scanType: string | null | undefined }) {
+  const { t } = useTranslation();
+  if (!scanType || scanType === 'full') return null;
+  const label = scanType === 'pr' ? t('scans.types.pr') : scanType;
+  return (
+    <span className={cn(
+      'beast-scan-type-badge',
+      scanType === 'pr' && 'beast-scan-type-pr',
+    )}>
+      {label}
+    </span>
+  );
+}
+
 // ── Mini Step Dots ─────────────────────────────────────────────
 
 function MiniStepDots({ steps }: { steps: ScanStep[] }) {
+  const { t } = useTranslation();
   return (
     <div className="beast-flex beast-flex-gap-xs">
       {PIPELINE_STAGES.map((stage) => {
@@ -478,7 +646,7 @@ function MiniStepDots({ steps }: { steps: ScanStep[] }) {
         return (
           <div
             key={stage.key}
-            title={`${stage.label}: ${st}`}
+            title={`${t(stage.labelKey)}: ${t(`status.${st}`)}`}
             className={cn(
               'beast-step-dot beast-mini-dot',
               st === 'completed' && 'beast-step-dot-success',
@@ -504,7 +672,8 @@ const AI_LOG_STEPS: Record<string, string> = {
 
 // ── Step Timeline Detail (expanded view with input/output) ─────
 
-function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: ScanStep[]; error: string | null }) {
+function StepTimelineDetail({ scanId, steps, error, stepErrors }: { scanId: string; steps: ScanStep[]; error: string | null; stepErrors?: ScanStepError[] }) {
+  const { t } = useTranslation();
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
   const [viewingLog, setViewingLog] = useState<string | null>(null);
   const selected = steps.find(s => s.stepName === selectedStep);
@@ -517,12 +686,18 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
       {/* Reusable pipeline step progress */}
       <PipelineProgress
         size="lg"
-        steps={toPipelineSteps(steps, true)}
+        steps={toPipelineSteps(steps, t, true)}
         onStepClick={(key) => {
           setSelectedStep(selectedStep === key ? null : key);
           setViewingLog(null);
         }}
       />
+
+      {/* "Completed with errors" details: every surviving (post-retry) failure,
+          maximally detailed — tool/module name, error text, attempt info. */}
+      {stepErrors && stepErrors.length > 0 && (
+        <ScanStepErrorsSection stepErrors={stepErrors} />
+      )}
 
       {/* AI log links */}
       {availableLogs.size > 0 && (
@@ -539,7 +714,7 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                   <path d="M3 2h10v12H3z" /><path d="M5 5h6M5 8h6M5 11h4" />
                 </svg>
-                {stage?.label ?? stepKey} log
+                {t('scans.stepLog', { step: stage ? t(stage.labelKey) : stepKey })}
               </button>
             );
           })}
@@ -553,7 +728,7 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
       {selected && !viewingLog && (
         <div className="beast-card beast-stack-sm">
           <div className="beast-flex-between">
-            <h3 className="beast-card-title beast-card-title-flush">{selected.stepName}</h3>
+            <h3 className="beast-card-title beast-card-title-flush">{stageLabel(selected.stepName, t)}</h3>
             <span className={cn(
               'status-pill',
               selected.status === 'completed' && 'status-completed',
@@ -562,7 +737,7 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
               selected.status === 'skipped' && 'status-queued',
               selected.status === 'pending' && 'status-queued',
             )}>
-              {selected.status}
+              {t(`status.${selected.status}`)}
             </span>
           </div>
 
@@ -580,23 +755,23 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
               <div className="beast-stat-row">
                 <div className="beast-stat">
                   <span className="beast-stat-value">${aiUsage.costUSD?.toFixed(3)}</span>
-                  <span className="beast-stat-label">cost</span>
+                  <span className="beast-stat-label">{t('scans.aiUsage.cost')}</span>
                 </div>
                 <div className="beast-stat">
                   <span className="beast-stat-value">{totalInput.toLocaleString()}</span>
-                  <span className="beast-stat-label">input tokens</span>
+                  <span className="beast-stat-label">{t('scans.aiUsage.inputTokens')}</span>
                 </div>
                 <div className="beast-stat">
                   <span className="beast-stat-value">{(aiUsage.outputTokens ?? 0).toLocaleString()}</span>
-                  <span className="beast-stat-label">output tokens</span>
+                  <span className="beast-stat-label">{t('scans.aiUsage.outputTokens')}</span>
                 </div>
                 <div className="beast-stat">
                   <span className="beast-stat-value">{(aiUsage.cacheReadInputTokens ?? 0).toLocaleString()}</span>
-                  <span className="beast-stat-label">cache read</span>
+                  <span className="beast-stat-label">{t('scans.aiUsage.cacheRead')}</span>
                 </div>
                 <div className="beast-stat">
                   <span className="beast-stat-value">{aiUsage.model}</span>
-                  <span className="beast-stat-label">model</span>
+                  <span className="beast-stat-label">{t('scans.aiUsage.model')}</span>
                 </div>
               </div>
             );
@@ -605,7 +780,7 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
           <div className="beast-grid-2">
             {selected.input && (
               <div>
-                <p className="beast-label">Input</p>
+                <p className="beast-label">{t('scans.input')}</p>
                 <pre className="beast-code-block">
                   {JSON.stringify(selected.input, null, 2)}
                 </pre>
@@ -613,7 +788,7 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
             )}
             {selected.output && (
               <div>
-                <p className="beast-label">Output</p>
+                <p className="beast-label">{t('scans.output')}</p>
                 <pre className="beast-code-block">
                   {JSON.stringify(selected.output, null, 2)}
                 </pre>
@@ -623,8 +798,8 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
 
           {selected.startedAt && (
             <p className="beast-text-hint tabular-nums">
-              Started: {formatDateTime(selected.startedAt)}
-              {selected.completedAt && <> &middot; Ended: {formatDateTime(selected.completedAt)}</>}
+              {t('scans.started')}: {formatDateTime(selected.startedAt)}
+              {selected.completedAt && <> &middot; {t('scans.ended')}: {formatDateTime(selected.completedAt)}</>}
             </p>
           )}
         </div>
@@ -640,13 +815,47 @@ function StepTimelineDetail({ scanId, steps, error }: { scanId: string; steps: S
   );
 }
 
+// ── Scan step errors (completed-with-errors detail) ────────────
+
+function ScanStepErrorsSection({ stepErrors }: { stepErrors: ScanStepError[] }) {
+  const { t } = useTranslation();
+  return (
+    <div className="beast-card beast-stack-sm" data-testid="scan-step-errors">
+      <div>
+        <h3 className="beast-card-title beast-card-title-flush beast-flex beast-flex-gap-sm">
+          <span className="status-pill beast-flex-center beast-status-icon-sm status-paused">⚠</span>
+          {t('scans.stepErrorsTitle')}
+        </h3>
+        <p className="beast-page-subtitle">{t('scans.stepErrorsSubtitle')}</p>
+      </div>
+      <div className="beast-stack-xs">
+        {stepErrors.map((e, i) => (
+          <div key={`${e.kind}-${e.name}-${i}`} className="beast-error">
+            <div className="beast-flex beast-flex-gap-sm">
+              <span className="beast-badge beast-badge-amber">
+                {e.kind === 'module' ? t('scans.stepErrorModule') : t('scans.stepErrorTool')}
+              </span>
+              <span className="beast-td-primary">{e.name}</span>
+              {e.failedAfterRetry && (
+                <span className="beast-text-hint">({t('scans.failedAfterRetry')})</span>
+              )}
+            </div>
+            <p className="beast-code-inline">{e.error}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Log Viewer ─────────────────────────────────────────────────
 
 function LogViewer({ scanId, step }: { scanId: string; step: string }) {
+  const { t } = useTranslation();
   const { data: raw, isLoading } = useScanLogContent(scanId, step);
 
   if (isLoading) return <div className="beast-skeleton beast-skeleton-block" />;
-  if (!raw) return <p className="beast-text-hint">Log not available</p>;
+  if (!raw) return <p className="beast-text-hint">{t('scans.logNotAvailable')}</p>;
 
   // Parse NDJSON stream into readable entries
   const entries = raw.split('\n').filter(Boolean).map((line, i) => {
@@ -661,7 +870,7 @@ function LogViewer({ scanId, step }: { scanId: string; step: string }) {
     <div className="beast-card beast-stack-sm">
       <div className="beast-flex-between">
         <h3 className="beast-card-title beast-card-title-flush">
-          {step} log ({entries.length} events)
+          {t('scans.logTitle', { step: stageLabel(step, t) || step, count: entries.length })}
         </h3>
       </div>
       <div className="beast-log-viewer">
@@ -674,6 +883,7 @@ function LogViewer({ scanId, step }: { scanId: string; step: string }) {
 }
 
 function LogEntry({ entry }: { entry: Record<string, unknown> }) {
+  const { t } = useTranslation();
   const type = entry.type as string;
 
   if (type === 'assistant') {
@@ -708,7 +918,7 @@ function LogEntry({ entry }: { entry: Record<string, unknown> }) {
       <div className="beast-log-entry beast-log-result">
         <span className="beast-log-tag">done</span>
         <span className="beast-log-text">
-          {entry.is_error ? 'Error' : 'Success'}
+          {entry.is_error ? t('scans.logError') : t('scans.logSuccess')}
           {cost != null && <> &middot; ${Number(cost).toFixed(3)}</>}
           {usage && <>
             &middot; {((usage.inputTokens ?? 0) + (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0)).toLocaleString()} in
@@ -744,11 +954,14 @@ function TableSkeleton() {
   );
 }
 
+// Localized duration units ("2m 14s" / "2 хв 14 с") — every caller lives in a
+// component that re-renders on language change, so reading the global i18n
+// instance here stays in sync.
 function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return i18n.t('common.durationS', { s: seconds });
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  if (mins < 60) return `${mins}m ${secs}s`;
+  if (mins < 60) return i18n.t('common.durationMS', { m: mins, s: secs });
   const hours = Math.floor(mins / 60);
-  return `${hours}h ${mins % 60}m`;
+  return i18n.t('common.durationHM', { h: hours, m: mins % 60 });
 }

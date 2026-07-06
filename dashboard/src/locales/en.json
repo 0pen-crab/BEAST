@@ -27,13 +27,48 @@
     "title": "Backend unreachable",
     "degradedTitle": "Infrastructure issue",
     "detail": "API health check failed. Check that the API container is running.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "systems": {
+      "db": "Database",
+      "worker": "Worker",
+      "claude-runner": "Claude runner",
+      "security-tools": "Security tools"
+    }
+  },
+  "toast": {
+    "errorTitle": "Request failed",
+    "successTitle": "Success",
+    "warningTitle": "Warning"
+  },
+  "export": {
+    "button": "Export",
+    "processing": "Processing…",
+    "title": "Export Findings",
+    "description": "Repositories: {{count}}",
+    "descriptionWorkspace": "Export findings from the whole workspace.",
+    "format": "Format",
+    "mdDesc": "Human-readable report",
+    "csvDesc": "Spreadsheet-ready",
+    "severity": "Severity",
+    "status": "Status",
+    "tools": "Tools",
+    "noTools": "No tools with findings for selected repositories.",
+    "aiCurated": "Ask AI to filter only the most interesting",
+    "aiCuratedDesc": "Claude returns a CSV of 10–30 critical findings worth immediate attention",
+    "aiFailed": "AI export failed",
+    "preparing": "Preparing export…",
+    "failed": "Export failed",
+    "downloadFailed": "Download failed",
+    "all": "all",
+    "none": "none"
   },
   "workspace": {
     "select": "Select workspace",
     "namePlaceholder": "Workspace name",
     "add": "Add",
     "create": "Create workspace",
+    "loadErrorTitle": "Couldn't load workspaces",
+    "loadErrorDetail": "The workspace list could not be fetched. Check your connection and try again.",
     "defaultLanguage": "Language for reports",
     "defaultLanguageDesc": "Choose the language for generated reports (Repository overview, Vulnerability Audit, Contributor profile, etc). We recommend your native language — long agent-written reports can be hard to read in English, even if you're comfortable with English in the UI."
   },
@@ -54,6 +89,7 @@
     "viewAll": "View All",
     "name": "Name",
     "search": "Search",
+    "noResults": "No matches",
     "loading": "Loading...",
     "saved": "Saved",
     "optional": "optional",
@@ -72,7 +108,25 @@
     "remove": "Remove",
     "first": "First",
     "last": "Last",
-    "create": "Create"
+    "create": "Create",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "export": "Export",
+    "min": "Min",
+    "max": "Max",
+    "dismiss": "Dismiss",
+    "retry": "Retry",
+    "status": "Status",
+    "resultsCount_one": "{{count}} result",
+    "resultsCount_other": "{{count}} results",
+    "reposCount_one": "{{count}} repo",
+    "reposCount_other": "{{count}} repos",
+    "justNow": "just now",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "durationS": "{{s}}s",
+    "durationMS": "{{m}}m {{s}}s",
+    "durationHM": "{{h}}h {{m}}m"
   },
   "severity": {
     "Critical": "Critical",
@@ -84,6 +138,7 @@
   "status": {
     "Open": "Open",
     "Accepted": "Risk Accepted",
+    "RiskAccepted": "Risk Accepted",
     "FalsePositive": "False Positive",
     "Fixed": "Fixed",
     "Duplicate": "Duplicate",
@@ -93,7 +148,9 @@
     "queued": "queued",
     "paused": "paused",
     "failed": "failed",
-    "Resolved": "Resolved"
+    "Resolved": "Resolved",
+    "pending": "pending",
+    "skipped": "skipped"
   },
   "login": {
     "signIn": "Sign in to BEAST",
@@ -127,9 +184,10 @@
     "creating": "Creating...",
     "createWorkspace": "Create workspace",
     "step1": "Workspace",
-    "step2": "Tools",
-    "step3": "Source",
-    "step4": "Import",
+    "step2": "AI Analysis",
+    "step3": "Tools",
+    "step4": "Source",
+    "step5": "Import",
     "connectSource": "Connect repository sources",
     "connectSourceDesc": "Import repositories from a git organization or local folder",
     "publicTab": "Public Git",
@@ -154,6 +212,7 @@
     "scanning": "Scanning...",
     "importSuccess": "Connected — {{count}} repositories imported",
     "importError": "Connection failed",
+    "importFailedSources": "Failed to import from: {{sources}}",
     "goToDashboard": "Go to Dashboard",
     "back": "Back",
     "importRepos": "Import Repositories",
@@ -181,7 +240,49 @@
     "alreadyImported": "Already imported",
     "importSelected": "Import selected ({{count}})",
     "nothingToImport": "All repositories were already imported",
-    "continueSource": "Continue"
+    "continueSource": "Continue",
+    "aiAnalysis": {
+      "title": "AI Code Analysis",
+      "subtitle": "Claude reads your code alongside the security tools to surface architectural issues, missing checks, and exploit paths that scanners can't see.",
+      "badgeEnabled": "ENABLED",
+      "badgeDisabled": "DISABLED",
+      "selectedPreset": "Selected preset",
+      "axisCost": "TOKENS & TIME",
+      "axisDepth": "FINDINGS",
+      "specs": {
+        "depth": "Files per agent",
+        "cost": "Cost (medium repo)",
+        "duration": "Duration",
+        "findings": "Findings vs Quick"
+      },
+      "modes": {
+        "quick": {
+          "desc": "Quick surface-level analysis. Claude flags only high-confidence issues. Best for small repos or fast feedback loops.",
+          "cost": "~$5",
+          "duration": "~5 min",
+          "multiplier": "×1"
+        },
+        "standard": {
+          "badge": "BALANCED",
+          "desc": "Balanced deep analysis. Claude examines cross-file context and architecture alongside the security tools. Recommended for most teams.",
+          "cost": "~$13",
+          "duration": "~20 min",
+          "multiplier": "×3"
+        },
+        "deep": {
+          "badge": "BEAST MODE",
+          "desc": "Every file, every path. Claude runs at maximum depth and chains reasoning across the entire codebase. Use for critical or security-sensitive projects.",
+          "cost": "~$50",
+          "duration": "~1h 40m",
+          "multiplier": "×10"
+        }
+      },
+      "off": {
+        "label": "AI · OFF",
+        "desc": "Scans will run only the security tools you configure on the next step. No AI analysis, no architectural review, no cross-file reasoning."
+      },
+      "continue": "Continue"
+    }
   },
   "dashboard": {
     "title": "Dashboard",
@@ -205,7 +306,8 @@
     "securityBriefProcessing": "Analyzing...",
     "securityBriefDownload": "Download Brief",
     "securityBriefFailed": "Analysis failed",
-    "securityBriefNoFindings": "No open findings to analyze"
+    "securityBriefNoFindings": "No open findings to analyze",
+    "scansError": "Failed to load scans"
   },
   "scans": {
     "title": "Scans",
@@ -258,10 +360,55 @@
     "latest": "Latest",
     "scanQueued": "Scan queued successfully.",
     "startScan": "Start Scan",
-    "submitting": "Submitting..."
+    "submitting": "Submitting...",
+    "types": {
+      "pr": "PR scan",
+      "full": "Full scan"
+    },
+    "stages": {
+      "clone": "Clone Repo",
+      "analysis": "Repo Analysis",
+      "security-tools": "Security Tools",
+      "ai-research": "AI Research",
+      "import": "Import Findings",
+      "triage-report": "Triage & Report",
+      "commit": "Commit Results"
+    },
+    "stepsProgress": "{{completed}}/{{total}} steps",
+    "unknown": "Unknown",
+    "stepLog": "{{step}} log",
+    "logTitle_one": "{{step}} log ({{count}} event)",
+    "logTitle_other": "{{step}} log ({{count}} events)",
+    "logNotAvailable": "Log not available",
+    "input": "Input",
+    "output": "Output",
+    "started": "Started",
+    "ended": "Ended",
+    "aiUsage": {
+      "cost": "cost",
+      "inputTokens": "input tokens",
+      "outputTokens": "output tokens",
+      "cacheRead": "cache read",
+      "model": "model"
+    },
+    "logError": "Error",
+    "logSuccess": "Success",
+    "removeScan": "Remove Scan",
+    "removeScanConfirm": "Are you sure you want to remove the queued scan for",
+    "removing": "Removing...",
+    "completedWithErrors": "Completed with errors",
+    "completedWithErrorsTooltip": "Some security tools or AI modules failed even after a retry — results are partial. Open the scan for details.",
+    "stepErrorsTitle": "Errors during this scan",
+    "stepErrorsSubtitle": "These tools/modules failed even after an automatic retry. Their results are missing from this scan; everything else was committed.",
+    "stepErrorTool": "Tool",
+    "stepErrorModule": "Module",
+    "failedAfterRetry": "failed after retry"
   },
   "repos": {
     "title": "Repositories",
+    "subtitle": "All scanned repositories",
+    "count_one": "{{count}} repository",
+    "count_other": "{{count}} repositories",
     "searchPlaceholder": "Search repositories...",
     "allTeams": "All teams",
     "noMatchingRepos": "No matching repositories",
@@ -321,7 +468,14 @@
     "hasFindings": "Has findings",
     "noFindings": "No findings",
     "exportFindings": "Export findings",
-    "exporting": "Exporting..."
+    "exporting": "Exporting...",
+    "bulkScanFailed": "Failed to queue scans",
+    "bulkDeleteTitle": "Delete Repositories",
+    "bulkDeleteConfirm_one": "Delete {{count}} repository and all its data? This cannot be undone.",
+    "bulkDeleteConfirm_other": "Delete {{count}} repositories and all their data? This cannot be undone.",
+    "bulkDeleteFailed": "{{failed}} of {{total}} deletions failed",
+    "exportFailed": "Export failed",
+    "aiExportFailed": "Failed to generate AI brief"
   },
   "repo": {
     "scanResultsByTool": "Scan Results by Tool",
@@ -341,10 +495,55 @@
     "repoProfile": "Repository Profile",
     "securityAudit": "Security Audit",
     "generated": "Generated",
+    "minRead": "{{minutes}} min read",
+    "wordCount": "{{words}}+ words",
     "noReportAvailable": "No report available",
     "overview": "Overview",
     "triagedByAi": "Triaged by AI, Accepted",
-    "downloadMd": "Download .md"
+    "downloadMd": "Download .md",
+    "aiTraceTab": "AI Trace",
+    "aiTrace": {
+      "emptyNoScan": "No scan has been run on this repository yet.",
+      "emptyNoTraces": "The last scan didn't record any AI traces.",
+      "prompt": "User Prompt",
+      "assistant": "Assistant",
+      "thinking": "Thinking",
+      "toolResult": "Tool Result",
+      "completed": "Completed",
+      "failed": "Failed",
+      "events": "events",
+      "turns": "turns",
+      "live": "Live",
+      "system": "system",
+      "tool": "tool",
+      "toolsCount": "{{n}} tools",
+      "toolPending": "running…",
+      "traceError": "Trace error:",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "downloadRaw": "Download raw trace (.jsonl)",
+      "copyRaw": "Copy raw trace",
+      "copied": "Copied",
+      "status": {
+        "completed": "ok",
+        "failed": "failed",
+        "partial": "partial"
+      },
+      "wave": {
+        "wave1": "Wave 1 · Noise Filter",
+        "wave2": "Wave 2 · {{name}}",
+        "wave3": "Wave 3 · Chain Detective",
+        "wave4": "Wave 4 · {{name}}",
+        "report": "Report Builder",
+        "analyzer": "Profile Analyzer",
+        "scanner": "Code Scanner",
+        "triageReport": "Triage & Report",
+        "scout": "Scout · batch {{batch}}",
+        "sniper": "Sniper · {{name}}"
+      }
+    },
+    "lastScanCompletedWithErrors": "The latest scan completed with errors — see the scan for details.",
+    "openScan": "Open scan"
   },
   "findings": {
     "title": "Findings",
@@ -364,6 +563,10 @@
     "columnSettings": "Column settings",
     "cvss": "CVSS",
     "contributor": "Contributor",
+    "exportCsv": "Export CSV",
+    "duplicates": "Duplicates",
+    "showDuplicates": "Show duplicates",
+    "hideDuplicates": "Hide duplicates",
     "detail": {
       "description": "Description",
       "location": "Location",
@@ -437,18 +640,27 @@
     "syncFailed": "Sync Failed",
     "pipelineError": "Scan Failed",
     "apiError": "API Error",
-    "prScanTriggered": "PR Scan Triggered",
-    "prDiffFetchFailed": "PR Diff Fetch Failed",
-    "prCommentFailed": "PR Comment Failed",
     "contributorIngestFailed": "Contributor Ingest Failed",
-    "webhookRegistrationFailed": "Webhook Registration Failed",
     "reposAdded": "repos added",
     "reposUpdated": "repos updated",
     "level": "Level",
     "source": "Source",
     "repo": "Repository",
     "date": "Date",
-    "type": "Type"
+    "type": "Type",
+    "levels": {
+      "all": "All",
+      "error": "Error",
+      "warning": "Warning",
+      "info": "Info"
+    },
+    "id": "ID",
+    "scan": "Scan",
+    "step": "Step",
+    "workspaceId": "Workspace ID",
+    "created": "Created",
+    "resolvedMeta": "Resolved: {{date}}",
+    "resolvedMetaBy": "Resolved: {{date}} by {{user}}"
   },
   "contributors": {
     "title": "Contributors",
@@ -482,7 +694,20 @@
     "mergeSearchPlaceholder": "Search by name or email...",
     "mergePickTarget": "Select which contributor to keep",
     "mergeTransfers": "All emails, repo stats, activity, findings, and assessments will transfer",
-    "mergePartialFailure": "{{succeeded}} merged, {{failed}} failed"
+    "mergePartialFailure": "{{succeeded}} merged, {{failed}} failed",
+    "duplicatesBanner_one": "Possible duplicates: {{count}} group",
+    "duplicatesBanner_other": "Possible duplicates: {{count}} groups",
+    "duplicateReasonSameName": "Same name",
+    "duplicateReasonSameEmailLocal": "Same email name, different domains",
+    "duplicateReasonInitialPattern": "Initial matches full first name",
+    "dismissSuggestion": "Dismiss suggestion",
+    "count_one": "{{count}} contributor",
+    "count_other": "{{count}} contributors",
+    "contributionsLastYear_one": "{{count}} contribution in the last year",
+    "contributionsLastYear_other": "{{count}} contributions in the last year",
+    "noContributionsLastYear": "No contributions in the last year",
+    "heatmapLess": "Less",
+    "heatmapMore": "More"
   },
   "sources": {
     "title": "Repository Sources",
@@ -594,11 +819,13 @@
       },
       "standard": {
         "label": "STANDARD",
-        "tag": "Moderate speed. Solid coverage"
+        "tag": "Moderate speed. Solid coverage",
+        "badge": "BALANCED"
       },
       "deep": {
         "label": "DEEP",
-        "tag": "Slow. Expensive. Maximum findings"
+        "tag": "Slow. Expensive. Maximum findings",
+        "badge": "BEAST MODE"
       },
       "sizes": {
         "small": "SMALL REPO",
@@ -609,7 +836,8 @@
         "small": "CLI tool, package, micro-service",
         "medium": "Typical SaaS product, full-stack app",
         "large": "Enterprise monorepo, mid-size platform"
-      }
+      },
+      "filesApprox": "~{{n}} files"
     }
   },
   "pipeline": {
@@ -624,26 +852,9 @@
     "aiResearchShort": "AI Research",
     "triageReportShort": "Triage & Report"
   },
-  "pullRequests": {
-    "tab": "Pull Requests",
-    "title": "Title",
-    "author": "Author",
-    "branches": "Branches",
-    "status": "Status",
-    "scanStatus": "Scan Status",
-    "scan": "Scan",
-    "notScanned": "Not scanned",
-    "empty": "No pull requests",
-    "emptySubtitle": "Pull requests will appear here when received via webhook or manual sync"
-  },
   "integrations": {
     "capabilities": "Integration Capabilities",
     "capRepos": "Repository listing",
-    "capPullRequests": "PR monitoring",
-    "capWebhooks": "Auto-scan webhooks",
-    "capPrComments": "PR comments",
-    "prComments": "Post scan results as PR comments",
-    "prCommentsNoScope": "Token lacks pullrequest:write scope",
     "noScope": "missing scope"
   },
   "members": {
@@ -663,11 +874,14 @@
     "workspaceAdmin": "Workspace Admin",
     "member": "Member",
     "usernamePlaceholder": "Username or email",
+    "searchUserPlaceholder": "Search users by name or email…",
+    "clearSelection": "Clear selection",
     "addSuccess": "User {{username}} added",
     "tempPassword": "Temporary password",
     "copyCredentials": "Copy",
     "copied": "Copied!",
-    "alreadyMember": "User is already a member of this workspace"
+    "alreadyMember": "User is already a member of this workspace",
+    "noMatchingUsers": "No matching users"
   },
   "tools": {
     "categories": {
@@ -691,7 +905,24 @@
     "whereGetToken": "Where do I get the token?",
     "saveError": "Failed to save tool configuration",
     "enabled": "Enabled",
-    "disabled": "Disabled"
+    "disabled": "Disabled",
+    "descriptions": {
+      "gitleaks": "Detect hardcoded secrets in git repos using regex and entropy analysis.",
+      "trufflehog": "Find and verify leaked credentials across git history and code.",
+      "trivy-secrets": "Detect secrets embedded in source code and configuration files.",
+      "gitguardian": "Detect and remediate secrets sprawl with policy-based scanning.",
+      "semgrep": "Lightweight static analysis with community-driven rules for many languages.",
+      "snyk-code": "AI-powered SAST that detects security vulnerabilities in your code.",
+      "osv-scanner": "Scan dependencies against the OSV vulnerability database.",
+      "trivy-sca": "Find known vulnerabilities in OS packages and language dependencies.",
+      "snyk-sca": "Identify and fix vulnerabilities in open-source dependencies.",
+      "jfrog": "Deep recursive scanning for vulnerabilities in binary artifacts and dependencies.",
+      "checkov": "Scan IaC files for misconfigurations across Terraform, CloudFormation, and more.",
+      "trivy-iac": "Detect misconfigurations in Dockerfiles, Kubernetes, and Terraform.",
+      "snyk-iac": "Find and fix misconfigurations in Terraform, Kubernetes, and ARM templates.",
+      "presidio": "NLP-powered PII detection — names, phone numbers, credit cards, IBANs, and other personal data.",
+      "semgrep-pii": "Semgrep with PII-specific rules for detecting personal data exposure patterns."
+    }
   },
   "language": {
     "en": "English",

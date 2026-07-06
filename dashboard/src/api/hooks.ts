@@ -15,8 +15,6 @@ import type {
   Source,
   DiscoveredRepo,
   WorkspaceEvent,
-  PullRequestSummary,
-  PullRequestDetail,
   WorkspaceMember,
   AddMemberResponse,
   AdminUser,
@@ -29,7 +27,7 @@ import type {
 // All API requests go through apiFetch which auto-injects auth headers.
 // NEVER use raw fetch() for /api/* calls.
 
-import { apiFetch, fetchApi, mutateApi } from './client';
+import { apiFetch, fetchApi, fetchApiRaw, mutateApi } from './client';
 import type {
   Contributor,
   ContributorRepoStats,
@@ -162,6 +160,58 @@ export function useRepoReports(repositoryId: number) {
   });
 }
 
+// ── AI Trace (raw stream-json per Claude invocation in a scan) ────────────
+
+export interface AiTraceFile {
+  wave: string;
+  file_name: string;
+  content: string;
+  created_at: string;
+}
+
+export interface AiTraceScanInfo {
+  id: string;
+  scan_type: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  error: string | null;
+}
+
+export interface AiTracesResponse {
+  scan: AiTraceScanInfo | null;
+  traces: AiTraceFile[];
+}
+
+/** Scan states in which AI traces are still being appended. */
+export function isScanActive(status: string | undefined | null): boolean {
+  return status === 'running' || status === 'queued' || status === 'paused';
+}
+
+/**
+ * Fetch raw AI traces for the latest scan of a repository.
+ * Polls while the related scan is still active (same conditional-interval
+ * pattern as useScans/useScanDetail) so the viewer live-updates mid-scan,
+ * and stops once the scan reaches a terminal state.
+ */
+export function useAiTraces(repositoryId: number) {
+  return useQuery({
+    queryKey: ['aiTraces', repositoryId],
+    queryFn: async () => {
+      const res = await apiFetch(`/api/repositories/${repositoryId}/ai-traces`);
+      if (!res.ok) throw new Error('Failed to load AI traces');
+      return res.json() as Promise<AiTracesResponse>;
+    },
+    enabled: repositoryId > 0,
+    refetchInterval: (query) => {
+      const status = query.state.data?.scan?.status;
+      return isScanActive(status) ? 7_000 : false;
+    },
+  });
+}
+
+
 // ── Scan Artifacts ──────────────────────────────────────────────
 
 interface ScanArtifact {
@@ -212,6 +262,7 @@ export function useFindings(params?: {
   status?: string;
   tool?: string;
   duplicate?: boolean;
+  search?: string;
   limit?: number;
   offset?: number;
   sort?: string;
@@ -307,14 +358,20 @@ export function useAddFindingNote() {
 export function useUpdateFinding() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: number; status?: string; riskAcceptedReason?: string }) =>
+    // The API expects snake_case payload keys (risk_accepted_reason) — sending
+    // camelCase silently no-oped because zod stripped the unknown key.
+    mutationFn: ({ id, status, riskAcceptedReason }: { id: number; status?: string; riskAcceptedReason?: string }) =>
       mutateApi<Finding>(`/api/findings/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...(status !== undefined ? { status } : {}),
+          ...(riskAcceptedReason !== undefined ? { risk_accepted_reason: riskAcceptedReason } : {}),
+        }),
       }),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['findings'] });
       qc.invalidateQueries({ queryKey: ['findingCounts'] });
+      qc.invalidateQueries({ queryKey: ['findingCountsByTool'] });
       qc.invalidateQueries({ queryKey: ['finding', data.id] });
     },
   });
@@ -344,6 +401,7 @@ export function useScanEvents(params?: {
         } as Record<string, string | number | boolean | undefined>),
       ),
     enabled: !!wsId,
+    refetchInterval: 30_000,
   });
 }
 
@@ -563,10 +621,14 @@ export function useSyncSource() {
 export function useUpdateSource() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: number; prCommentsEnabled?: boolean; syncIntervalMinutes?: number }) =>
+    // The API expects snake_case payload keys (sync_interval_minutes) — sending
+    // camelCase silently no-oped because zod stripped the unknown key.
+    mutationFn: ({ id, syncIntervalMinutes }: { id: number; syncIntervalMinutes?: number }) =>
       mutateApi<Source>(`/api/sources/${id}`, {
         method: 'PUT',
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...(syncIntervalMinutes !== undefined ? { sync_interval_minutes: syncIntervalMinutes } : {}),
+        }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sources'] });
@@ -581,21 +643,6 @@ export function useDeleteSource() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sources'] });
       qc.invalidateQueries({ queryKey: ['repositories'] });
-    },
-  });
-}
-
-export function useAddRepoUrl() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { workspace_id: number; repo_url: string; team_id?: number }) =>
-      mutateApi<{ repository: Repository }>('/api/repos/add-url', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['repositories'] });
-      qc.invalidateQueries({ queryKey: ['workspaceEvents'] });
     },
   });
 }
@@ -669,6 +716,26 @@ export function useScans(params?: { status?: string; limit?: number }) {
   });
 }
 
+/**
+ * Latest scan (any status) for a repository — used by the repo page to show
+ * the "last scan completed with errors" notice. Newest-first ordering comes
+ * from the API (non-queued listScans sorts by created_at DESC).
+ */
+export function useLatestRepoScan(repositoryId: number | null) {
+  const { currentWorkspace } = useWorkspace();
+  const wsId = currentWorkspace?.id;
+  return useQuery({
+    queryKey: ['scans', wsId, 'latest-for-repo', repositoryId],
+    queryFn: async () => {
+      const data = await fetchApi<{ count: number; results: ScanDetail[] }>(
+        buildUrl('/api/scans', { workspace_id: wsId, repository_id: repositoryId ?? undefined, limit: 1 }),
+      );
+      return data.results[0] ?? null;
+    },
+    enabled: !!wsId && repositoryId !== null && repositoryId > 0,
+  });
+}
+
 export function useScanDetail(id: string | null) {
   return useQuery({
     queryKey: ['scan', id],
@@ -695,10 +762,7 @@ export function useScanLogContent(scanId: string | null, step: string | null) {
   return useQuery({
     queryKey: ['scan-log-content', scanId, step],
     queryFn: async () => {
-      const res = await fetch(`/api/scan-logs/${scanId}/${step}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('beast_token')}` },
-      });
-      if (!res.ok) throw new Error('Log not found');
+      const res = await fetchApiRaw(`/api/scan-logs/${scanId}/${encodeURIComponent(step!)}`);
       return res.text();
     },
     enabled: scanId !== null && step !== null,
@@ -752,41 +816,6 @@ export function useResumeScan() {
       qc.invalidateQueries({ queryKey: ['scan', id] });
       qc.invalidateQueries({ queryKey: ['scans'] });
       qc.invalidateQueries({ queryKey: ['scan-stats'] });
-    },
-  });
-}
-
-// ── Pull Requests ─────────────────────────────────────────
-
-export function usePullRequests(repositoryId: number) {
-  return useQuery({
-    queryKey: ['pullRequests', repositoryId],
-    queryFn: () => fetchApi<PullRequestSummary[]>(
-      buildUrl('/api/pull-requests', { repository_id: repositoryId }),
-    ),
-    enabled: repositoryId > 0,
-  });
-}
-
-export function usePullRequest(id: number) {
-  return useQuery({
-    queryKey: ['pullRequest', id],
-    queryFn: () => fetchApi<PullRequestDetail>(`/api/pull-requests/${id}`),
-    enabled: id > 0,
-  });
-}
-
-export function useScanPullRequest() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (prId: number) => mutateApi<any>(
-      `/api/pull-requests/${prId}/scan`,
-      { method: 'POST' },
-    ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pullRequests'] });
-      qc.invalidateQueries({ queryKey: ['pullRequest'] });
-      qc.invalidateQueries({ queryKey: ['scans'] });
     },
   });
 }

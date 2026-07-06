@@ -9,6 +9,8 @@ vi.mock('react-i18next', () => ({
       const map: Record<string, string> = {
         'common.first': 'First',
         'common.last': 'Last',
+        'common.previous': 'Previous',
+        'common.next': 'Next',
         'common.page': 'Page',
         'common.of': 'of',
       };
@@ -94,5 +96,81 @@ describe('Pagination', () => {
     expect(screen.getByText('6')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('8')).toBeInTheDocument();
+  });
+
+  it('renders Prev and Next buttons', () => {
+    render(<Pagination page={2} totalPages={10} onPageChange={() => {}} />);
+    expect(screen.getByText('Previous')).toBeInTheDocument();
+    expect(screen.getByText('Next')).toBeInTheDocument();
+  });
+
+  it('Prev goes to the previous page, Next goes to the next page', async () => {
+    const onChange = vi.fn();
+    render(<Pagination page={3} totalPages={10} onPageChange={onChange} />);
+    await userEvent.click(screen.getByText('Previous'));
+    expect(onChange).toHaveBeenCalledWith(2);
+    await userEvent.click(screen.getByText('Next'));
+    expect(onChange).toHaveBeenCalledWith(4);
+  });
+
+  it('disables Prev on first page and Next on last page', () => {
+    const { unmount } = render(<Pagination page={0} totalPages={5} onPageChange={() => {}} />);
+    expect(screen.getByText('Previous')).toBeDisabled();
+    expect(screen.getByText('Next')).not.toBeDisabled();
+    unmount();
+    render(<Pagination page={4} totalPages={5} onPageChange={() => {}} />);
+    expect(screen.getByText('Next')).toBeDisabled();
+    expect(screen.getByText('Previous')).not.toBeDisabled();
+  });
+
+  it('scrolls to top when changing page (window fallback when no scrollable ancestor)', async () => {
+    const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    render(<Pagination page={0} totalPages={5} onPageChange={() => {}} />);
+    await userEvent.click(screen.getByText('3'));
+    expect(scrollSpy).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    scrollSpy.mockRestore();
+  });
+
+  // The app's layout scrolls an inner <main class="overflow-y-auto"> container,
+  // not the window — window.scrollTo is a no-op there. The component must scroll
+  // the nearest scrollable ancestor instead.
+  it('scrolls the nearest scrollable ancestor instead of the window', async () => {
+    const windowSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const { container } = render(
+      <main style={{ overflowY: 'auto' }}>
+        <Pagination page={0} totalPages={5} onPageChange={() => {}} />
+      </main>,
+    );
+    const scroller = container.querySelector('main') as HTMLElement;
+    Object.defineProperty(scroller, 'scrollHeight', { value: 2000, configurable: true });
+    Object.defineProperty(scroller, 'clientHeight', { value: 500, configurable: true });
+    scroller.scrollTo = vi.fn();
+    await userEvent.click(screen.getByText('3'));
+    expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(windowSpy).not.toHaveBeenCalled();
+    windowSpy.mockRestore();
+  });
+
+  it('does not re-fire onPageChange or scroll when clicking the active page', async () => {
+    const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const onChange = vi.fn();
+    render(<Pagination page={2} totalPages={5} onPageChange={onChange} />);
+    await userEvent.click(screen.getByText('3')); // page 2 displayed as "3" — already active
+    expect(onChange).not.toHaveBeenCalled();
+    expect(scrollSpy).not.toHaveBeenCalled();
+    scrollSpy.mockRestore();
+  });
+
+  it('marks the active page with aria-current="page"', () => {
+    render(<Pagination page={2} totalPages={5} onPageChange={() => {}} />);
+    expect(screen.getByText('3')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('2')).not.toHaveAttribute('aria-current');
+  });
+
+  it('gives page buttons aria-labels and type="button"', () => {
+    render(<Pagination page={0} totalPages={5} onPageChange={() => {}} />);
+    const btn = screen.getByText('3');
+    expect(btn).toHaveAttribute('type', 'button');
+    expect(btn).toHaveAttribute('aria-label', 'Page 3');
   });
 });

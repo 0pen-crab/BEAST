@@ -27,6 +27,15 @@ export async function apiGet(page: Page, path: string) {
   });
 }
 
+/** Make an authenticated API POST request */
+export async function apiPost(page: Page, path: string, data: unknown) {
+  const token = await getAuthToken(page);
+  return page.request.post(path, {
+    headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+    data,
+  });
+}
+
 /** Make an authenticated API DELETE request */
 export async function apiDelete(page: Page, path: string) {
   const token = await getAuthToken(page);

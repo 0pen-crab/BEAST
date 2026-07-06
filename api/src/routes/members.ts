@@ -12,6 +12,7 @@ import {
   countWorkspaceAdmins,
   findUserByUsername,
   createUser,
+  searchUsersNotInWorkspace,
 } from '../orchestrator/entities.ts';
 
 const SALT_ROUNDS = 12;
@@ -26,6 +27,22 @@ export const memberRoutes: FastifyPluginAsyncZod = async (app) => {
     const { id: workspaceId } = request.params;
     await authorize(request, workspaceId, 'member');
     return listWorkspaceMembers(workspaceId);
+  });
+
+  // GET /api/workspaces/:id/users/search — candidate users to add (not already members)
+  app.get('/workspaces/:id/users/search', {
+    schema: {
+      params: z.object({ id: z.coerce.number() }),
+      querystring: z.object({
+        q: z.string().max(128).optional().default(''),
+        limit: z.coerce.number().min(1).max(50).default(10),
+      }),
+    },
+  }, async (request) => {
+    const { id: workspaceId } = request.params;
+    await authorize(request, workspaceId, 'workspace_admin');
+    const { q, limit } = request.query;
+    return searchUsersNotInWorkspace(workspaceId, q.trim(), limit, request.user?.id);
   });
 
   // POST /api/workspaces/:id/members

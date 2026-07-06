@@ -11,7 +11,7 @@ vi.mock('../db/index.ts', () => {
       'select', 'insert', 'update', 'delete',
       'from', 'where', 'set', 'values',
       'returning', 'innerJoin', 'leftJoin',
-      'orderBy', 'limit', 'offset', 'groupBy',
+      'orderBy', 'limit', 'offset', 'groupBy', 'having',
       'onConflictDoUpdate', 'onConflictDoNothing',
       'as',
     ]) {

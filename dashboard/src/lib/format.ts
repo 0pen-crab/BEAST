@@ -8,20 +8,6 @@ export function formatDate(input: string | number | Date): string {
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
-const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** Format as "Mar 15" (or "Mar 15, 2025" if not current year) */
-export function formatDateShort(input: string | number | Date): string {
-  const d = new Date(input);
-  const month = SHORT_MONTHS[d.getMonth()];
-  const day = d.getDate();
-  const year = d.getFullYear();
-  if (year !== new Date().getFullYear()) {
-    return `${month} ${day}, ${year}`;
-  }
-  return `${month} ${day}`;
-}
-
 /** Format as DD.MM.YYYY HH:mm */
 export function formatDateTime(input: string | number | Date): string {
   const d = new Date(input);

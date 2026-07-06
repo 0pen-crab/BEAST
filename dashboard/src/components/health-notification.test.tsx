@@ -9,6 +9,12 @@ vi.mock('react-i18next', () => ({
         'health.degradedTitle': 'Infrastructure issue',
         'health.detail': 'API health check failed.',
         'health.retry': 'Retry',
+        'health.systems.db': 'Database',
+        'health.systems.worker': 'Worker',
+        'health.systems.claude-runner': 'Claude runner',
+        'health.systems.security-tools': 'Security tools',
+        'toast.errorTitle': 'Request failed',
+        'common.dismiss': 'Dismiss',
       };
       return map[key] ?? key;
     },
@@ -20,6 +26,7 @@ vi.mock('@/api/client', () => ({
 }));
 
 import { HealthNotification } from './health-notification';
+import { ToastProvider, toast } from '@/lib/toast';
 import { apiFetch } from '@/api/client';
 
 const apiFetchMock = vi.mocked(apiFetch);
@@ -29,6 +36,14 @@ const okResponse = () =>
 
 const failResponse = () =>
   new Response('upstream gone', { status: 502 });
+
+function renderHealth() {
+  return render(
+    <ToastProvider>
+      <HealthNotification />
+    </ToastProvider>,
+  );
+}
 
 describe('HealthNotification', () => {
   beforeEach(() => {
@@ -41,42 +56,121 @@ describe('HealthNotification', () => {
 
   it('renders nothing when /api/health responds ok', async () => {
     apiFetchMock.mockResolvedValue(okResponse());
-    render(<HealthNotification />);
+    renderHealth();
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalled());
     expect(screen.queryByText('Backend unreachable')).not.toBeInTheDocument();
   });
 
+  it('is headless — renders no DOM of its own', async () => {
+    apiFetchMock.mockResolvedValue(okResponse());
+    const { container } = render(<HealthNotification />);
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('shows notification when /api/health returns non-2xx', async () => {
     apiFetchMock.mockResolvedValue(failResponse());
-    render(<HealthNotification />);
+    renderHealth();
     expect(await screen.findByText('Backend unreachable')).toBeInTheDocument();
   });
 
-  it('shows infrastructure issue messages when /api/health returns 503 with issues', async () => {
+  it('shows one line per failed system when /api/health returns 503 with failures', async () => {
     const degraded = new Response(
       JSON.stringify({
         status: 'degraded',
-        issues: [
-          { message: 'Cannot reach security-tools: All configured authentication methods failed', source: 'infra-check' },
-          { message: 'Cannot reach claude-runner: connection refused', source: 'infra-check' },
+        failures: [
+          { system: 'security-tools', message: 'Cannot reach security-tools: All configured authentication methods failed' },
+          { system: 'claude-runner', message: 'Cannot reach claude-runner: connection refused' },
         ],
       }),
       { status: 503 },
     );
     apiFetchMock.mockResolvedValue(degraded);
 
-    render(<HealthNotification />);
+    renderHealth();
     expect(await screen.findByText('Infrastructure issue')).toBeInTheDocument();
-    expect(await screen.findByText(/security-tools.*authentication methods failed/)).toBeInTheDocument();
-    expect(await screen.findByText(/claude-runner.*connection refused/)).toBeInTheDocument();
-    // Generic detail text is hidden when specific issues are shown
+    // Each line is prefixed with the localized system label
+    expect(await screen.findByText(/^Security tools: .*authentication methods failed/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Claude runner: .*connection refused/)).toBeInTheDocument();
+    // Generic detail text is hidden when specific failures are shown
     expect(screen.queryByText('API health check failed.')).not.toBeInTheDocument();
+  });
+
+  it('shows worker and db failures with localized system labels', async () => {
+    const down = new Response(
+      JSON.stringify({
+        status: 'down',
+        failures: [
+          { system: 'db', message: 'Database is unreachable: connect ECONNREFUSED' },
+        ],
+      }),
+      { status: 503 },
+    );
+    const workerDegraded = new Response(
+      JSON.stringify({
+        status: 'degraded',
+        failures: [
+          { system: 'worker', message: 'Worker has never reported a heartbeat — the worker container is not running' },
+        ],
+      }),
+      { status: 503 },
+    );
+    apiFetchMock.mockResolvedValueOnce(down).mockResolvedValueOnce(workerDegraded);
+
+    renderHealth();
+    expect(await screen.findByText(/^Database: .*unreachable/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText(/^Worker: .*never reported a heartbeat/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Database:/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
 
   it('shows notification when apiFetch throws (network error)', async () => {
     apiFetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
-    render(<HealthNotification />);
+    renderHealth();
     expect(await screen.findByText('Backend unreachable')).toBeInTheDocument();
+  });
+
+  it('keeps the banner up past the toast auto-dismiss window', async () => {
+    apiFetchMock.mockResolvedValue(failResponse());
+    vi.useFakeTimers();
+
+    renderHealth();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText('Backend unreachable')).toBeInTheDocument();
+
+    // Well past the 6s auto-dismiss of regular toasts (health stays unhealthy)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(7_000);
+    });
+    expect(screen.getByText('Backend unreachable')).toBeInTheDocument();
+  });
+
+  it('updates a single banner instead of stacking when health state changes', async () => {
+    apiFetchMock
+      .mockResolvedValueOnce(failResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            status: 'degraded',
+            failures: [{ system: 'claude-runner', message: 'Cannot reach claude-runner: timeout' }],
+          }),
+          { status: 503 },
+        ),
+      );
+
+    renderHealth();
+    expect(await screen.findByText('Backend unreachable')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Infrastructure issue')).toBeInTheDocument();
+    expect(screen.queryByText('Backend unreachable')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
 
   it('disappears after a successful retry', async () => {
@@ -84,7 +178,7 @@ describe('HealthNotification', () => {
       .mockResolvedValueOnce(failResponse())
       .mockResolvedValueOnce(okResponse());
 
-    render(<HealthNotification />);
+    renderHealth();
     expect(await screen.findByText('Backend unreachable')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -95,9 +189,23 @@ describe('HealthNotification', () => {
     expect(apiFetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('shares one notification stack with regular error toasts', async () => {
+    apiFetchMock.mockResolvedValue(failResponse());
+
+    const { container } = renderHealth();
+    expect(await screen.findByText('Backend unreachable')).toBeInTheDocument();
+
+    act(() => {
+      toast.error('Request exploded');
+    });
+
+    expect(container.querySelectorAll('.beast-notification-stack')).toHaveLength(1);
+    expect(screen.getAllByRole('alert')).toHaveLength(2);
+  });
+
   it('uses /api/health as the endpoint', async () => {
     apiFetchMock.mockResolvedValue(okResponse());
-    render(<HealthNotification />);
+    renderHealth();
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalled());
     expect(apiFetchMock).toHaveBeenCalledWith('/api/health');
   });
@@ -106,7 +214,7 @@ describe('HealthNotification', () => {
     apiFetchMock.mockResolvedValue(okResponse());
     vi.useFakeTimers();
 
-    render(<HealthNotification />);
+    renderHealth();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -121,5 +229,14 @@ describe('HealthNotification', () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
     expect(apiFetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('dismisses the health banner when unmounted', async () => {
+    apiFetchMock.mockResolvedValue(failResponse());
+    const { unmount } = renderHealth();
+    expect(await screen.findByText('Backend unreachable')).toBeInTheDocument();
+
+    unmount();
+    expect(screen.queryByText('Backend unreachable')).not.toBeInTheDocument();
   });
 });

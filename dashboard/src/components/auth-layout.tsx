@@ -175,7 +175,7 @@ export function AuthLayout({ children, title }: AuthLayoutProps) {
   useEmbers(embersRef, panelExpanded);
 
   return (
-    <div className="flex min-h-screen relative" style={{ background: '#000' }}>
+    <div className="flex min-h-screen relative overflow-hidden" style={{ background: '#000' }}>
       {/* ── LEFT: Beast image panel (desktop) ── */}
       <div
         className="hidden lg:block relative overflow-hidden flex-shrink-0"

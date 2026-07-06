@@ -1,17 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-vi.mock('../../orchestrator/infra-check.ts', () => ({
-  hasOpenInfraIssues: vi.fn(),
+vi.mock('./checks.ts', () => ({
+  checkAllSystems: vi.fn(),
 }));
 
-import { hasOpenInfraIssues } from '../../orchestrator/infra-check.ts';
+import { checkAllSystems } from './checks.ts';
 import { healthRoutes } from './index.ts';
 
-const mockHasOpenInfraIssues = vi.mocked(hasOpenInfraIssues);
+const mockCheckAllSystems = vi.mocked(checkAllSystems);
 
 beforeEach(() => {
-  mockHasOpenInfraIssues.mockReset();
+  mockCheckAllSystems.mockReset();
 });
 
 async function buildApp() {
@@ -22,22 +22,26 @@ async function buildApp() {
 }
 
 describe('GET /api/health', () => {
-  it('returns 200 ok when no infra issues', async () => {
-    mockHasOpenInfraIssues.mockResolvedValue({ degraded: false, issues: [] });
+  it('returns 200 ok when all systems are healthy', async () => {
+    mockCheckAllSystems.mockResolvedValue({ status: 'ok', failures: [] });
 
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: '/api/health' });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().status).toBe('ok');
+    const body = res.json();
+    expect(body.status).toBe('ok');
+    expect(body.timestamp).toBeDefined();
+    expect(body.failures).toBeUndefined();
     await app.close();
   });
 
-  it('returns 503 with issues when infra is degraded', async () => {
-    mockHasOpenInfraIssues.mockResolvedValue({
-      degraded: true,
-      issues: [
-        { message: 'Cannot reach security-tools: All configured authentication methods failed', source: 'infra-check' },
+  it('returns 503 degraded with named failures when a subsystem is broken', async () => {
+    mockCheckAllSystems.mockResolvedValue({
+      status: 'degraded',
+      failures: [
+        { system: 'worker', message: 'Worker heartbeat is stale (last seen 2026-07-04T09:00:00.000Z) — the worker container appears to be down' },
+        { system: 'security-tools', message: 'Cannot reach security-tools: All configured authentication methods failed' },
       ],
     });
 
@@ -47,22 +51,27 @@ describe('GET /api/health', () => {
     expect(res.statusCode).toBe(503);
     const body = res.json();
     expect(body.status).toBe('degraded');
-    expect(body.issues).toHaveLength(1);
-    expect(body.issues[0].message).toContain('security-tools');
+    expect(body.failures).toHaveLength(2);
+    expect(body.failures[0]).toEqual({ system: 'worker', message: expect.stringContaining('heartbeat is stale') });
+    expect(body.failures[1]).toEqual({ system: 'security-tools', message: expect.stringContaining('security-tools') });
     await app.close();
   });
 
-  it('returns 200 ok if the infra check itself errors (does not block health)', async () => {
-    mockHasOpenInfraIssues.mockRejectedValue(new Error('DB query exploded'));
+  it('returns 503 down when the database is unreachable', async () => {
+    mockCheckAllSystems.mockResolvedValue({
+      status: 'down',
+      failures: [{ system: 'db', message: 'Database is unreachable: connect ECONNREFUSED' }],
+    });
 
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: '/api/health' });
 
-    // If the infra-check query fails we still report ok — the API is up.
-    // The error is logged for diagnosis but we don't want a transient DB
-    // glitch here to mask "API is alive".
-    expect(res.statusCode).toBe(200);
-    expect(res.json().status).toBe('ok');
+    expect(res.statusCode).toBe(503);
+    const body = res.json();
+    expect(body.status).toBe('down');
+    expect(body.failures).toEqual([
+      { system: 'db', message: expect.stringContaining('Database is unreachable') },
+    ]);
     await app.close();
   });
 });

@@ -2,15 +2,16 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ExportDialog, type ToolCount } from './export-dialog';
 
-// Minimal i18n mock — returns key or fallback
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: string | Record<string, unknown>) => {
-      if (typeof fallback === 'string') return fallback;
-      if (fallback && typeof fallback === 'object' && 'defaultValue' in fallback) return fallback.defaultValue as string;
-      return key;
-    },
+// Minimal i18n mock — returns key or fallback. Spy so tests can assert on keys used.
+const { tSpy } = vi.hoisted(() => ({
+  tSpy: vi.fn((key: string, fallback?: string | Record<string, unknown>) => {
+    if (typeof fallback === 'string') return fallback;
+    if (fallback && typeof fallback === 'object' && 'defaultValue' in fallback) return fallback.defaultValue as string;
+    return key;
   }),
+}));
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: tSpy }),
 }));
 
 const toolCounts: ToolCount[] = [
@@ -167,6 +168,45 @@ describe('ExportDialog', () => {
       expect.any(Array),
       'markdown',
     );
+  });
+
+  it('preserves user tool deselections when toolCounts refetches while open', () => {
+    const { rerender } = render(<ExportDialog {...defaultProps} />);
+    fireEvent.click(screen.getByLabelText('Gitleaks')); // deselect
+    expect((screen.getByLabelText('Gitleaks') as HTMLInputElement).checked).toBe(false);
+    // Simulate a refetch: new array identity, same content
+    rerender(<ExportDialog {...defaultProps} toolCounts={toolCounts.map((tc) => ({ ...tc }))} />);
+    expect((screen.getByLabelText('Gitleaks') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('re-initializes tool selection when the dialog is reopened', () => {
+    const { rerender } = render(<ExportDialog {...defaultProps} />);
+    fireEvent.click(screen.getByLabelText('Gitleaks')); // deselect
+    rerender(<ExportDialog {...defaultProps} open={false} />);
+    rerender(<ExportDialog {...defaultProps} open={true} />);
+    expect((screen.getByLabelText('Gitleaks') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('category toggle label ignores disabled zero-count tools', () => {
+    render(<ExportDialog {...defaultProps} />);
+    // Code Analysis has beast + semgrep with findings (both selected by default);
+    // the zero-count tools in the category must not force the label to "all".
+    const cat = screen.getByText('Code Analysis').closest('.beast-export-cat')!;
+    const toggleBtn = cat.querySelector('.beast-export-toggle-all')!;
+    expect(toggleBtn.textContent).toBe('none');
+    // Clicking deselects the enabled tools and the label flips to "all"
+    fireEvent.click(toggleBtn);
+    expect((screen.getByLabelText('BEAST') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Semgrep') as HTMLInputElement).checked).toBe(false);
+    expect(cat.querySelector('.beast-export-toggle-all')!.textContent).toBe('all');
+  });
+
+  it('uses the status.Accepted i18n key for Risk Accepted (matches findings page)', () => {
+    tSpy.mockClear();
+    render(<ExportDialog {...defaultProps} />);
+    const statusKeys = tSpy.mock.calls.map((c) => c[0]).filter((k) => String(k).startsWith('status.'));
+    expect(statusKeys).toContain('status.Accepted');
+    expect(statusKeys).not.toContain('status.RiskAccepted');
   });
 
   it('maps status display names to API values', () => {

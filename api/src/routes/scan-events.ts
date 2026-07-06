@@ -1,9 +1,10 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { eq, and, desc, sql, type SQL } from 'drizzle-orm';
+import { eq, and, desc, sql, getTableColumns, type SQL } from 'drizzle-orm';
 import { db } from '../db/index.ts';
-import { scanEvents } from '../db/schema.ts';
+import { scanEvents, scans } from '../db/schema.ts';
 import { authorize, ForbiddenError } from '../lib/authorize.ts';
+import { truncateEventMessage } from '../lib/sanitize.ts';
 
 export const scanEventRoutes: FastifyPluginAsyncZod = async (app) => {
   // POST /api/scan-events — log a new event
@@ -12,7 +13,7 @@ export const scanEventRoutes: FastifyPluginAsyncZod = async (app) => {
     {
       schema: {
         body: z.object({
-          scan_id: z.string().optional(),
+          scan_id: z.string().uuid().optional(),
           step_name: z.string().optional(),
           level: z.enum(['info', 'warning', 'error']),
           source: z.string().min(1),
@@ -39,7 +40,9 @@ export const scanEventRoutes: FastifyPluginAsyncZod = async (app) => {
         stepName: step_name || null,
         level,
         source,
-        message,
+        // Same 4KB cap as the pipeline's logScanEvent — scanner containers
+        // report through this route and could otherwise persist MB blobs.
+        message: truncateEventMessage(message),
         details: details || {},
         repoName: repo_name || null,
         workspaceId: workspace_id || null,
@@ -60,7 +63,7 @@ export const scanEventRoutes: FastifyPluginAsyncZod = async (app) => {
           level: z.string().optional(),
           source: z.string().optional(),
           repo_name: z.string().optional(),
-          scan_id: z.string().optional(),
+          scan_id: z.string().uuid().optional(),
           step_name: z.string().optional(),
           resolved: z.enum(['true', 'false']).optional(),
           workspace_id: z.coerce.number().optional(),
@@ -108,8 +111,14 @@ export const scanEventRoutes: FastifyPluginAsyncZod = async (app) => {
         .from(scanEvents)
         .where(where);
 
-      const results = await db.select()
+      // repositoryId is resolved through the event's scan so the dashboard can
+      // link straight to the repo page. LEFT JOIN keeps scanless events intact.
+      const results = await db.select({
+        ...getTableColumns(scanEvents),
+        repositoryId: scans.repositoryId,
+      })
         .from(scanEvents)
+        .leftJoin(scans, eq(scanEvents.scanId, scans.id))
         .where(where)
         .orderBy(desc(scanEvents.createdAt))
         .limit(limit)
@@ -149,18 +158,20 @@ export const scanEventRoutes: FastifyPluginAsyncZod = async (app) => {
 
       const result = await db.select({
         unresolved: sql<number>`count(*) filter (where not ${scanEvents.resolved} and ${scanEvents.level} != 'info')`,
-        unresolved_errors: sql<number>`count(*) filter (where not ${scanEvents.resolved} and ${scanEvents.level} = 'error')`,
-        unresolved_warnings: sql<number>`count(*) filter (where not ${scanEvents.resolved} and ${scanEvents.level} = 'warning')`,
+        unresolvedErrors: sql<number>`count(*) filter (where not ${scanEvents.resolved} and ${scanEvents.level} = 'error')`,
+        unresolvedWarnings: sql<number>`count(*) filter (where not ${scanEvents.resolved} and ${scanEvents.level} = 'warning')`,
         total: sql<number>`count(*)`,
       })
         .from(scanEvents)
         .where(where);
 
       const row = result[0];
+      // camelCase keys — the dashboard's ScanEventStats type (unresolvedErrors /
+      // unresolvedWarnings) consumes this response directly.
       return {
         unresolved: Number(row.unresolved),
-        unresolved_errors: Number(row.unresolved_errors),
-        unresolved_warnings: Number(row.unresolved_warnings),
+        unresolvedErrors: Number(row.unresolvedErrors),
+        unresolvedWarnings: Number(row.unresolvedWarnings),
         total: Number(row.total),
       };
     },

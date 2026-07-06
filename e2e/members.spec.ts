@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { ensureLoggedIn } from './helpers';
+import { ensureLoggedIn, apiPost, apiDelete } from './helpers';
 
 test.describe('Members Page', () => {
   test.beforeEach(async ({ page }) => {
@@ -41,30 +41,72 @@ test.describe('Members Page', () => {
     }
   });
 
-  test('add member creates user and shows in table', async ({ page }) => {
-    const usernameInput = page.locator('input[placeholder*="Username" i], input[placeholder*="email" i]').first();
-    if (!await usernameInput.isVisible({ timeout: 3000 }).catch(() => false)) return;
+  test('autocomplete suggests an existing user and excludes the current user', async ({ page }) => {
+    const stamp = Date.now();
+    const username = `e2e-pick-${stamp}@corp.com`;
+    const created = await apiPost(page, '/api/admin/users', { username, displayName: `E2E Pick ${stamp}` });
+    expect(created.ok()).toBeTruthy();
+    const { id: createdId } = await created.json();
 
-    const testUsername = `e2e-member-${Date.now()}`;
-    await usernameInput.fill(testUsername);
-    await page.getByRole('button', { name: /^add$/i }).click();
-    await page.waitForTimeout(1000);
+    try {
+      await page.reload();
+      const search = page.getByPlaceholder(/search users/i);
+      await search.click();
 
-    // New member should appear in table (use first() to avoid strict mode on multiple matches)
-    await expect(page.locator('td', { hasText: testUsername }).first()).toBeVisible({ timeout: 5000 });
+      // The freshly-created user (not a member) is suggested — shown by email.
+      await search.fill(username);
+      await expect(page.locator('.beast-typeahead-item', { hasText: username }))
+        .toBeVisible({ timeout: 5000 });
 
-    // Cleanup: remove the created member
-    const row = page.locator('tr', { hasText: testUsername });
-    const removeBtn = row.getByRole('button', { name: /remove/i });
-    if (await removeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await removeBtn.click();
-      await page.waitForTimeout(500);
-      // Confirm - "Yes" button appears inline in the row
-      const confirmBtn = row.getByRole('button', { name: /yes/i });
-      if (await confirmBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await confirmBtn.click();
-        await page.waitForTimeout(1000);
+      // Self-exclusion: searching for the logged-in admin yields no "admin" option.
+      await search.fill('admin');
+      await page.waitForTimeout(700);
+      await expect(page.locator('.beast-typeahead-name').filter({ hasText: /^admin$/ }))
+        .toHaveCount(0);
+    } finally {
+      await apiDelete(page, `/api/admin/users/${createdId}`);
+    }
+  });
+
+  test('adds a user picked from suggestions to the workspace', async ({ page }) => {
+    const stamp = Date.now();
+    const username = `e2e-add-${stamp}@corp.com`;
+    const created = await apiPost(page, '/api/admin/users', { username, displayName: `E2E Add ${stamp}` });
+    expect(created.ok()).toBeTruthy();
+    const { id: createdId } = await created.json();
+
+    try {
+      await page.reload();
+      const search = page.getByPlaceholder(/search users/i);
+      await search.click();
+      await search.fill(username);
+
+      const option = page.locator('.beast-typeahead-item', { hasText: username });
+      await expect(option).toBeVisible({ timeout: 5000 });
+      await option.click();
+
+      // Selection enables ADD; submit.
+      const addBtn = page.getByRole('button', { name: /^add$/i });
+      await expect(addBtn).toBeEnabled();
+      await addBtn.click();
+      await page.waitForTimeout(1000);
+
+      // The picked user now appears in the members table.
+      await expect(page.locator('td', { hasText: username }).first()).toBeVisible({ timeout: 5000 });
+
+      // Cleanup: remove from the workspace.
+      const row = page.locator('tr', { hasText: username });
+      const removeBtn = row.getByRole('button', { name: /remove/i });
+      if (await removeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await removeBtn.click();
+        const confirmBtn = row.getByRole('button', { name: /yes/i });
+        if (await confirmBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await confirmBtn.click();
+          await page.waitForTimeout(800);
+        }
       }
+    } finally {
+      await apiDelete(page, `/api/admin/users/${createdId}`);
     }
   });
 

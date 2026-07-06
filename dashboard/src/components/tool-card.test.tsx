@@ -5,7 +5,11 @@ import { ToolCard } from './tool-card';
 import type { ToolDefinition } from '@/api/types';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    // Mimic i18next's defaultValue fallback: unknown keys fall back to the
+    // second argument (used for tool descriptions keyed by toolKey).
+    t: (key: string, fallback?: unknown) => (typeof fallback === 'string' ? fallback : key),
+  }),
 }));
 
 const freeTool: ToolDefinition = {

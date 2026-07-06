@@ -25,7 +25,8 @@ vi.mock('../db/schema.ts', () => ({
   findings: { id: 'f.id', testId: 'f.test_id', repositoryId: 'f.repo_id', title: 'f.title', severity: 'f.severity', tool: 'f.tool', status: 'f.status', description: 'f.desc', filePath: 'f.file', line: 'f.line', cwe: 'f.cwe', cvssScore: 'f.cvss', codeSnippet: 'f.code', createdAt: 'f.created' },
   tests: { id: 't.id', scanId: 't.scan_id' },
   scans: { id: 's.id', workspaceId: 's.ws_id' },
-  repositories: { id: 'r.id', name: 'r.name' },
+  repositories: { id: 'r.id', name: 'r.name', teamId: 'r.team_id' },
+  teams: { id: 'tm.id', workspaceId: 'tm.ws_id' },
   workspaces: { defaultLanguage: 'w.lang' },
 }));
 
@@ -140,6 +141,55 @@ describe('POST /highlights/generate', () => {
     });
 
     expect(res.statusCode).toBe(400);
+  });
+
+  it('repo-scoped: returns repository_not_found if repo not in workspace', async () => {
+    const wsChain = mockChainableQuery([{ defaultLanguage: 'en' }]);
+    // Repo lookup returns repo from a different workspace
+    const repoChain = mockChainableQuery([{ id: 42, name: 'repo-x', workspaceId: 999 }]);
+
+    let callCount = 0;
+    mockDbSelect.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return wsChain;
+      if (callCount === 2) return repoChain;
+      return mockChainableQuery([]);
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/highlights/generate?workspace_id=1&repository_id=42',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().error).toBe('repository_not_found');
+  });
+
+  it('repo-scoped: returns jobId when repo has findings', async () => {
+    const wsChain = mockChainableQuery([{ defaultLanguage: 'en' }]);
+    const repoChain = mockChainableQuery([{ id: 42, name: 'payments-api', workspaceId: 1 }]);
+    const findingsChain = mockChainableQuery([
+      { id: 1, repositoryName: 'payments-api', title: 'XSS', severity: 'High', tool: 'beast', status: 'open', description: 'desc', filePath: 'app.ts', line: 10, cwe: null, cvssScore: null, codeSnippet: null, createdAt: new Date() },
+      { id: 2, repositoryName: 'payments-api', title: 'SQLi', severity: 'Critical', tool: 'beast', status: 'open', description: 'desc', filePath: 'db.ts', line: 22, cwe: 89, cvssScore: 9.8, codeSnippet: null, createdAt: new Date() },
+    ]);
+
+    let callCount = 0;
+    mockDbSelect.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return wsChain;
+      if (callCount === 2) return repoChain;
+      return findingsChain;
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/highlights/generate?workspace_id=1&repository_id=42',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.jobId).toBeDefined();
+    expect(body.findingsCount).toBe(2);
   });
 });
 

@@ -10,6 +10,18 @@ export interface ParsedFinding {
   secretValue: string | null;
 }
 
+// ── Parse failure helper ────────────────────────────────────────
+// Corrupt/truncated tool output must THROW, never silently return an
+// empty findings list — a truncated results file is NOT a clean repo.
+
+function parseFailure(parser: string, fileName: string | undefined, content: string, cause: unknown): Error {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  return new Error(
+    `[${parser}] Failed to parse ${fileName ?? 'tool output'} — file may be corrupt or truncated. `
+    + `Reason: ${reason}. First 200 chars: ${content.slice(0, 200)}`,
+  );
+}
+
 // ── SARIF Parser (BEAST code-analysis + JFrog Xray) ────────────
 
 function sarifLevelToSeverity(level: string | undefined): string {
@@ -21,13 +33,13 @@ function sarifLevelToSeverity(level: string | undefined): string {
   }
 }
 
-export function parseSarif(content: string): ParsedFinding[] {
+export function parseSarif(content: string, fileName?: string): ParsedFinding[] {
   const findings: ParsedFinding[] = [];
   let sarif: { runs?: Array<{ results?: unknown[]; tool?: { driver?: { rules?: unknown[] } } }> };
   try {
     sarif = JSON.parse(content);
-  } catch {
-    return findings;
+  } catch (err) {
+    throw parseFailure('parseSarif', fileName, content, err);
   }
 
   for (const run of sarif.runs ?? []) {
@@ -92,14 +104,16 @@ export function parseSarif(content: string): ParsedFinding[] {
 
 // ── Gitleaks Parser ─────────────────────────────────────────────
 
-export function parseGitleaks(content: string): ParsedFinding[] {
+export function parseGitleaks(content: string, fileName?: string): ParsedFinding[] {
   const findings: ParsedFinding[] = [];
   let data: unknown[];
   try {
     data = JSON.parse(content);
-    if (!Array.isArray(data)) return findings;
-  } catch {
-    return findings;
+  } catch (err) {
+    throw parseFailure('parseGitleaks', fileName, content, err);
+  }
+  if (!Array.isArray(data)) {
+    throw parseFailure('parseGitleaks', fileName, content, new Error('expected a JSON array of findings'));
   }
 
   for (const entry of data as Record<string, unknown>[]) {
@@ -121,7 +135,7 @@ export function parseGitleaks(content: string): ParsedFinding[] {
 
 // ── Trufflehog Parser ───────────────────────────────────────────
 
-export function parseTrufflehog(content: string): ParsedFinding[] {
+export function parseTrufflehog(content: string, fileName?: string): ParsedFinding[] {
   const findings: ParsedFinding[] = [];
   const lines = content.split('\n').filter(l => l.trim());
 
@@ -132,8 +146,8 @@ export function parseTrufflehog(content: string): ParsedFinding[] {
     let entry: Record<string, unknown>;
     try {
       entry = JSON.parse(line);
-    } catch {
-      continue;
+    } catch (err) {
+      throw parseFailure('parseTrufflehog', fileName, line, err);
     }
 
     const detector = (entry.DetectorName as string) || 'unknown';
@@ -171,13 +185,13 @@ function trivySeverityNormalize(sev: string): string {
   }
 }
 
-export function parseTrivy(content: string): ParsedFinding[] {
+export function parseTrivy(content: string, fileName?: string): ParsedFinding[] {
   const findings: ParsedFinding[] = [];
   let data: { Results?: unknown[] };
   try {
     data = JSON.parse(content);
-  } catch {
-    return findings;
+  } catch (err) {
+    throw parseFailure('parseTrivy', fileName, content, err);
   }
 
   for (const result of (data.Results ?? []) as Record<string, unknown>[]) {

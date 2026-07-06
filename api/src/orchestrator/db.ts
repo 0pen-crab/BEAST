@@ -12,7 +12,6 @@ export async function createScan(data: {
   localPath?: string;
   workspaceId?: number;
   repositoryId?: number;
-  pullRequestId?: number;
   scanType?: string;
 }): Promise<Scan> {
   const [row] = await db.insert(scans).values({
@@ -23,7 +22,6 @@ export async function createScan(data: {
     localPath: data.localPath ?? null,
     workspaceId: data.workspaceId ?? null,
     repositoryId: data.repositoryId ?? null,
-    pullRequestId: data.pullRequestId ?? null,
     scanType: data.scanType ?? 'full',
   }).returning();
   return row;
@@ -39,10 +37,12 @@ export async function listScans(
   offset = 0,
   workspaceId?: number,
   status?: string,
+  repositoryId?: number,
 ): Promise<{ count: number; results: Scan[] }> {
   const conditions: SQL[] = [];
   if (workspaceId) conditions.push(eq(scans.workspaceId, workspaceId));
   if (status) conditions.push(eq(scans.status, status));
+  if (repositoryId) conditions.push(eq(scans.repositoryId, repositoryId));
   const whereClause = conditions.length ? and(...conditions) : undefined;
 
   const [countResult] = await db.select({ count: sql<number>`count(*)::int` })

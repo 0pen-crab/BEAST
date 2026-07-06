@@ -6,12 +6,14 @@ import type { ToolDefinition } from '@/api/types';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => {
+    // Mimic i18next's defaultValue fallback (second arg) for unknown keys —
+    // tool descriptions are looked up by toolKey with the backend text as fallback.
+    t: (key: string, fallback?: unknown) => {
       const map: Record<string, string> = {
         'tools.badges.free': 'Free & Open Source',
         'tools.badges.commercial': 'Commercial',
       };
-      return map[key] ?? key;
+      return map[key] ?? (typeof fallback === 'string' ? fallback : key);
     },
   }),
 }));

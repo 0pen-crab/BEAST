@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useRepositories, useTeams, useSources, useBulkUpdateRepositories, useTriggerScan, useFindingCountsByTool } from '@/api/hooks';
@@ -20,6 +20,7 @@ import { useAuth } from '@/lib/auth';
 import { useCurrentWorkspaceRole, canWrite } from '@/lib/permissions';
 import { ChipFilter, type FilterColumn, type ActiveFilter } from '@/components/filters/chip-filter';
 import { Pagination } from '@/components/pagination';
+import { parseListParam, parseNumberListParam, parsePageParam, parseEnumParam, setOrDeleteParam } from '@/lib/url-state';
 
 const PAGE_SIZE = 25;
 
@@ -40,6 +41,25 @@ function formatRangeLabel(min: number | undefined, max: number | undefined, fmt:
   if (min != null) return `≥ ${fmt(min)}`;
   if (max != null) return `≤ ${fmt(max)}`;
   return '';
+}
+
+/** Parse a "min..max" range filter value; invalid bounds are dropped, and
+ *  the filter is rejected (null) when no valid bound remains. */
+export function parseRangeFilter(
+  value: string,
+  parse: (raw: string) => number | undefined,
+): { min?: number; max?: number } | null {
+  const [minStr, maxStr] = value.split('..');
+  const min = minStr ? parse(minStr) : undefined;
+  const max = maxStr ? parse(maxStr) : undefined;
+  if (min === undefined && max === undefined) return null;
+  return { min, max };
+}
+
+/** Parse a plain numeric filter input, rejecting non-numeric strings. */
+function parseNumberInput(raw: string): number | undefined {
+  const n = Number(raw);
+  return Number.isNaN(n) ? undefined : n;
 }
 
 // ── Column visibility ────────────────────────────────────────────
@@ -194,7 +214,7 @@ function TeamAssignDropdown({
             key={team.id}
             onClick={() => onAssign(team.id)}
             disabled={isAssigning}
-            className="beast-dropdown-item beast-dropdown-item-danger"
+            className="beast-dropdown-item"
           >
             {team.name}
           </button>
@@ -209,7 +229,8 @@ function TeamAssignDropdown({
 
 // ── Sortable header ──────────────────────────────────────────────
 
-type SortField = 'name' | 'status' | 'team' | 'source' | 'language' | 'size' | 'abandoned' | 'riskScore' | 'findingsCount' | 'lastScannedAt' | 'updatedAt';
+const SORT_FIELDS = ['name', 'status', 'team', 'source', 'language', 'size', 'abandoned', 'riskScore', 'findingsCount', 'lastScannedAt', 'updatedAt'] as const;
+type SortField = typeof SORT_FIELDS[number];
 type SortDir = 'asc' | 'desc';
 
 function SortableHeader({
@@ -252,21 +273,54 @@ function SortableHeader({
 
 export function ReposPage() {
   const { t } = useTranslation();
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(0);
-  const [teamFilter, setTeamFilter] = useState<number[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [abandonedFilter, setAbandonedFilter] = useState<'all' | 'abandoned' | 'active'>('all');
-  const [sourceFilter, setSourceFilter] = useState<number[]>([]);
-  const [languageFilter, setLanguageFilter] = useState<string[]>([]);
-  const [sizeFilter, setSizeFilter] = useState<{ min?: number; max?: number } | null>(null);
-  const [riskScoreFilter, setRiskScoreFilter] = useState<{ min?: number; max?: number } | null>(null);
+  // The URL is the source of truth on mount — every piece of list state below
+  // initializes from it so refresh / shared links fully restore the view.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
+  const [page, setPage] = useState(() => parsePageParam(searchParams.get('page')));
+  const [teamFilter, setTeamFilter] = useState<number[]>(() => parseNumberListParam(searchParams.get('team')));
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => parseListParam(searchParams.get('status')));
+  const [abandonedFilter, setAbandonedFilter] = useState<'all' | 'abandoned' | 'active'>(
+    () => parseEnumParam(searchParams.get('abandoned'), ['abandoned', 'active'] as const) ?? 'all',
+  );
+  const [sourceFilter, setSourceFilter] = useState<number[]>(() => parseNumberListParam(searchParams.get('source')));
+  const [languageFilter, setLanguageFilter] = useState<string[]>(() => parseListParam(searchParams.get('lang')));
+  const [sizeFilter, setSizeFilter] = useState<{ min?: number; max?: number } | null>(() => {
+    const v = searchParams.get('size');
+    return v ? parseRangeFilter(v, parseNumberInput) : null;
+  });
+  const [riskScoreFilter, setRiskScoreFilter] = useState<{ min?: number; max?: number } | null>(() => {
+    const v = searchParams.get('risk');
+    return v ? parseRangeFilter(v, parseNumberInput) : null;
+  });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [showTeamDropdown, setShowTeamDropdown] = useState(false);
-  const [sortField, setSortField] = useState<SortField | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [sortField, setSortField] = useState<SortField | null>(() => parseEnumParam(searchParams.get('sort'), SORT_FIELDS));
+  const [sortDir, setSortDir] = useState<SortDir>(() => (searchParams.get('dir') === 'desc' ? 'desc' : 'asc'));
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(loadVisibleColumns);
   const [showColumnSettings, setShowColumnSettings] = useState(false);
+
+  // Mirror list state back into the query string after any change. `replace`
+  // keeps the browser history clean (no entry per keystroke), defaults are
+  // deleted so plain views keep a bare URL, and the string comparison guards
+  // against a setSearchParams → effect → setSearchParams update loop.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    setOrDeleteParam(next, 'q', search);
+    setOrDeleteParam(next, 'team', teamFilter.join(','));
+    setOrDeleteParam(next, 'status', statusFilter.join(','));
+    setOrDeleteParam(next, 'source', sourceFilter.join(','));
+    setOrDeleteParam(next, 'lang', languageFilter.join(','));
+    setOrDeleteParam(next, 'size', sizeFilter ? `${sizeFilter.min ?? ''}..${sizeFilter.max ?? ''}` : '');
+    setOrDeleteParam(next, 'risk', riskScoreFilter ? `${riskScoreFilter.min ?? ''}..${riskScoreFilter.max ?? ''}` : '');
+    setOrDeleteParam(next, 'abandoned', abandonedFilter === 'all' ? '' : abandonedFilter);
+    setOrDeleteParam(next, 'sort', sortField ?? '');
+    setOrDeleteParam(next, 'dir', sortField && sortDir === 'desc' ? 'desc' : '');
+    setOrDeleteParam(next, 'page', page > 0 ? String(page + 1) : '');
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [search, teamFilter, statusFilter, sourceFilter, languageFilter, sizeFilter, riskScoreFilter, abandonedFilter, sortField, sortDir, page, searchParams, setSearchParams]);
 
   const toggleColumn = (key: ColumnKey) => {
     setVisibleColumns((prev) => {
@@ -375,7 +429,8 @@ export function ReposPage() {
           case 'riskScore': cmp = (a.riskScore ?? 0) - (b.riskScore ?? 0); break;
           case 'findingsCount': cmp = (a.findingsCount ?? 0) - (b.findingsCount ?? 0); break;
           case 'lastScannedAt': cmp = (a.lastScannedAt ?? '').localeCompare(b.lastScannedAt ?? ''); break;
-          case 'updatedAt': cmp = (a.updatedAt ?? '').localeCompare(b.updatedAt ?? ''); break;
+          // The "Last updated" column displays lastActivityAt, so sort by it too.
+          case 'updatedAt': cmp = (a.lastActivityAt ?? '').localeCompare(b.lastActivityAt ?? ''); break;
         }
         return sortDir === 'asc' ? cmp : -cmp;
       });
@@ -384,7 +439,10 @@ export function ReposPage() {
   }, [allRepos, search, teamFilter, statusFilter, abandonedFilter, sourceFilter, languageFilter, sizeFilter, riskScoreFilter, sortField, sortDir, teamMap]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const pageRepos = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  // Clamp so a shrinking list (bulk delete on the last page, refetch) never
+  // strands the user on an empty out-of-range page.
+  const safePage = Math.min(page, Math.max(0, totalPages - 1));
+  const pageRepos = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
   const pageIds = new Set(pageRepos.map((r) => r.id));
   const allPageSelected = pageRepos.length > 0 && pageRepos.every((r) => selected.has(r.id));
 
@@ -414,9 +472,13 @@ export function ReposPage() {
 
   const clearSelection = () => setSelected(new Set());
 
+  // Selection must never contain rows hidden by the current filter criteria,
+  // so it resets whenever search or any filter changes (but not on mere
+  // refetch or pagination).
   const handleSearchChange = (value: string) => {
     setSearch(value);
     setPage(0);
+    clearSelection();
   };
 
   // ── Chip filter definitions ─────────────────────────────────
@@ -493,26 +555,23 @@ export function ReposPage() {
 
   const handleFilterAdd = (columnKey: string, value: string) => {
     setPage(0);
+    clearSelection();
     if (columnKey === 'team') setTeamFilter(value.split(',').map(Number));
     else if (columnKey === 'status') setStatusFilter(value.split(','));
     else if (columnKey === 'source') setSourceFilter(value.split(',').map(Number));
     else if (columnKey === 'language') setLanguageFilter(value.split(','));
     else if (columnKey === 'size') {
-      const [minStr, maxStr] = value.split('..');
-      setSizeFilter({ min: parseSizeInput(minStr), max: parseSizeInput(maxStr) });
+      setSizeFilter(parseRangeFilter(value, parseSizeInput));
     }
     else if (columnKey === 'riskScore') {
-      const [minStr, maxStr] = value.split('..');
-      setRiskScoreFilter({
-        min: minStr ? Number(minStr) : undefined,
-        max: maxStr ? Number(maxStr) : undefined,
-      });
+      setRiskScoreFilter(parseRangeFilter(value, parseNumberInput));
     }
     else if (columnKey === 'abandoned') setAbandonedFilter(value as 'abandoned' | 'active');
   };
 
   const handleFilterRemove = (columnKey: string) => {
     setPage(0);
+    clearSelection();
     if (columnKey === 'team') setTeamFilter([]);
     else if (columnKey === 'status') setStatusFilter([]);
     else if (columnKey === 'source') setSourceFilter([]);
@@ -525,38 +584,61 @@ export function ReposPage() {
   // ── Bulk actions ───────────────────────────────────────────
 
   const [bulkLoading, setBulkLoading] = useState<string | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
 
   const triggerScan = useTriggerScan();
 
   const bulkScan = async () => {
     if (selected.size === 0) return;
     setBulkLoading('scan');
+    setBulkError(null);
 
-    const repos = (allRepos ?? []).filter((r) => selected.has(r.id));
-    for (const repo of repos) {
-      await triggerScan.mutateAsync(buildScanBody(repo));
+    try {
+      const repos = (allRepos ?? []).filter((r) => selected.has(r.id));
+      for (const repo of repos) {
+        await triggerScan.mutateAsync(buildScanBody(repo));
+      }
+      clearSelection();
+    } catch (err) {
+      setBulkError(err instanceof Error && err.message
+        ? err.message
+        : t('repos.bulkScanFailed', 'Failed to queue scans'));
+    } finally {
+      setBulkLoading(null);
     }
-
-    clearSelection();
-    setBulkLoading(null);
   };
 
   const bulkDelete = async () => {
     if (selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} repositories and all their data? This cannot be undone.`)) return;
+    setShowBulkDeleteDialog(false);
     setBulkLoading('delete');
+    setBulkError(null);
 
-    for (const id of selected) {
-      await apiFetch(`/api/repositories/${id}`, {
-        method: 'DELETE',
-      });
+    const total = selected.size;
+    let failed = 0;
+    try {
+      for (const id of selected) {
+        try {
+          const res = await apiFetch(`/api/repositories/${id}`, {
+            method: 'DELETE',
+          });
+          if (!res.ok) failed++;
+        } catch {
+          failed++;
+        }
+      }
+      if (failed > 0) {
+        setBulkError(t('repos.bulkDeleteFailed', '{{failed}} of {{total}} deletions failed', { failed, total }));
+      } else {
+        clearSelection();
+      }
+    } finally {
+      queryClient.invalidateQueries({ queryKey: ['repositories'] });
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
+      setBulkLoading(null);
     }
-
-    queryClient.invalidateQueries({ queryKey: ['repositories'] });
-    queryClient.invalidateQueries({ queryKey: ['teams'] });
-    clearSelection();
-    setBulkLoading(null);
   };
 
   const bulkAssignTeam = (teamId: number) => {
@@ -609,39 +691,89 @@ export function ReposPage() {
     selectedRepoIds.length > 0 ? selectedRepoIds : undefined,
   );
 
+  /**
+   * AI-curated export for multi-repo selection. Fire-and-forget — the user can
+   * track the running job from the Dashboard's Export button, which resumes
+   * any in-flight workspace-scoped job on mount.
+   *
+   * Note: when N > 1 repos are selected, the job is keyed workspace-wide on
+   * the backend (we don't have a "latest job for this exact selection" lookup).
+   * Single-repo selection uses the standard `repository_id` query parameter so
+   * the repo page's resume-on-mount picks it up.
+   */
+  const handleAiExport = async (severities: string[], tools: string[], statuses: string[]) => {
+    setShowExportDialog(false);
+    if (selected.size === 0) return;
+    const wsId = currentWorkspace?.id;
+    if (!wsId) return;
+    setBulkLoading('export');
+
+    const params = new URLSearchParams({ workspace_id: String(wsId) });
+    if (selected.size === 1) {
+      params.set('repository_id', String([...selected][0]));
+    } else {
+      params.set('repository_ids', [...selected].join(','));
+    }
+    if (severities.length) params.set('severity_filter', severities.join(','));
+    if (tools.length) params.set('tool_filter', tools.join(','));
+    if (statuses.length) params.set('status_filter', statuses.join(','));
+
+    setBulkError(null);
+    try {
+      const res = await apiFetch(`/api/highlights/generate?${params}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Job kicked off — user will see it on Dashboard / repo page. We don't
+      // hold this modal open and poll across a multi-repo selection.
+      clearSelection();
+    } catch (err) {
+      console.error('[repos] AI brief generation failed:', err instanceof Error ? err.message : err);
+      setBulkError(t('repos.aiExportFailed', 'Failed to generate AI brief'));
+    } finally {
+      setBulkLoading(null);
+    }
+  };
+
   const handleExport = async (severities: string[], tools: string[], statuses: string[], format: ExportFormat) => {
     setShowExportDialog(false);
     if (selected.size === 0) return;
     setBulkLoading('export');
+    setBulkError(null);
 
-    const isCsv = format === 'csv';
-    const ext = isCsv ? 'csv' : 'md';
-    const mime = isCsv ? 'text/csv' : 'text/markdown';
-    const repos = (allRepos ?? []).filter((r) => selected.has(r.id));
+    try {
+      const isCsv = format === 'csv';
+      const ext = isCsv ? 'csv' : 'md';
+      const mime = isCsv ? 'text/csv' : 'text/markdown';
+      const repos = (allRepos ?? []).filter((r) => selected.has(r.id));
 
-    const generateContent = (repoName: string, findings: ExportFinding[]) =>
-      isCsv ? generateFindingsCsv(findings) : generateFindingsMarkdown(repoName, findings);
+      const generateContent = (repoName: string, findings: ExportFinding[]) =>
+        isCsv ? generateFindingsCsv(findings) : generateFindingsMarkdown(repoName, findings);
 
-    if (repos.length === 1) {
-      const repo = repos[0];
-      const findings = await fetchRepoFindings(repo.id, severities, tools, statuses);
-      const content = generateContent(repo.name, findings as ExportFinding[]);
-      const safeName = repo.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      downloadFile(`${safeName}-findings.${ext}`, content, mime);
-    } else {
-      const files: { name: string; content: string }[] = [];
-      for (const repo of repos) {
+      if (repos.length === 1) {
+        const repo = repos[0];
         const findings = await fetchRepoFindings(repo.id, severities, tools, statuses);
         const content = generateContent(repo.name, findings as ExportFinding[]);
         const safeName = repo.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        files.push({ name: `${safeName}-findings.${ext}`, content });
+        downloadFile(`${safeName}-findings.${ext}`, content, mime);
+      } else {
+        const files: { name: string; content: string }[] = [];
+        for (const repo of repos) {
+          const findings = await fetchRepoFindings(repo.id, severities, tools, statuses);
+          const content = generateContent(repo.name, findings as ExportFinding[]);
+          const safeName = repo.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          files.push({ name: `${safeName}-findings.${ext}`, content });
+        }
+        const date = new Date().toISOString().slice(0, 10);
+        await downloadAsZip(files, `findings-export-${date}.zip`);
       }
-      const date = new Date().toISOString().slice(0, 10);
-      await downloadAsZip(files, `findings-export-${date}.zip`);
-    }
 
-    clearSelection();
-    setBulkLoading(null);
+      clearSelection();
+    } catch (err) {
+      setBulkError(err instanceof Error && err.message
+        ? err.message
+        : t('repos.exportFailed', 'Export failed'));
+    } finally {
+      setBulkLoading(null);
+    }
   };
 
   const scanOne = async (repoId: number) => {
@@ -657,7 +789,7 @@ export function ReposPage() {
           <div>
             <h1 className="beast-page-title">{t('repos.title')}</h1>
             <p className="beast-page-subtitle">
-              {allRepos ? `${filtered.length} repositories` : 'All scanned repositories'}
+              {allRepos ? t('repos.count', { count: filtered.length }) : t('repos.subtitle')}
             </p>
           </div>
           {canEdit && (
@@ -769,7 +901,7 @@ export function ReposPage() {
 
             {/* Destructive */}
             <button
-              onClick={bulkDelete}
+              onClick={() => setShowBulkDeleteDialog(true)}
               disabled={!!bulkLoading}
               className="beast-btn beast-btn-danger beast-btn-sm"
             >
@@ -777,6 +909,35 @@ export function ReposPage() {
             </button>
           </div>
         )}
+
+        {/* Bulk delete confirmation */}
+        {showBulkDeleteDialog && (
+          <div className="beast-overlay" onClick={() => setShowBulkDeleteDialog(false)}>
+            <div className="beast-modal beast-modal-sm" onClick={(e) => e.stopPropagation()}>
+              <h3 className="beast-modal-title">{t('repos.bulkDeleteTitle')}</h3>
+              <p className="beast-modal-body">
+                {t('repos.bulkDeleteConfirm', { count: selected.size })}
+              </p>
+              <div className="beast-modal-actions">
+                <button
+                  onClick={() => setShowBulkDeleteDialog(false)}
+                  className="beast-btn beast-btn-outline beast-btn-sm"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  onClick={bulkDelete}
+                  className="beast-btn beast-btn-danger beast-btn-sm"
+                >
+                  {t('common.delete')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk action error */}
+        {bulkError && <div className="beast-error">{bulkError}</div>}
 
         {/* Table */}
         <div className="beast-table-wrap">
@@ -832,7 +993,7 @@ export function ReposPage() {
               </table>
 
               {/* Pagination */}
-              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+              <Pagination page={safePage} totalPages={totalPages} onPageChange={setPage} />
             </>
           )}
         </div>
@@ -843,6 +1004,7 @@ export function ReposPage() {
         repoCount={selected.size}
         toolCounts={toolCounts ?? []}
         onExport={handleExport}
+        onAiExport={handleAiExport}
         onCancel={() => setShowExportDialog(false)}
       />
     </ErrorBoundary>

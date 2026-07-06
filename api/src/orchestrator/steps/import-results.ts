@@ -1,15 +1,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { eq } from 'drizzle-orm';
-import { createTest, upsertFinding, updateTestFindingsCount, addScanFile, createWorkspaceEvent } from '../entities.ts';
+import { eq, and, ne, inArray } from 'drizzle-orm';
+import { addScanFile, createWorkspaceEvent, computeFingerprint, normalizeSeverity } from '../entities.ts';
 import { ensureWorkspace, ensureTeam, ensureRepository } from '../entities.ts';
 import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy, type ParsedFinding } from './parsers.ts';
 import { db } from '../../db/index.ts';
-import { scans, scanEvents, repositories } from '../../db/schema.ts';
+import { scans, scanEvents, repositories, findings } from '../../db/schema.ts';
 import { ingestContributors, findOrCreateContributor, type IngestContributor, type IngestAssessment } from '../../routes/contributors.ts';
-import { queueFeedbackCompilation } from '../feedback-worker.ts';
-import type { PipelineContext, StepInput, ImportOutput, ResultFile } from '../pipeline-types.ts';
+import type {
+  PipelineContext, StepInput, ImportOutput, ResultFile,
+  PreparedTest, PreparedFinding,
+} from '../pipeline-types.ts';
+import { sanitizeForDb } from '../../lib/sanitize.ts';
 
 // ── BeastIds (absorbed from db-setup.ts) ─────────────────────────
 
@@ -19,11 +22,16 @@ export interface BeastIds {
   repositoryId: number;
 }
 
-// ── ImportSummary ────────────────────────────────────────────────
+// ── PrepareSummary ───────────────────────────────────────────────
+// Maintainer policy: the import step no longer WRITES repo data — it parses
+// tool outputs into a serializable plan (prepared tests + findings) that the
+// final 'commit' step writes only after every pipeline step has succeeded.
 
-export interface ImportSummary {
+export interface PrepareSummary {
   resultFiles: ResultFile[];
-  imports: Array<{ key: string; testId?: number; findingsCount?: number; error?: string }>;
+  preparedTests: PreparedTest[];
+  preparedFindings: PreparedFinding[];
+  imports: Array<{ key: string; findingsCount?: number; error?: string }>;
 }
 
 // ── Tool → category mapping ─────────────────────────────────────
@@ -91,18 +99,27 @@ const RESULT_SPECS: [string, string, string, string][] = [
 // ── setupDatabase (absorbed from db-setup.ts) ────────────────────
 
 export async function setupDatabase(ctx: PipelineContext): Promise<BeastIds> {
-  // If scan already has workspaceId (new flow), look up the repo directly
+  // New flow: the scan already knows its repository (the worker linked it on claim).
+  // Resolve the repo from the scan's OWN repository_id — never by name. Two repos can
+  // share a name across sources (e.g. a Bitbucket "trinity" and a local-upload
+  // "trinity"); a name lookup grabbed the wrong one and wrote findings under it.
   if (ctx.workspaceId && ctx.workspaceId > 0) {
-    const [repo] = await db.select({ id: repositories.id, teamId: repositories.teamId })
-      .from(repositories)
-      .where(eq(repositories.name, ctx.repoName));
+    const [scan] = await db.select({ repositoryId: scans.repositoryId })
+      .from(scans)
+      .where(eq(scans.id, ctx.scanId));
 
-    if (repo) {
-      return {
-        workspaceId: ctx.workspaceId,
-        teamId: repo.teamId,
-        repositoryId: repo.id,
-      };
+    if (scan?.repositoryId) {
+      const [repo] = await db.select({ id: repositories.id, teamId: repositories.teamId })
+        .from(repositories)
+        .where(eq(repositories.id, scan.repositoryId));
+
+      if (repo) {
+        return {
+          workspaceId: ctx.workspaceId,
+          teamId: repo.teamId,
+          repositoryId: repo.id,
+        };
+      }
     }
   }
 
@@ -124,20 +141,13 @@ export async function setupDatabase(ctx: PipelineContext): Promise<BeastIds> {
 
 // ── storeReports (absorbed from finalize.ts) ─────────────────────
 
+// Stores the Security Audit report. The human Repository Profile is persisted
+// by the analyzer step (fileType 'profile') — do NOT store it again here or the
+// UI ends up with two duplicate 'profile' scan_files.
 export async function storeReports(
   scanId: string,
   reportContent: string,
-  profileContent: string,
 ): Promise<void> {
-  if (profileContent) {
-    await addScanFile({
-      scanId,
-      fileName: 'repo-profile.md',
-      fileType: 'profile',
-      content: profileContent,
-    });
-  }
-
   if (reportContent) {
     await addScanFile({
       scanId,
@@ -149,6 +159,9 @@ export async function storeReports(
 }
 
 // ── ingestContributorStats (absorbed from finalize.ts) ───────────
+// Called from the COMMIT step only — contributor stats/assessments are repo
+// data and must not be written mid-scan. Kept here next to the git-stats
+// extraction it consumes.
 
 export async function ingestContributorStats(
   ctx: PipelineContext,
@@ -157,18 +170,42 @@ export async function ingestContributorStats(
   resultFiles: Array<{ key: string; content_b64: string }>,
   devAssessments: unknown[],
   workspaceId: number,
-): Promise<void> {
+): Promise<number[]> {
   const statsFile = resultFiles.find(f => f.key === 'git-stats');
-  if (!statsFile) return;
+  if (!statsFile) return [];
 
   let gitStats: IngestContributor[];
   try {
     gitStats = JSON.parse(Buffer.from(statsFile.content_b64, 'base64').toString('utf8'));
   } catch (err) {
-    console.error(`[import] Failed to parse git-stats JSON for scan ${scanId}:`, err instanceof Error ? err.message : err);
-    return;
+    // Corrupt git-stats must scream like the ingest-failure path below —
+    // otherwise contributor ingest is silently skipped for the whole scan.
+    const message = `Corrupt git-stats JSON — contributor ingest skipped: ${err instanceof Error ? err.message : String(err)}`;
+    console.error(`[import] ${message} (scan ${scanId})`);
+    await db.insert(scanEvents).values({
+      scanId,
+      stepName: 'commit',
+      level: 'error',
+      source: 'contributor-ingest',
+      message,
+      details: { file: 'git-contributor-stats.json' },
+      repoName: ctx.repoName,
+      workspaceId: workspaceId ?? null,
+    });
+    if (workspaceId) {
+      try {
+        await createWorkspaceEvent(workspaceId, 'contributor_ingest_failed', {
+          scan_id: scanId,
+          repo_name: ctx.repoName,
+          error: message,
+        });
+      } catch (eventErr) {
+        console.error(`[import] Failed to create workspace event for corrupt git-stats:`, eventErr instanceof Error ? eventErr.message : eventErr);
+      }
+    }
+    return [];
   }
-  if (!Array.isArray(gitStats) || gitStats.length === 0) return;
+  if (!Array.isArray(gitStats) || gitStats.length === 0) return [];
 
   try {
     const result = await ingestContributors({
@@ -180,21 +217,18 @@ export async function ingestContributorStats(
       assessments: devAssessments as IngestAssessment[],
     });
 
-    // Queue feedback compilation for contributors who got new assessments
+    // Contributors who got new assessments. Feedback compilation is queued by
+    // the PIPELINE only after the whole scan succeeds — a failed scan must not
+    // leave partial side effects like half-updated developer profiles.
     if (result.newAssessments > 0) {
-      for (const contribId of new Set(Object.values(result.contributorIds))) {
-        try {
-          await queueFeedbackCompilation(contribId);
-        } catch (err) {
-          console.error(`[import] Failed to queue feedback compilation for contributor ${contribId}:`, err instanceof Error ? err.message : err);
-        }
-      }
+      return [...new Set(Object.values(result.contributorIds))];
     }
+    return [];
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db.insert(scanEvents).values({
       scanId,
-      stepName: 'import',
+      stepName: 'commit',
       level: 'warning',
       source: 'contributor-ingest',
       message: 'Contributor stats ingest failed',
@@ -214,6 +248,7 @@ export async function ingestContributorStats(
       }
     }
   }
+  return [];
 }
 
 // ── extractGitStats ──────────────────────────────────────────────
@@ -339,6 +374,10 @@ export function extractGitStats(repoPath: string): GitContributorStats[] {
 // Groups git stats by resolved contributor ID so merged contributors
 // appear as a single entry with combined stats.
 // Returns merged stats + email alias map for the AI agent.
+// NOTE: findOrCreateContributor may create bare contributor IDENTITY rows
+// mid-scan. That is deliberate: identity rows carry no scan data (stats /
+// assessments land only at commit) and the analyzer step already creates
+// them the same way; cleanup documents contributors as cross-scan entities.
 
 export async function mergeStatsByContributor(
   gitStats: GitContributorStats[],
@@ -366,7 +405,12 @@ export async function mergeStatsByContributor(
       grouped.set(contribId, { ...s });
       continue;
     }
-    // Merge stats
+    // Merge stats.
+    // Name first: "keep the most recent name" must compare against the
+    // PRE-merge last_commit — after `existing.last_commit` is raised to the
+    // max the comparison can never fire (dead branch: the alias with the
+    // newer commit never won the display name).
+    if (s.last_commit > existing.last_commit) existing.name = s.name;
     existing.commits += s.commits;
     existing.loc_added += s.loc_added;
     existing.loc_removed += s.loc_removed;
@@ -378,8 +422,6 @@ export async function mergeStatsByContributor(
     for (const [date, count] of Object.entries(s.daily_activity)) {
       existing.daily_activity[date] = (existing.daily_activity[date] || 0) + count;
     }
-    // Keep the most recent name
-    if (s.last_commit > existing.last_commit) existing.name = s.name;
   }
 
   // Build email aliases map (only for contributors with multiple emails)
@@ -507,13 +549,54 @@ export function extractCodeSnippet(repoPath: string, filePath: string, line: num
   }
 }
 
-export async function importToDatabase(
+/**
+ * READ-ONLY dedup matching: find existing findings of this repository whose
+ * fingerprints match the prepared ones. The WRITE side of the old upsert
+ * (update + re-parent + status reset) moved to the commit step — here we only
+ * record WHICH existing row each prepared finding matched.
+ */
+export async function matchExistingFindings(
+  repositoryId: number,
+  fingerprints: string[],
+): Promise<Map<string, number>> {
+  const matched = new Map<string, number>();
+  if (!repositoryId || fingerprints.length === 0) return matched;
+
+  const rows = await db.select({ id: findings.id, fingerprint: findings.fingerprint })
+    .from(findings)
+    .where(and(
+      inArray(findings.fingerprint, fingerprints),
+      eq(findings.repositoryId, repositoryId),
+      ne(findings.status, 'duplicate'),
+    ));
+
+  // Mirror upsertFinding: first matching row wins (rows come back in id order
+  // only incidentally, but duplicates-by-fingerprint are already exceptional).
+  for (const row of rows) {
+    if (row.fingerprint && !matched.has(row.fingerprint)) {
+      matched.set(row.fingerprint, row.id);
+    }
+  }
+  return matched;
+}
+
+/**
+ * Parse tool result files into a serializable import PLAN. No repo-data
+ * writes — the only DB writes here are scan_files raw artifacts (diagnostic
+ * data, allowed mid-scan so failed scans keep their tool outputs on record).
+ */
+export async function prepareImportPlan(
   scanId: string,
   repositoryId: number,
   resultFiles: ResultFile[],
   repoPath?: string,
-): Promise<ImportSummary> {
-  const imports: ImportSummary['imports'] = [];
+): Promise<PrepareSummary> {
+  const imports: PrepareSummary['imports'] = [];
+  const preparedTests: PreparedTest[] = [];
+  const preparedFindings: PreparedFinding[] = [];
+  // Scan-wide dedup by fingerprint (a tool can report the same CVE/secret on
+  // the same location many times) — mirrors the old upsertFinding collapse.
+  const seenFingerprints = new Set<string>();
 
   // Filter out stats file (not findings)
   const importable = resultFiles.filter(rf => rf.scanType !== '_stats');
@@ -523,16 +606,7 @@ export async function importToDatabase(
       const content = Buffer.from(rf.content_b64, 'base64').toString('utf8');
       const tool = TOOL_MAP[rf.key] || rf.key;
 
-      // Create test record
-      const test = await createTest({
-        scanId,
-        tool,
-        scanType: rf.scanType,
-        testTitle: rf.testTitle || undefined,
-        fileName: rf.filename,
-      });
-
-      // Save raw scan artifact for download
+      // Save raw scan artifact for download (diagnostics — kept mid-scan)
       await addScanFile({
         scanId,
         fileName: rf.filename,
@@ -554,18 +628,18 @@ export async function importToDatabase(
         case 'snyk-iac':
         case 'presidio':
         case 'semgrep-pii':
-          parsed = parseSarif(content);
+          parsed = parseSarif(content, rf.filename);
           break;
         case 'gitleaks':
-          parsed = parseGitleaks(content);
+          parsed = parseGitleaks(content, rf.filename);
           break;
         case 'trufflehog':
-          parsed = parseTrufflehog(content);
+          parsed = parseTrufflehog(content, rf.filename);
           break;
         case 'trivy-secrets':
         case 'trivy-sca':
         case 'trivy-iac':
-          parsed = parseTrivy(content);
+          parsed = parseTrivy(content, rf.filename);
           break;
         default:
           parsed = [];
@@ -574,45 +648,63 @@ export async function importToDatabase(
       // Resolve category from tool key
       const category = TOOL_CATEGORY_MAP[tool];
 
-      // Insert findings (continue on individual failures)
-      let importedCount = 0;
+      let distinct = 0;
       for (const f of parsed) {
-        try {
-          const codeSnippet = repoPath ? extractCodeSnippet(repoPath, f.filePath ?? '', f.line) : undefined;
-          // PII findings are always Info severity
-          const severity = category === 'pii' ? 'Info' : f.severity;
-          await upsertFinding({
-            testId: test.id,
-            repositoryId,
-            title: f.title,
-            severity,
-            description: f.description,
-            filePath: f.filePath,
-            line: f.line ?? undefined,
-            vulnIdFromTool: f.vulnIdFromTool,
-            cwe: f.cwe ?? undefined,
-            cvssScore: f.cvssScore ?? undefined,
-            tool,
-            category,
-            codeSnippet,
-            secretValue: f.secretValue ?? undefined,
-          });
-          importedCount++;
-        } catch (err) {
-          console.error(`[import] Failed to upsert finding "${f.title?.slice(0, 50)}" from ${tool}:`, err instanceof Error ? err.message : err);
-        }
+        const fingerprint = computeFingerprint(tool, f.filePath, f.line, f.vulnIdFromTool, f.title);
+        if (seenFingerprints.has(fingerprint)) continue; // duplicate report of the same finding
+        seenFingerprints.add(fingerprint);
+        distinct++;
+
+        const codeSnippet = repoPath ? extractCodeSnippet(repoPath, f.filePath ?? '', f.line) : undefined;
+        // PII findings are always Info severity
+        const severity = normalizeSeverity(category === 'pii' ? 'Info' : f.severity);
+        preparedFindings.push({
+          tempId: preparedFindings.length,
+          testKey: rf.key,
+          title: f.title,
+          severity,
+          description: f.description || undefined,
+          filePath: f.filePath || undefined,
+          line: f.line ?? undefined,
+          vulnIdFromTool: f.vulnIdFromTool || undefined,
+          cwe: f.cwe ?? undefined,
+          cvssScore: f.cvssScore ?? undefined,
+          tool,
+          category,
+          codeSnippet,
+          secretValue: f.secretValue ?? undefined,
+          fingerprint,
+        });
       }
 
-      // Update test findings count
-      await updateTestFindingsCount(test.id, importedCount);
+      preparedTests.push({
+        key: rf.key,
+        tool,
+        scanType: rf.scanType,
+        testTitle: rf.testTitle || undefined,
+        fileName: rf.filename,
+        // Deduplicated count — this is what the repo page shows per tool,
+        // and it must match the findings list (also deduplicated).
+        findingsCount: distinct,
+      });
 
-      imports.push({ key: rf.key, testId: test.id, findingsCount: parsed.length });
+      imports.push({ key: rf.key, findingsCount: parsed.length });
     } catch (err) {
       imports.push({ key: rf.key, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  return { resultFiles, imports };
+  // READ-ONLY dedup matching against findings from previous successful scans.
+  const matched = await matchExistingFindings(
+    repositoryId,
+    preparedFindings.map(f => f.fingerprint),
+  );
+  for (const f of preparedFindings) {
+    const existingId = matched.get(f.fingerprint);
+    if (existingId != null) f.matchedFindingId = existingId;
+  }
+
+  return { resultFiles, preparedTests, preparedFindings, imports };
 }
 
 // ── logScanEvent (local helper to avoid circular dep with pipeline.ts) ──
@@ -652,6 +744,10 @@ interface ToolWarning {
 }
 
 // ── runImportStep (unified StepFn wrapper) ───────────────────────
+// PREPARE-only step: parses/validates tool outputs, matches dedup candidates
+// read-only, and emits a serializable plan in its step output. The plan
+// survives pause/resume via scan_steps.output (same as resultFiles always
+// did) and is written to the DB by the final 'commit' step.
 
 export async function runImportStep({ ctx, prev }: StepInput): Promise<ImportOutput> {
   // 1. Setup database — resolve workspace/team/repo IDs
@@ -663,9 +759,9 @@ export async function runImportStep({ ctx, prev }: StepInput): Promise<ImportOut
     await logScanEvent(ctx.scanId, 'security-tools', w.level, w.message, w.details, ctx.repoName, ids.workspaceId);
   }
 
-  // 3. Read + import results
+  // 3. Read + parse results into the import plan (no repo-data writes)
   const resultFiles = await readResults(ctx);
-  const importSummary = await importToDatabase(ctx.scanId, ids.repositoryId, resultFiles, ctx.repoPath);
+  const importSummary = await prepareImportPlan(ctx.scanId, ids.repositoryId, resultFiles, ctx.repoPath);
 
   // Log import errors
   for (const imp of importSummary.imports) {
@@ -712,8 +808,16 @@ export async function runImportStep({ ctx, prev }: StepInput): Promise<ImportOut
       }
       analyzerAssessments = parsed;
     }
-  } catch {
-    // Assessments file may not exist — that's OK
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      // Assessments file may not exist — that's OK (analyzer step disabled or produced none)
+    } else {
+      // Corrupt JSON or unreadable file must scream — otherwise developer
+      // assessments silently vanish for the whole scan.
+      const message = `Failed to read/parse contributor-assessments.json — assessments skipped: ${err instanceof Error ? err.message : String(err)}`;
+      console.error(`[import] ${message}`);
+      await logScanEvent(ctx.scanId, 'import', 'error', message, { file: 'contributor-assessments.json' }, ctx.repoName, ids.workspaceId);
+    }
   }
 
   // 5b. Deduplicate assessments by contributor ID (multiple email aliases → same person)
@@ -721,21 +825,21 @@ export async function runImportStep({ ctx, prev }: StepInput): Promise<ImportOut
     analyzerAssessments = await deduplicateAssessments(analyzerAssessments, ids.workspaceId);
   }
 
-  // 6. Ingest contributor stats + analyzer assessments
-  await ingestContributorStats(ctx, ctx.scanId, ids.repositoryId, resultFiles, analyzerAssessments, ids.workspaceId);
+  // 6. NOTHING is ingested here. Contributor stats + analyzer assessments ride
+  // along in the step output (git-stats inside resultFiles, assessments below)
+  // and are ingested by the commit step only after every step has succeeded.
 
-  // 6. Count findings per contributor (placeholder — enriched by triage step)
-  const findingsPerContributor: Record<string, Record<string, number>> = {};
-
-  const totalFindings = importSummary.imports.reduce((s, i) => s + (i.findingsCount ?? 0), 0);
-
-  return {
+  // NUL-strip the whole plan: commit inserts these strings into TEXT columns
+  // (and the plan is staged into jsonb) — Postgres rejects \u0000 in both.
+  return sanitizeForDb({
     repositoryId: ids.repositoryId,
     workspaceId: ids.workspaceId,
-    findingsImported: totalFindings,
-    testsCreated: importSummary.imports.filter(i => i.testId).length,
+    findingsPrepared: importSummary.preparedFindings.length,
+    testsPrepared: importSummary.preparedTests.length,
     resultFiles,
-    findingsPerContributor,
+    preparedTests: importSummary.preparedTests,
+    preparedFindings: importSummary.preparedFindings,
+    analyzerAssessments,
     emailAliases,
-  };
+  });
 }

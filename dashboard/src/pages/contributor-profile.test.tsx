@@ -166,7 +166,7 @@ describe('ContributorProfilePage', () => {
 
     renderWithProviders(<ContributorProfilePage />);
 
-    expect(screen.getByText('Contributors')).toBeInTheDocument();
+    expect(screen.getByText('nav.contributors')).toBeInTheDocument();
     // Alice appears in both breadcrumb and heading
     expect(screen.getAllByText('Alice').length).toBeGreaterThanOrEqual(1);
   });

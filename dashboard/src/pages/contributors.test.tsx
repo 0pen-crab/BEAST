@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, fireEvent, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test-utils';
 import { ContributorsPage } from './contributors';
 
@@ -28,7 +28,7 @@ vi.mock('@/lib/workspace', () => ({
   })),
 }));
 
-const { useContributors, useTeams, useBulkUpdateContributors } = await import('@/api/hooks');
+const { useContributors, useTeams, useMergeContributors } = await import('@/api/hooks');
 
 const mockContributor = (overrides = {}) => ({
   id: 1,
@@ -154,5 +154,143 @@ describe('ContributorsPage', () => {
     } as any);
     renderWithProviders(<ContributorsPage />);
     expect(screen.getByText('repos.allTeams')).toBeInTheDocument();
+  });
+});
+
+describe('ContributorsPage duplicate suggestions', () => {
+  const duplicatePair = () => [
+    mockContributor({
+      id: 1,
+      displayName: 'David Malko',
+      emails: ['david.malko@corp.com'],
+      totalCommits: 100,
+      lastSeen: '2026-05-01',
+    }),
+    mockContributor({
+      id: 2,
+      displayName: 'David Malko',
+      emails: ['dmalko@old-corp.io'],
+      totalCommits: 10,
+      lastSeen: '2026-06-01',
+    }),
+  ];
+
+  beforeEach(() => {
+    vi.mocked(useTeams).mockReturnValue({ data: [] } as any);
+  });
+
+  it('does not render the banner when there are no duplicate candidates', () => {
+    vi.mocked(useContributors).mockReturnValue({
+      data: { count: 1, results: [mockContributor()] },
+      isLoading: false,
+    } as any);
+    renderWithProviders(<ContributorsPage />);
+    expect(screen.queryByTestId('duplicate-suggestions')).not.toBeInTheDocument();
+  });
+
+  it('renders a collapsed banner when duplicate candidates exist', () => {
+    vi.mocked(useContributors).mockReturnValue({
+      data: { count: 2, results: duplicatePair() },
+      isLoading: false,
+    } as any);
+    renderWithProviders(<ContributorsPage />);
+    const banner = screen.getByTestId('duplicate-suggestions');
+    expect(banner).toBeInTheDocument();
+    expect(within(banner).getByText(/contributors.duplicatesBanner/)).toBeInTheDocument();
+    // Collapsed by default — no groups listed yet
+    expect(screen.queryByTestId('duplicate-group')).not.toBeInTheDocument();
+  });
+
+  it('expands to list group members with names and emails side by side', () => {
+    vi.mocked(useContributors).mockReturnValue({
+      data: { count: 2, results: duplicatePair() },
+      isLoading: false,
+    } as any);
+    renderWithProviders(<ContributorsPage />);
+
+    fireEvent.click(screen.getByText(/contributors.duplicatesBanner/));
+
+    const group = screen.getByTestId('duplicate-group');
+    expect(within(group).getAllByText('David Malko')).toHaveLength(2);
+    expect(within(group).getByText('david.malko@corp.com')).toBeInTheDocument();
+    expect(within(group).getByText('dmalko@old-corp.io')).toBeInTheDocument();
+    // reason tag
+    expect(within(group).getByText('contributors.duplicateReasonSameName')).toBeInTheDocument();
+  });
+
+  it('opens the merge modal prefilled with the pair, target = most commits', () => {
+    vi.mocked(useContributors).mockReturnValue({
+      data: { count: 2, results: duplicatePair() },
+      isLoading: false,
+    } as any);
+    const { container } = renderWithProviders(<ContributorsPage />);
+
+    fireEvent.click(screen.getByText(/contributors.duplicatesBanner/));
+    const group = screen.getByTestId('duplicate-group');
+    fireEvent.click(within(group).getByText('contributors.merge'));
+
+    // Existing bulk merge modal opens, prefilled with exactly the two members
+    expect(screen.getByText('contributors.mergeBulkTitle')).toBeInTheDocument();
+    const radios = container.querySelectorAll<HTMLInputElement>('input[name="merge-target"]');
+    expect(radios).toHaveLength(2);
+    // Target defaults to the contributor with MORE commits (id 1, 100 commits),
+    // even though id 2 was seen more recently.
+    const checked = Array.from(radios).find((r) => r.checked);
+    expect(checked?.value).toBe('1');
+  });
+
+  it('does not call the merge API just by opening the modal', () => {
+    const mutateAsync = vi.fn();
+    vi.mocked(useMergeContributors).mockReturnValue({
+      mutateAsync, isPending: false, error: null,
+    } as any);
+    vi.mocked(useContributors).mockReturnValue({
+      data: { count: 2, results: duplicatePair() },
+      isLoading: false,
+    } as any);
+    renderWithProviders(<ContributorsPage />);
+
+    fireEvent.click(screen.getByText(/contributors.duplicatesBanner/));
+    fireEvent.click(within(screen.getByTestId('duplicate-group')).getByText('contributors.merge'));
+
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('dismissing a group hides it for the session', () => {
+    vi.mocked(useContributors).mockReturnValue({
+      data: { count: 2, results: duplicatePair() },
+      isLoading: false,
+    } as any);
+    renderWithProviders(<ContributorsPage />);
+
+    fireEvent.click(screen.getByText(/contributors.duplicatesBanner/));
+    const group = screen.getByTestId('duplicate-group');
+    fireEvent.click(within(group).getByLabelText('contributors.dismissSuggestion'));
+
+    expect(screen.queryByTestId('duplicate-group')).not.toBeInTheDocument();
+    // Last group dismissed → whole banner disappears
+    expect(screen.queryByTestId('duplicate-suggestions')).not.toBeInTheDocument();
+  });
+
+  it('keeps the banner when only one of several groups is dismissed', () => {
+    const results = [
+      ...duplicatePair(),
+      mockContributor({ id: 3, displayName: 'Anna Koval', emails: ['anna.koval@x.com'], totalCommits: 5 }),
+      mockContributor({ id: 4, displayName: 'A. Koval', emails: ['anna.koval@y.com'], totalCommits: 7 }),
+    ];
+    vi.mocked(useContributors).mockReturnValue({
+      data: { count: 4, results },
+      isLoading: false,
+    } as any);
+    renderWithProviders(<ContributorsPage />);
+
+    fireEvent.click(screen.getByText(/contributors.duplicatesBanner/));
+    const groups = screen.getAllByTestId('duplicate-group');
+    expect(groups).toHaveLength(2);
+
+    fireEvent.click(within(groups[0]).getByLabelText('contributors.dismissSuggestion'));
+
+    expect(screen.getAllByTestId('duplicate-group')).toHaveLength(1);
+    expect(screen.getByTestId('duplicate-suggestions')).toBeInTheDocument();
   });
 });

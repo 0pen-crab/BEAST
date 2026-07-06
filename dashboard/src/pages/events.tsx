@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { useScanEvents, useScanEventStats, useResolveScanEvent, useUnresolveScanEvent, useWorkspaceEvents } from '@/api/hooks';
@@ -6,7 +6,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { TableSkeleton } from '@/components/skeleton';
 import { EmptyState } from '@/components/empty-state';
 import { cn } from '@/lib/utils';
-import { formatDate, formatDateTime, formatTime } from '@/lib/format';
+import { formatDateTime } from '@/lib/format';
 import type { ScanEvent, WorkspaceEvent } from '@/api/types';
 
 const LEVELS = ['all', 'error', 'warning', 'info'] as const;
@@ -35,6 +35,14 @@ export function EventsPage() {
   const events = data?.results ?? [];
   const totalCount = data?.count ?? 0;
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
+  // Clamp the page when the unresolved count shrinks (e.g. resolving the last
+  // event on the final page) so we never sit on an empty out-of-range page.
+  useEffect(() => {
+    if (data && totalPages > 0 && page > totalPages - 1) {
+      setPage(totalPages - 1);
+    }
+  }, [data, totalPages, page]);
 
   const wsEvents = wsEventsData?.results ?? [];
 
@@ -84,7 +92,7 @@ export function EventsPage() {
                     level === l ? 'beast-btn-primary' : 'beast-btn-ghost',
                   )}
                 >
-                  {l}
+                  {t(`events.levels.${l}`)}
                 </button>
               ))}
               <div className="beast-divider" />
@@ -98,7 +106,7 @@ export function EventsPage() {
                 <span className="beast-toggle-text">{t('events.showResolved')}</span>
               </label>
               <span className="beast-auto-right beast-pagination-info">
-                {totalCount} {t('common.results')}
+                {t('common.resultsCount', { count: totalCount })}
               </span>
             </div>
 
@@ -200,15 +208,11 @@ const eventTypeBadge: Record<string, { label: string; classes: string }> = {
   sync_failed: { label: 'events.syncFailed', classes: 'beast-event-badge-error' },
   pipeline_error: { label: 'events.pipelineError', classes: 'beast-event-badge-error' },
   api_error: { label: 'events.apiError', classes: 'beast-event-badge-error' },
-  pr_scan_triggered: { label: 'events.prScanTriggered', classes: 'beast-event-badge-info' },
-  pr_diff_fetch_failed: { label: 'events.prDiffFetchFailed', classes: 'beast-event-badge-error' },
-  pr_comment_failed: { label: 'events.prCommentFailed', classes: 'beast-event-badge-error' },
   contributor_ingest_failed: { label: 'events.contributorIngestFailed', classes: 'beast-event-badge-error' },
-  webhook_registration_failed: { label: 'events.webhookRegistrationFailed', classes: 'beast-event-badge-error' },
 };
 
 function WorkspaceEventRow({ event }: { event: WorkspaceEvent }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const badge = eventTypeBadge[event.eventType] ?? {
     label: event.eventType,
     classes: 'beast-badge-gray',
@@ -219,8 +223,8 @@ function WorkspaceEventRow({ event }: { event: WorkspaceEvent }) {
   if (payload.repo_name) details.push(String(payload.repo_name));
   if (payload.org_name) details.push(String(payload.org_name));
   if (payload.provider) details.push(String(payload.provider));
-  if (payload.repos_added !== undefined) details.push(`${payload.repos_added} added`);
-  if (payload.repos_updated !== undefined) details.push(`${payload.repos_updated} updated`);
+  if (payload.repos_added !== undefined) details.push(`${payload.repos_added} ${t('events.reposAdded')}`);
+  if (payload.repos_updated !== undefined) details.push(`${payload.repos_updated} ${t('events.reposUpdated')}`);
 
   return (
     <tr>
@@ -231,13 +235,12 @@ function WorkspaceEventRow({ event }: { event: WorkspaceEvent }) {
       </td>
       <td>
         <span className="beast-td-primary">{details.join(' · ') || '—'}</span>
-        {payload.repo_url && (
+        {payload.repo_url ? (
           <p className="beast-text-hint beast-truncate">{String(payload.repo_url)}</p>
-        )}
+        ) : null}
       </td>
       <td className="beast-td-date tabular-nums">
-        <div>{formatDate(event.createdAt)}</div>
-        <div className="beast-text-hint">{formatTime(event.createdAt)}</div>
+        <span title={formatDateTime(event.createdAt)}>{relativeTime(event.createdAt, i18n.language)}</span>
       </td>
     </tr>
   );
@@ -263,12 +266,15 @@ const levelStyles: Record<string, { badge: string }> = {
 };
 
 function EventRow({ event, expanded, onToggle }: { event: ScanEvent; expanded: boolean; onToggle: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const resolve = useResolveScanEvent();
   const unresolve = useUnresolveScanEvent();
   const createdAt = new Date(event.createdAt);
   const style = levelStyles[event.level] ?? levelStyles.info;
   const hasDetails = event.details && Object.keys(event.details).length > 0;
+  // Link to the specific repo page when the API resolved a repository id;
+  // fall back to the repos list otherwise (e.g. events without a scan).
+  const repoLink = event.repositoryId != null ? `/repos/${event.repositoryId}` : '/repos';
 
   return (
     <>
@@ -281,7 +287,7 @@ function EventRow({ event, expanded, onToggle }: { event: ScanEvent; expanded: b
       >
         <td>
           <span className={cn('beast-badge beast-capitalize', style.badge)}>
-            {event.level}
+            {t(`events.levels.${event.level}`)}
           </span>
         </td>
         <td className="beast-td-message">
@@ -297,12 +303,11 @@ function EventRow({ event, expanded, onToggle }: { event: ScanEvent; expanded: b
         <td className="beast-text-hint">{event.source}</td>
         <td>
           {event.repoName ? (
-            <Link to="/repos" className="beast-link-red">{event.repoName}</Link>
+            <Link to={repoLink} className="beast-link-red">{event.repoName}</Link>
           ) : '—'}
         </td>
         <td className="beast-td-date tabular-nums">
-          <div>{formatDate(createdAt)}</div>
-          <div className="beast-text-hint">{formatTime(createdAt)}</div>
+          <span title={formatDateTime(createdAt)}>{relativeTime(event.createdAt, i18n.language)}</span>
         </td>
         <td onClick={(e) => e.stopPropagation()}>
           {event.level !== 'info' && (
@@ -340,7 +345,7 @@ function EventRow({ event, expanded, onToggle }: { event: ScanEvent; expanded: b
               {event.repoName && (
                 <div>
                   <h4 className="beast-event-section-label">{t('events.links')}</h4>
-                  <Link to="/repos" className="beast-btn beast-btn-outline beast-btn-sm">
+                  <Link to={repoLink} className="beast-btn beast-btn-outline beast-btn-sm">
                     {event.repoName}
                   </Link>
                 </div>
@@ -356,15 +361,19 @@ function EventRow({ event, expanded, onToggle }: { event: ScanEvent; expanded: b
               )}
 
               <div className="beast-event-meta">
-                <span>ID: {event.id}</span>
-                <span>Source: {event.source}</span>
-                {event.scanId && <span>Scan: <Link to="/scans" className="beast-link-red">{event.scanId.slice(0, 8)}</Link></span>}
-                {event.stepName && <span>Step: {event.stepName}</span>}
-                {event.repoName && <span>Repo: {event.repoName}</span>}
-                {event.workspaceId && <span>Workspace ID: {event.workspaceId}</span>}
-                <span>Created: {formatDateTime(createdAt)}</span>
+                <span>{t('events.id')}: {event.id}</span>
+                <span>{t('events.source')}: {event.source}</span>
+                {event.scanId && <span>{t('events.scan')}: <Link to={`/scans?scan=${event.scanId}`} className="beast-link-red">{event.scanId.slice(0, 8)}</Link></span>}
+                {event.stepName && <span>{t('events.step')}: {event.stepName}</span>}
+                {event.repoName && <span>{t('events.repo')}: {event.repoName}</span>}
+                {event.workspaceId && <span>{t('events.workspaceId')}: {event.workspaceId}</span>}
+                <span>{t('events.created')}: {formatDateTime(createdAt)}</span>
                 {event.resolved && event.resolvedAt && (
-                  <span>Resolved: {formatDateTime(event.resolvedAt)}{event.resolvedBy ? ` by ${event.resolvedBy}` : ''}</span>
+                  <span>
+                    {event.resolvedBy
+                      ? t('events.resolvedMetaBy', { date: formatDateTime(event.resolvedAt), user: event.resolvedBy })
+                      : t('events.resolvedMeta', { date: formatDateTime(event.resolvedAt) })}
+                  </span>
                 )}
               </div>
             </div>
@@ -377,15 +386,17 @@ function EventRow({ event, expanded, onToggle }: { event: ScanEvent; expanded: b
 
 /* -- Helpers ------------------------------------------------------ */
 
-function relativeTime(dateStr: string): string {
-  const now = Date.now();
+/**
+ * Locale-aware relative time ("5 minutes ago" / "5 хвилин тому").
+ * Exported for tests. Absolute time belongs in the `title` attribute.
+ */
+export function relativeTime(dateStr: string | Date, lang: string): string {
   const then = new Date(dateStr).getTime();
-  const diffSec = Math.floor((now - then) / 1000);
-  if (diffSec < 60) return `${diffSec}s ago`;
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDays = Math.floor(diffHr / 24);
-  return `${diffDays}d ago`;
+  const diffSec = Math.round((then - Date.now()) / 1000); // negative = past
+  const rtf = new Intl.RelativeTimeFormat(lang, { numeric: 'auto' });
+  const abs = Math.abs(diffSec);
+  if (abs < 60) return rtf.format(diffSec, 'second');
+  if (abs < 3600) return rtf.format(Math.trunc(diffSec / 60), 'minute');
+  if (abs < 86400) return rtf.format(Math.trunc(diffSec / 3600), 'hour');
+  return rtf.format(Math.trunc(diffSec / 86400), 'day');
 }

@@ -1,9 +1,16 @@
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { installCrashHandlers } from './app.ts';
 import { db } from './db/index.ts';
 import { startScanWorker, stopScanWorker } from './orchestrator/worker.ts';
 import { startSyncWorker, stopSyncWorker } from './orchestrator/sync-worker.ts';
 import { startFeedbackWorker, stopFeedbackWorker } from './orchestrator/feedback-worker.ts';
+import { startWorkerHeartbeat, stopWorkerHeartbeat } from './orchestrator/heartbeat.ts';
+import { startRetentionSweeper, stopRetentionSweeper } from './orchestrator/retention.ts';
 import { runInfraCheck } from './orchestrator/infra-check.ts';
+
+// A stray rejection inside a worker setInterval must crash loudly (docker
+// restarts the worker), never zombify it silently.
+installCrashHandlers();
 
 async function main() {
   console.log('[worker-main] Starting BEAST workers...');
@@ -24,9 +31,17 @@ async function main() {
   // poisoning every scan with "All configured authentication methods failed".
   await runInfraCheck();
 
+  // Liveness signal for /api/health — upserts worker_heartbeat every minute.
+  // beatOnce never throws, so this can't crash the worker.
+  startWorkerHeartbeat();
+
   await startScanWorker();
   startSyncWorker();
   startFeedbackWorker();
+
+  // Daily retention sweep (90-day work-dir + heavy scan_files cleanup).
+  // First run ~5 min after boot; runRetentionSweep never throws.
+  startRetentionSweeper();
 
   console.log('[worker-main] All workers running.');
 }
@@ -37,6 +52,8 @@ function shutdown(signal: string) {
   stopScanWorker();
   stopSyncWorker();
   stopFeedbackWorker();
+  stopWorkerHeartbeat();
+  stopRetentionSweeper();
   // Give in-flight SSH commands a moment to settle
   setTimeout(() => process.exit(0), 2000);
 }

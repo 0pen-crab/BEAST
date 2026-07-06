@@ -1,5 +1,6 @@
 import { Client } from 'ssh2';
 import fs from 'node:fs';
+import { contextWindowForModel } from './ai-models.ts';
 
 export interface SSHResult {
   stdout: string;
@@ -12,6 +13,16 @@ export interface SSHConfig {
   port: number;
   username: string;
   privateKey: Buffer;
+}
+
+// ssh2's default `readyTimeout` is 20s. On a busy host (VM-on-laptop with
+// load avg 10+, or right after a heavy verification scan that ran 35 min
+// of Claude+curl), the handshake can take >20s — observed reliably. Bump
+// the default to give the kernel a generous window before bailing.
+const SSH_HANDSHAKE_TIMEOUT_MS = Number(process.env.SSH_HANDSHAKE_TIMEOUT_MS || 60_000);
+
+function withDefaults(config: SSHConfig): SSHConfig & { readyTimeout: number } {
+  return { ...config, readyTimeout: SSH_HANDSHAKE_TIMEOUT_MS };
 }
 
 let privateKey: Buffer | null = null;
@@ -42,40 +53,68 @@ export function getSecurityToolsConfig(): SSHConfig {
   };
 }
 
-export function sshWriteFile(config: SSHConfig, remotePath: string, data: string | Buffer): Promise<void> {
+export function sshWriteFile(config: SSHConfig, remotePath: string, data: string | Buffer, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      return reject(new Error('SFTP write aborted by cancellation'));
+    }
     const conn = new Client();
+    let settled = false;
+    const onAbort = () => settle(() => { conn.end(); reject(new Error('SFTP write aborted by cancellation')); });
+    // Settle exactly once and ALWAYS detach the abort listener — the signal is
+    // scan-lifetime, so a leaked listener per call piles up into
+    // MaxListenersExceededWarning on big scans.
+    function settle(fn: () => void) {
+      if (settled) return;
+      settled = true;
+      if (signal) signal.removeEventListener('abort', onAbort);
+      fn();
+    }
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
     conn
       .on('ready', () => {
         conn.sftp((err, sftp) => {
-          if (err) { conn.end(); return reject(err); }
+          if (err) return settle(() => { conn.end(); reject(err); });
           const ws = sftp.createWriteStream(remotePath);
-          ws.on('error', (e: Error) => { conn.end(); reject(e); });
-          ws.on('close', () => { conn.end(); resolve(); });
+          ws.on('error', (e: Error) => settle(() => { conn.end(); reject(e); }));
+          ws.on('close', () => settle(() => { conn.end(); resolve(); }));
           ws.end(data);
         });
       })
-      .on('error', reject)
-      .connect(config);
+      .on('error', (err) => settle(() => reject(err)))
+      .connect(withDefaults(config));
   });
 }
 
-export function sshReadFile(config: SSHConfig, remotePath: string): Promise<string> {
+export function sshReadFile(config: SSHConfig, remotePath: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      return reject(new Error('SFTP read aborted by cancellation'));
+    }
     const conn = new Client();
+    let settled = false;
+    const onAbort = () => settle(() => { conn.end(); reject(new Error('SFTP read aborted by cancellation')); });
+    // Settle exactly once and ALWAYS detach the abort listener (see sshWriteFile).
+    function settle(fn: () => void) {
+      if (settled) return;
+      settled = true;
+      if (signal) signal.removeEventListener('abort', onAbort);
+      fn();
+    }
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
     conn
       .on('ready', () => {
         conn.sftp((err, sftp) => {
-          if (err) { conn.end(); return reject(err); }
+          if (err) return settle(() => { conn.end(); reject(err); });
           const chunks: Buffer[] = [];
           const rs = sftp.createReadStream(remotePath);
           rs.on('data', (chunk: Buffer) => chunks.push(chunk));
-          rs.on('error', (e: Error) => { conn.end(); reject(e); });
-          rs.on('end', () => { conn.end(); resolve(Buffer.concat(chunks).toString('utf-8')); });
+          rs.on('error', (e: Error) => settle(() => { conn.end(); reject(e); }));
+          rs.on('end', () => settle(() => { conn.end(); resolve(Buffer.concat(chunks).toString('utf-8')); }));
         });
       })
-      .on('error', reject)
-      .connect(config);
+      .on('error', (err) => settle(() => reject(err)))
+      .connect(withDefaults(config));
   });
 }
 
@@ -172,15 +211,6 @@ export function extractAiUsage(result: Record<string, unknown>): import('./pipel
   };
 }
 
-/**
- * Context window limit (in tokens) for a given Claude model ID.
- * Models with `[1m]` suffix have a 1M token window; others default to 200K.
- */
-export function contextLimitForModel(modelId: string): number {
-  if (modelId.includes('[1m]')) return 1_000_000;
-  return 200_000;
-}
-
 export interface AgentMetric {
   agent: string;
   model: string;
@@ -189,8 +219,10 @@ export interface AgentMetric {
   cacheCreationInputTokens: number;
   outputTokens: number;
   totalContext: number;
-  contextLimit: number;
-  utilizationPct: number;
+  /** undefined when the model is not in the registry — never a guessed 200K */
+  contextLimit: number | undefined;
+  /** undefined when contextLimit is unknown (no lying metrics) */
+  utilizationPct: number | undefined;
   costUSD: number;
   durationMs: number;
 }
@@ -211,15 +243,26 @@ export interface AgentMetric {
  * NOTE: `cacheRead` is deliberately excluded — it is a BILLING metric that
  * multiplies by turn count (reading the same cached prefix on every turn),
  * not a measure of how full the window is.
+ *
+ * `launchedModel` — the CLI --model value the wave was launched with. API
+ * responses strip the '[1m]' suffix from `usage.model`, so without it a 1M
+ * session would be measured against the 200K standard window (~5x
+ * over-reported utilization). Pass it whenever it is in scope.
  */
 export function buildAgentMetric(
   agent: string,
   usage: import('./pipeline-types.ts').AiUsage,
   durationMs: number,
+  launchedModel?: string,
 ): AgentMetric {
   const totalContext = usage.cacheCreationInputTokens + usage.inputTokens + usage.outputTokens;
-  const contextLimit = contextLimitForModel(usage.model);
-  const utilizationPct = contextLimit > 0 ? (totalContext / contextLimit) * 100 : 0;
+  const contextLimit = contextWindowForModel(usage.model, launchedModel);
+  if (contextLimit === undefined) {
+    console.warn(`[context] Unknown model ${usage.model} — add it to the model registry with its context window`);
+  }
+  const utilizationPct = contextLimit !== undefined && contextLimit > 0
+    ? (totalContext / contextLimit) * 100
+    : undefined;
   return {
     agent,
     model: usage.model,
@@ -238,14 +281,15 @@ export function buildAgentMetric(
 /** Format an AgentMetric as a single-line log entry. */
 export function formatAgentMetric(m: AgentMetric, scanId?: string): string {
   const prefix = scanId ? `[${scanId}] ` : '';
-  const util = m.utilizationPct.toFixed(1);
   const ctxK = (m.totalContext / 1000).toFixed(1);
-  const limitK = (m.contextLimit / 1000).toFixed(0);
+  // Unknown model (not in the registry): report honestly instead of a guessed limit.
+  const limitStr = m.contextLimit !== undefined ? `${(m.contextLimit / 1000).toFixed(0)}K` : 'unknown';
+  const utilStr = m.utilizationPct !== undefined ? `${m.utilizationPct.toFixed(1)}%` : 'n/a';
   const cost = m.costUSD.toFixed(4);
   const dur = (m.durationMs / 1000).toFixed(1);
   return `${prefix}agent=${m.agent} model=${m.model} ` +
     `input=${m.inputTokens} cacheRead=${m.cacheReadInputTokens} cacheCreate=${m.cacheCreationInputTokens} output=${m.outputTokens} ` +
-    `totalContext=${ctxK}K limit=${limitK}K util=${util}% cost=$${cost} duration=${dur}s`;
+    `totalContext=${ctxK}K limit=${limitStr} util=${utilStr} cost=$${cost} duration=${dur}s`;
 }
 
 /** Error with partial stdout/stderr captured before timeout */
@@ -273,10 +317,18 @@ export function sshExec(config: SSHConfig, command: string, options?: SSHExecOpt
     // closing only the SSH channel leaves the remote command (claude / run-scans.sh)
     // running until it naturally completes.
     let activeStream: { signal: (sig: string) => void } | null = null;
+    // Abort handler registered on the (scan-lifetime) cancel signal. MUST be
+    // detached in cleanup(): the signal outlives this exec, and one leaked
+    // listener per exec adds up to MaxListenersExceededWarning on big scans.
+    let abortHandler: (() => void) | null = null;
 
     function cleanup() {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       if (maxTimer) clearTimeout(maxTimer);
+      if (abortHandler && options?.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+        abortHandler = null;
+      }
     }
 
     function fail(err: Error) {
@@ -317,8 +369,8 @@ export function sshExec(config: SSHConfig, command: string, options?: SSHExecOpt
         // Defer to next tick so connect() runs; otherwise fail() runs before promise is even returned
         setImmediate(() => fail(new Error('SSH command aborted by cancellation')));
       } else {
-        const onAbort = () => fail(new Error('SSH command aborted by cancellation'));
-        options.signal.addEventListener('abort', onAbort, { once: true });
+        abortHandler = () => fail(new Error('SSH command aborted by cancellation'));
+        options.signal.addEventListener('abort', abortHandler, { once: true });
       }
     }
 
@@ -359,6 +411,6 @@ export function sshExec(config: SSHConfig, command: string, options?: SSHExecOpt
         });
       })
       .on('error', (err) => fail(err))
-      .connect(config);
+      .connect(withDefaults(config));
   });
 }

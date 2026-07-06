@@ -414,6 +414,78 @@ describe('POST /contributors/ingest', () => {
   });
 });
 
+// ── PATCH /contributors/bulk ───────────────────────────────────
+
+describe('PATCH /contributors/bulk', () => {
+  it('assigns team and reports honest updated count', async () => {
+    mockSelect(
+      [{ wsId: 1 }],           // workspace lookup from ids[0]
+      [{ workspaceId: 1 }],    // team belongs to the same workspace
+    );
+    mockDb.update = vi.fn(() => chain([{ id: 1 }, { id: 2 }]));
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/contributors/bulk',
+      payload: { ids: [1, 2], team_id: 5 },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ updated: 2 });
+  });
+
+  it('only updates own-workspace rows when foreign ids are mixed in', async () => {
+    mockSelect(
+      [{ wsId: 1 }],
+      [{ workspaceId: 1 }],
+    );
+    // The UPDATE is workspace-constrained — of the 3 requested ids only 2 rows
+    // actually live in workspace 1 and get returned.
+    mockDb.update = vi.fn(() => chain([{ id: 1 }, { id: 2 }]));
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/contributors/bulk',
+      payload: { ids: [1, 2, 999], team_id: 5 },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ updated: 2 });
+  });
+
+  it('rejects a team_id from another workspace with 400', async () => {
+    mockSelect(
+      [{ wsId: 1 }],
+      [{ workspaceId: 2 }],   // foreign team
+    );
+    mockDb.update = vi.fn(() => chain([]));
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/contributors/bulk',
+      payload: { ids: [1], team_id: 42 },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('team_id');
+    expect(mockDb.update).not.toHaveBeenCalled();
+  });
+
+  it('allows clearing team with team_id null (no team validation query)', async () => {
+    mockSelect([{ wsId: 1 }]);
+    mockDb.update = vi.fn(() => chain([{ id: 1 }]));
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/contributors/bulk',
+      payload: { ids: [1], team_id: null },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ updated: 1 });
+  });
+});
+
 // ── POST /contributors/merge ───────────────────────────────────
 
 describe('POST /contributors/merge', () => {
@@ -448,6 +520,19 @@ describe('POST /contributors/merge', () => {
 
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual({ error: 'Contributor not found' });
+  });
+
+  it('returns 400 when source and target are the same contributor (self-merge)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/contributors/merge',
+      payload: { source_id: 7, target_id: 7 },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'cannot merge a contributor into itself' });
+    // The delete path must never run
+    expect(mockDb.delete).not.toHaveBeenCalled();
   });
 
   it('returns 400 when source and target are in different workspaces', async () => {

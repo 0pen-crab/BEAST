@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SEVERITIES, STATUSES } from '@/api/types';
 import { TOOLS, TOOL_CATEGORIES } from '@/lib/tool-mapping';
@@ -16,16 +16,30 @@ interface ExportDialogProps {
   repoCount: number;
   toolCounts: ToolCount[];
   onExport: (severities: string[], tools: string[], statuses: string[], format: ExportFormat) => void;
+  /**
+   * Optional AI-curated export handler. When provided, an "Ask AI to filter only
+   * the most interesting" checkbox is shown above the format options. When the
+   * user enables it, `onExport` is bypassed in favour of this — the AI returns
+   * a curated CSV of 10-30 critical findings via the highlights endpoint.
+   */
+  onAiExport?: (severities: string[], tools: string[], statuses: string[]) => void;
   onCancel: () => void;
 }
 
 const DEFAULT_STATUSES = ['Open'];
+
+/** Map display status → i18n key suffix (e.g. "Risk Accepted" → "Accepted"). Mirrors findings.tsx. */
+function statusI18nKey(status: string): string {
+  if (status === 'Risk Accepted') return 'Accepted';
+  return status.replace(/\s+/g, '');
+}
 
 export function ExportDialog({
   open,
   repoCount,
   toolCounts,
   onExport,
+  onAiExport,
   onCancel,
 }: ExportDialogProps) {
   const { t } = useTranslation();
@@ -33,6 +47,7 @@ export function ExportDialog({
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set(DEFAULT_STATUSES));
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<ExportFormat>('csv');
+  const [aiCurated, setAiCurated] = useState(false);
 
   // Only tools that have findings in selected repos
   const relevantTools = useMemo(
@@ -40,12 +55,15 @@ export function ExportDialog({
     [toolCounts],
   );
 
-  // Select all tools when toolCounts loads/changes
+  // Select all tools once per dialog-open. Keyed off the `open` transition so a
+  // toolCounts refetch while the dialog is open does not wipe user deselections.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (relevantTools.length > 0) {
+    if (open && !wasOpenRef.current) {
       setSelectedTools(new Set(relevantTools.map((tc) => tc.tool)));
     }
-  }, [toolCounts]);
+    wasOpenRef.current = open;
+  }, [open, relevantTools]);
 
   // Build a lookup of tool key → count
   const toolCountMap = useMemo(() => {
@@ -100,6 +118,14 @@ export function ExportDialog({
       if (s === 'Duplicate') return 'duplicate';
       return s;
     });
+    if (aiCurated && onAiExport) {
+      onAiExport(
+        Array.from(selectedSeverities),
+        Array.from(selectedTools),
+        statusApiValues,
+      );
+      return;
+    }
     onExport(
       Array.from(selectedSeverities),
       Array.from(selectedTools),
@@ -136,34 +162,58 @@ export function ExportDialog({
             <div className="beast-export-col-header">
               <h3 className="beast-modal-title">{t('export.title', 'Export Findings')}</h3>
               <p className="beast-export-subtitle">
-                {t('export.description', {
-                  count: repoCount,
-                  defaultValue: `Export findings from {{count}} ${repoCount === 1 ? 'repository' : 'repositories'}.`,
-                })}
+                {repoCount === 0
+                  ? t('export.descriptionWorkspace', 'Export findings from the whole workspace.')
+                  : t('export.description', { count: repoCount, defaultValue: `Repositories: ${repoCount}` })}
               </p>
             </div>
-            {/* Format */}
-            <div className="beast-export-section">
+            {/* AI curation toggle (only shown when caller supports it) */}
+            {onAiExport && (
+              <div className="beast-export-section">
+                <label className="beast-export-ai-toggle">
+                  <input
+                    type="checkbox"
+                    className="beast-checkbox"
+                    checked={aiCurated}
+                    onChange={(e) => setAiCurated(e.target.checked)}
+                    aria-label={t('export.aiCurated', 'Ask AI to filter only the most interesting')}
+                  />
+                  <div className="beast-export-ai-toggle-text">
+                    <span className="beast-export-ai-toggle-label">
+                      {t('export.aiCurated', 'Ask AI to filter only the most interesting')}
+                    </span>
+                    <span className="beast-export-ai-toggle-desc">
+                      {t('export.aiCuratedDesc', 'Claude returns a CSV of 10–30 critical findings worth immediate attention')}
+                    </span>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {/* Format (disabled when AI mode is on — AI returns CSV only) */}
+            <div className={`beast-export-section ${aiCurated ? 'is-disabled' : ''}`}>
               <h4 className="beast-export-section-title">{t('export.format', 'Format')}</h4>
               <div className="beast-export-format-stack">
-                <label className={`beast-export-format-option ${format === 'markdown' ? 'is-active' : ''}`}>
+                <label className={`beast-export-format-option ${format === 'markdown' && !aiCurated ? 'is-active' : ''}`}>
                   <input
                     type="radio"
                     name="export-format"
                     checked={format === 'markdown'}
                     onChange={() => setFormat('markdown')}
                     aria-label="Markdown"
+                    disabled={aiCurated}
                   />
                   <span className="beast-export-format-label">Markdown</span>
                   <span className="beast-export-format-desc">{t('export.mdDesc', 'Human-readable report')}</span>
                 </label>
-                <label className={`beast-export-format-option ${format === 'csv' ? 'is-active' : ''}`}>
+                <label className={`beast-export-format-option ${(format === 'csv' || aiCurated) ? 'is-active' : ''}`}>
                   <input
                     type="radio"
                     name="export-format"
-                    checked={format === 'csv'}
+                    checked={format === 'csv' || aiCurated}
                     onChange={() => setFormat('csv')}
                     aria-label="CSV"
+                    disabled={aiCurated}
                   />
                   <span className="beast-export-format-label">CSV</span>
                   <span className="beast-export-format-desc">{t('export.csvDesc', 'Spreadsheet-ready')}</span>
@@ -221,7 +271,7 @@ export function ExportDialog({
                       onChange={() => setSelectedStatuses(toggle(selectedStatuses, status))}
                       aria-label={status}
                     />
-                    {t(`status.${status.replace(/\s+/g, '')}`, status)}
+                    {t(`status.${statusI18nKey(status)}`, status)}
                   </label>
                 ))}
               </div>
@@ -251,18 +301,24 @@ export function ExportDialog({
               <div className="beast-export-categories">
                 {visibleCategories.map((cat) => {
                   const group = toolsByCategory.get(cat.key)!;
-                  const allCatSelected = group.every((g) => selectedTools.has(g.tool));
+                  // Only tools that can actually be (de)selected count toward the label,
+                  // otherwise disabled zero-count tools make it lie.
+                  const enabledInCat = group.filter((g) => g.total > 0);
+                  const allCatSelected = enabledInCat.length > 0
+                    && enabledInCat.every((g) => selectedTools.has(g.tool));
                   return (
                     <div key={cat.key} className="beast-export-cat">
                       <div className="beast-export-cat-header">
                         <span className="beast-export-cat-name">{cat.displayName}</span>
-                        <button
-                          type="button"
-                          className="beast-export-toggle-all"
-                          onClick={() => toggleCategoryTools(cat.key)}
-                        >
-                          {allCatSelected ? 'none' : 'all'}
-                        </button>
+                        {enabledInCat.length > 0 && (
+                          <button
+                            type="button"
+                            className="beast-export-toggle-all"
+                            onClick={() => toggleCategoryTools(cat.key)}
+                          >
+                            {allCatSelected ? t('export.none', 'none') : t('export.all', 'all')}
+                          </button>
+                        )}
                       </div>
                       <div className="beast-export-cat-tools">
                         {group.map((g) => {

@@ -1,52 +1,78 @@
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import {
-  scans, scanSteps, scanEvents, workspaces,
+  scans, scanSteps, scanEvents, workspaces, repositories,
   type Scan, type ScanStep,
 } from '../db/schema.ts';
-import type { PipelineContext, StepDef } from './pipeline-types.ts';
+import type { PipelineContext, StepDef, ScanStepError } from './pipeline-types.ts';
 import { ScanPausedError } from './rate-limit.ts';
+import { sanitizeForDb, truncateEventMessage } from '../lib/sanitize.ts';
+import { clearTraces } from './ai-trace.ts';
+import { queueFeedbackCompilation } from './feedback-worker.ts';
 import { runCloneStep } from './steps/clone.ts';
 import { runAnalysisStep } from './steps/analyzer.ts';
 import { runSecToolsStep } from './steps/security-tools.ts';
 import { runAiResearchStep } from './steps/scanner.ts';
 import { runImportStep } from './steps/import-results.ts';
 import { runTriageStep } from './steps/triage-report.ts';
+import { runCommitStep } from './steps/commit-results.ts';
 
 // Re-export PipelineContext for backward compat (worker.ts, etc.)
 export type { PipelineContext } from './pipeline-types.ts';
 
+/** What the pipeline reports back to the worker on a successful run. */
+export interface PipelineRunResult {
+  /** True when some tools/modules stayed failed after their retry pass —
+   *  the scan is still 'completed', but flagged "completed with errors". */
+  completedWithErrors: boolean;
+  /** The surviving failures, maximally detailed — persisted on the scan row. */
+  stepErrors: ScanStepError[];
+}
+
 // ── Step definitions ─────────────────────────────────────────
 // Array = parallel group. Steps run sequentially unless grouped.
 
-// Steps run sequentially. A nested array runs as a parallel group. Any step
-// that throws fails the whole scan — steps that have nothing to do MUST
-// return successfully without throwing (e.g. security-tools when no tools
-// are enabled).
+// Steps run sequentially. A nested array runs as a parallel group.
+// REQUIRED POLICY: if a feature is enabled in the workspace, its step MUST
+// succeed — a step that was supposed to run and didn't fails the whole scan,
+// never silently degrades. Steps that have nothing to do MUST return
+// successfully without throwing (e.g. security-tools when no tools are
+// enabled, analysis when the AI toggle is off).
+//
+// COMMIT POLICY: repo data (tests, findings, contributor stats/assessments)
+// is written ONLY by the final 'commit' step — 'import' merely PREPARES a
+// serializable plan and 'triage-report' decides on it. A scan that fails
+// before commit leaves no repo data behind (cleanup.ts stays wired as a
+// safety net and screams if it ever finds pre-commit data to delete).
 const STEPS: (StepDef | StepDef[])[] = [
   { name: 'clone',          run: runCloneStep,      required: true },
-  { name: 'analysis',       run: runAnalysisStep,   required: false },
+  { name: 'analysis',       run: runAnalysisStep,   required: ctx => ctx.aiAnalysisEnabled },
   [
-    { name: 'security-tools', run: runSecToolsStep,   required: false },
-    { name: 'ai-research',    run: runAiResearchStep, required: false },
+    { name: 'security-tools', run: runSecToolsStep,   required: true },
+    { name: 'ai-research',    run: runAiResearchStep, required: ctx => ctx.aiScanningEnabled },
   ],
   { name: 'import',         run: runImportStep,      required: true },
-  { name: 'triage-report',  run: runTriageStep,      required: false },
+  { name: 'triage-report',  run: runTriageStep,      required: ctx => ctx.aiTriageEnabled },
+  { name: 'commit',         run: runCommitStep,      required: true },
 ];
 
+function isRequired(step: StepDef, ctx: PipelineContext): boolean {
+  return typeof step.required === 'function' ? step.required(ctx) : step.required;
+}
+
 // Flat list for step row creation (preserves order)
-function flatSteps(): { name: string; order: number; required: boolean }[] {
+function flatSteps(): { name: string; order: number }[] {
   let order = 0;
-  const result: { name: string; order: number; required: boolean }[] = [];
+  const result: { name: string; order: number }[] = [];
   for (const entry of STEPS) {
     if (Array.isArray(entry)) {
       for (const s of entry) {
         order++;
-        result.push({ name: s.name, order, required: s.required });
+        result.push({ name: s.name, order });
       }
     } else {
       order++;
-      result.push({ name: entry.name, order, required: entry.required });
+      result.push({ name: entry.name, order });
     }
   }
   return result;
@@ -69,8 +95,10 @@ export async function logScanEvent(
       stepName,
       level,
       source: stepName ?? 'pipeline',
-      message,
-      details: details ?? {},
+      // NUL-stripped AND capped at 4KB — a legacy step error once landed a
+      // ~10MB message here, and event lists serialize messages inline.
+      message: truncateEventMessage(message),
+      details: sanitizeForDb(details ?? {}),
       repoName: repoName ?? null,
       workspaceId: workspaceId ?? null,
     });
@@ -84,8 +112,10 @@ async function updateStepStatus(
   status: string,
   updates?: Partial<Pick<ScanStep, 'input' | 'output' | 'error' | 'artifactsPath' | 'startedAt' | 'completedAt'>>,
 ): Promise<void> {
+  // Tool output can carry NUL bytes (binary-ish snippets) which Postgres
+  // rejects in jsonb — a single one used to kill the whole scan here.
   await db.update(scanSteps)
-    .set({ status, ...updates })
+    .set(sanitizeForDb({ status, ...updates }))
     .where(eq(scanSteps.id, stepId));
 }
 
@@ -101,6 +131,19 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
   const localPath = scan.localPath || '';
   const repoName = scan.repoName;
 
+  // Same-named repos from different sources (e.g. "mountain" on a GitHub org
+  // and "mountain" on a GitLab org) must never share a clone dir — key the
+  // base path by SOURCE id (ids are globally unique across providers; names
+  // are not). Repos without a source fall back to their own repository id.
+  let sourceKey = `repo-${scan.repositoryId ?? 0}`;
+  if (scan.repositoryId) {
+    const [repo] = await db.select({ sourceId: repositories.sourceId })
+      .from(repositories)
+      .where(eq(repositories.id, scan.repositoryId));
+    if (repo?.sourceId != null) sourceKey = `src-${repo.sourceId}`;
+  }
+  const repoBaseDir = `/workspace/${sourceKey}/${repoName}`;
+
   let workspaceName: string;
   let cloneUrl: string;
   let repoPath: string;
@@ -115,13 +158,14 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
     const urlParts = cleanUrl.split('/');
     workspaceName = urlParts[urlParts.length - 2] || 'unknown';
     cloneUrl = repoUrl;
-    repoPath = `/workspace/${repoName}/repo`;
+    repoPath = `${repoBaseDir}/repo`;
   }
 
-  const workDir = `/workspace/${repoName}/${scan.id}`;
+  const workDir = `${repoBaseDir}/${scan.id}`;
   const toolsDir = `${workDir}/tools_results`;
   const agentDir = `${workDir}/agent_files`;
-  const profilePath = `/workspace/${repoName}/repo-profile.md`;
+  const profilePath = `${repoBaseDir}/repo-profile.md`;
+  const scanContextPath = `${repoBaseDir}/scan-context.md`;
 
   let reportLanguage = 'en';
   let aiAnalysisEnabled = true;
@@ -159,6 +203,7 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
 
   return {
     scanId: scan.id,
+    repositoryId: scan.repositoryId ?? 0,
     repoUrl,
     repoName,
     branch: scan.branch || '',
@@ -167,12 +212,14 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
     teamName: '',
     workspaceName,
     workspaceId: scan.workspaceId ?? 0,
+    repoBaseDir,
     workDir,
     repoPath,
     toolsDir,
     agentDir,
     resultsDir: toolsDir,
     profilePath,
+    scanContextPath,
     cloneUrl,
     reportLanguage,
     aiAnalysisEnabled,
@@ -226,17 +273,18 @@ async function executeStep(
 
 // ── Pipeline Runner ──────────────────────────────────────────
 
-export async function runPipeline(scan: Scan): Promise<void> {
-  const ctx = await buildContext(scan);
+export async function runPipeline(scan: Scan): Promise<PipelineRunResult> {
   const scanId = scan.id;
 
-  // Cancellation: an AbortController whose signal we propagate through ctx to
+  // Cancellation: an AbortController whose signal we propagate through to
   // every SSH/HTTP call. A poller checks the DB every 10s and aborts the
   // controller as soon as the user cancels via UI — long-running SSH sessions
-  // (e.g. 30-min Sniper invocations) tear down within seconds instead of
-  // running to natural completion.
+  // (e.g. 30-min Sniper invocations, multi-min Wave 2 categories) tear down
+  // within seconds instead of running to natural completion.
+  // Lifted above the verification fork so verification scans get the same
+  // cancellation behavior — they have their own multi-wave loop that must
+  // also abort on user cancel.
   const cancelController = new AbortController();
-  ctx.cancelSignal = cancelController.signal;
   const cancelPoller = setInterval(async () => {
     try {
       if (await checkCancelled(scanId) && !cancelController.signal.aborted) {
@@ -249,13 +297,15 @@ export async function runPipeline(scan: Scan): Promise<void> {
   }, 10_000);
 
   try {
+    const ctx = await buildContext(scan);
+    ctx.cancelSignal = cancelController.signal;
     return await runPipelineInner(scan, ctx, scanId);
   } finally {
     clearInterval(cancelPoller);
   }
 }
 
-async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string): Promise<void> {
+async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string): Promise<PipelineRunResult> {
 
   // Idempotent: load existing scan_steps (for resume) or create them on first run.
   const existingSteps = await db.select().from(scanSteps).where(eq(scanSteps.scanId, scanId));
@@ -278,6 +328,14 @@ async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string
   }
 
   const isResume = existingSteps.length > 0;
+
+  // Fresh run: drop any stale AI traces left over from a previous attempt with
+  // the same scan id, so the dashboard trace viewer doesn't show duplicated
+  // waves. Resumed scans keep traces of already-completed waves.
+  if (!isResume) {
+    await clearTraces(scanId);
+  }
+
   await logScanEvent(
     scanId, null, 'info',
     isResume ? `Scan resumed for ${ctx.repoName}` : `Scan started for ${ctx.repoName}`,
@@ -317,7 +375,7 @@ async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string
           }
           return executeStep(step, ctx, accumulated, stepRows.map(r => ({ id: r.id, name: r.name })))
             .catch(err => {
-              if (err instanceof ScanPausedError || step.required) throw err;
+              if (err instanceof ScanPausedError || isRequired(step, ctx)) throw err;
               // Non-required step failure: log and return empty output
               return {} as Record<string, unknown>;
             });
@@ -334,7 +392,7 @@ async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string
       for (let i = 0; i < entry.length; i++) {
         if (results[i].status === 'rejected') {
           const reason = (results[i] as PromiseRejectedResult).reason;
-          if (reason instanceof ScanPausedError || entry[i].required) throw reason;
+          if (reason instanceof ScanPausedError || isRequired(entry[i], ctx)) throw reason;
         }
       }
     } else {
@@ -347,11 +405,44 @@ async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string
         const output = await executeStep(entry, ctx, accumulated, stepRows.map(r => ({ id: r.id, name: r.name })));
         accumulated = { ...accumulated, ...output };
       } catch (err) {
-        if (err instanceof ScanPausedError || entry.required) throw err;
+        if (err instanceof ScanPausedError || isRequired(entry, ctx)) throw err;
         // Non-required step failure — continue
       }
     }
   }
 
-  await logScanEvent(scanId, null, 'info', `Scan completed for ${ctx.repoName}`, {}, ctx.repoName, ctx.workspaceId);
+  // Every step succeeded — only now queue developer-profile (feedback)
+  // compilation for contributors assessed in this scan. A failed scan must
+  // not leave partial side effects like half-updated profiles.
+  // assessedContributorIds comes from the COMMIT step's output — assessments
+  // land in the DB only there, after all steps succeeded.
+  const assessedIds = (accumulated.assessedContributorIds as number[] | undefined) ?? [];
+  for (const contribId of new Set(assessedIds)) {
+    queueFeedbackCompilation(contribId);
+  }
+
+  // "Completed with errors": collect the surviving (post-retry) failures the
+  // steps reported in their outputs — security-tools → toolErrors, ai-research
+  // → moduleErrors. The scan still completes (succeeded tools/modules WERE
+  // committed — that's the point), but the worker flags it and persists the
+  // structured details for the UI.
+  const toolErrors = (accumulated.toolErrors as ScanStepError[] | undefined) ?? [];
+  const moduleErrors = (accumulated.moduleErrors as ScanStepError[] | undefined) ?? [];
+  const stepErrors: ScanStepError[] = [...toolErrors, ...moduleErrors];
+
+  if (stepErrors.length > 0) {
+    const summary = stepErrors
+      .map(e => e.kind === 'module' ? `module ${e.name} (${e.error})` : `${e.name} (${e.error})`)
+      .join('; ');
+    await logScanEvent(
+      scanId, null, 'warning',
+      `Scan completed with errors: ${summary}`,
+      { stepErrors },
+      ctx.repoName, ctx.workspaceId,
+    );
+  } else {
+    await logScanEvent(scanId, null, 'info', `Scan completed for ${ctx.repoName}`, {}, ctx.repoName, ctx.workspaceId);
+  }
+
+  return { completedWithErrors: stepErrors.length > 0, stepErrors };
 }

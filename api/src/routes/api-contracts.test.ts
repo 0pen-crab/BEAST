@@ -673,7 +673,7 @@ describe('Contract: GET /tests?scan_id=X', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: '/tests?scan_id=scan-abc',
+      url: '/tests?scan_id=22222222-2222-4222-8222-222222222222',
     });
 
     expect(res.statusCode).toBe(200);

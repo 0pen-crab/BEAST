@@ -90,10 +90,17 @@ export function generateFindingsMarkdown(repoName: string, findings: ExportFindi
 
 const CSV_HEADER = 'ID,Repository,Title,Severity,Tool,Status,File,Line,CWE,CVSS,Secret,Description,Created';
 
-/** Escape a value for CSV (RFC 4180). */
+/**
+ * Escape a value for CSV (RFC 4180) and neutralize spreadsheet formula
+ * injection: cells starting with = + - @ would execute as formulas in
+ * Excel/Sheets, so they get a leading single quote.
+ */
 function csvEscape(value: string | number | null | undefined): string {
   if (value == null) return '';
-  const str = String(value);
+  let str = String(value);
+  if (/^[=+\-@]/.test(str)) {
+    str = `'${str}`;
+  }
   if (str.includes(',') || str.includes('"') || str.includes('\n')) {
     return `"${str.replace(/"/g, '""')}"`;
   }

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Routes, Route } from 'react-router';
 import { renderWithProviders } from '@/test-utils';
 import { OnboardingPage } from './onboarding';
 
@@ -40,15 +41,22 @@ vi.mock('@/lib/workspace', () => ({
 
 const { useWorkspace } = await import('@/lib/workspace');
 
+const mockImportAsync = vi.fn();
+
 vi.mock('@/api/hooks', () => ({
   useConnectSource: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useUploadRepoZip: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
-  useImportFromSource: vi.fn(() => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false })),
+  useImportFromSource: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: (...args: unknown[]) => mockImportAsync(...args),
+    isPending: false,
+  })),
   useSources: vi.fn(() => ({ data: [], isLoading: false })),
   useDeleteSource: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useToolRegistry: vi.fn(() => ({ data: [], isLoading: false })),
   useUpdateWorkspaceTools: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useValidateToken: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useUpdateAiSettings: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 describe('OnboardingPage', () => {
@@ -59,13 +67,14 @@ describe('OnboardingPage', () => {
     expect(screen.getByLabelText(/onboarding.workspaceName/)).toBeInTheDocument();
   });
 
-  it('renders 4-step progress indicator', () => {
+  it('renders 5-step progress indicator', () => {
     renderWithProviders(<OnboardingPage />);
 
     expect(screen.getByText('onboarding.step1')).toBeInTheDocument();
     expect(screen.getByText('onboarding.step2')).toBeInTheDocument();
     expect(screen.getByText('onboarding.step3')).toBeInTheDocument();
     expect(screen.getByText('onboarding.step4')).toBeInTheDocument();
+    expect(screen.getByText('onboarding.step5')).toBeInTheDocument();
   });
 
   it('renders the create workspace button', () => {
@@ -109,16 +118,14 @@ describe('OnboardingPage', () => {
     expect(screen.queryByText('repoPicker.importAll')).not.toBeInTheDocument();
   });
 
-  it('shows tool config step after workspace creation', async () => {
+  it('shows AI analysis step after workspace creation', async () => {
     const user = userEvent.setup();
 
-    // Mock the fetch call for workspace creation
     globalThis.fetch = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ id: 42, name: 'Test Workspace' }),
     });
 
-    // Mock refetchWorkspaces
     const refetchWorkspaces = vi.fn().mockResolvedValue(undefined);
     vi.mocked(useWorkspace).mockReturnValue({
       currentWorkspace: null,
@@ -131,20 +138,160 @@ describe('OnboardingPage', () => {
 
     renderWithProviders(<OnboardingPage />);
 
-    // Fill in workspace name and submit
     const nameInput = screen.getByLabelText(/onboarding.workspaceName/);
     await user.type(nameInput, 'Test Workspace');
     await user.click(screen.getByRole('button', { name: 'onboarding.createWorkspace' }));
 
-    // After creation, step 2 (tool config) should be shown
-    // toolsTitle appears in the header span and the card title
+    // After creation, step 2 (AI Analysis) should be shown
     await waitFor(() => {
-      expect(screen.getAllByText('onboarding.toolsTitle').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText('onboarding.aiAnalysis.title')).toBeInTheDocument();
     });
-    expect(screen.getByText('onboarding.toolsSkipLink')).toBeInTheDocument();
-    expect(screen.getByText('onboarding.continueTools')).toBeInTheDocument();
-    // Integrations panel title should be rendered
-    expect(screen.getByText('onboarding.integrations')).toBeInTheDocument();
+    // Selected preset card visible (default = standard → STANDARD label visible)
+    expect(screen.getByTestId('ai-mode-title')).toHaveTextContent('settings.scanDepth.standard.label');
+    // Three mode dots are rendered
+    expect(screen.getByTestId('ai-dot-quick')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-dot-standard')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-dot-deep')).toBeInTheDocument();
+    // Continue button visible
+    expect(screen.getByRole('button', { name: 'onboarding.aiAnalysis.continue' })).toBeInTheDocument();
+  });
+
+  it('clicking a mode dot updates the selected preset', async () => {
+    const user = userEvent.setup();
+
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ id: 42, name: 'Test Workspace' }),
+    });
+
+    const refetchWorkspaces = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(useWorkspace).mockReturnValue({
+      currentWorkspace: null,
+      workspaces: [],
+      switchWorkspace: vi.fn(),
+      isLoading: false,
+      needsOnboarding: true,
+      refetchWorkspaces,
+    });
+
+    renderWithProviders(<OnboardingPage />);
+    const nameInput = screen.getByLabelText(/onboarding.workspaceName/);
+    await user.type(nameInput, 'Test');
+    await user.click(screen.getByRole('button', { name: 'onboarding.createWorkspace' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ai-dot-quick')).toBeInTheDocument();
+    });
+
+    // Default is standard
+    expect(screen.getByTestId('ai-dot-standard')).toHaveClass('active');
+
+    // Click deep
+    await user.click(screen.getByTestId('ai-dot-deep'));
+    expect(screen.getByTestId('ai-dot-deep')).toHaveClass('active');
+    expect(screen.getByTestId('ai-dot-standard')).not.toHaveClass('active');
+  });
+
+  it('toggling AI off hides chart and shows off state', async () => {
+    const user = userEvent.setup();
+
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ id: 42, name: 'Test Workspace' }),
+    });
+
+    const refetchWorkspaces = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(useWorkspace).mockReturnValue({
+      currentWorkspace: null,
+      workspaces: [],
+      switchWorkspace: vi.fn(),
+      isLoading: false,
+      needsOnboarding: true,
+      refetchWorkspaces,
+    });
+
+    renderWithProviders(<OnboardingPage />);
+    const nameInput = screen.getByLabelText(/onboarding.workspaceName/);
+    await user.type(nameInput, 'Test');
+    await user.click(screen.getByRole('button', { name: 'onboarding.createWorkspace' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ai-dot-quick')).toBeInTheDocument();
+    });
+
+    // Click toggle (aria-label = title)
+    const toggle = screen.getByRole('button', { name: 'onboarding.aiAnalysis.title' });
+    await user.click(toggle);
+
+    // Chart dots should be gone, off label visible
+    expect(screen.queryByTestId('ai-dot-quick')).not.toBeInTheDocument();
+    expect(screen.getByText('onboarding.aiAnalysis.off.label')).toBeInTheDocument();
+  });
+
+  describe('import step (step 5)', () => {
+    const source = { id: 1, provider: 'github', orgName: 'acme', baseUrl: 'https://github.com' };
+    const discoveredRepos = [
+      { slug: 'repo-a', fullName: 'acme/repo-a', cloneUrl: 'https://github.com/acme/repo-a.git', description: null, imported: false },
+      { slug: 'repo-b', fullName: 'acme/repo-b', cloneUrl: 'https://github.com/acme/repo-b.git', description: null, imported: false },
+    ];
+
+    async function renderImportStep() {
+      localStorage.clear();
+      const { useSources } = await import('@/api/hooks');
+      vi.mocked(useSources).mockImplementation(() => (
+        { data: [source], isLoading: false } as unknown as ReturnType<typeof useSources>
+      ));
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(discoveredRepos),
+      });
+
+      renderWithProviders(
+        <Routes>
+          <Route path="/onboarding/*" element={<OnboardingPage />} />
+        </Routes>,
+        { initialEntries: ['/onboarding/42/5'] },
+      );
+
+      // Wait for repo discovery to finish and the picker to appear
+      await screen.findByText('repoPicker.selectAll');
+      const { useSources: restore } = await import('@/api/hooks');
+      return restore;
+    }
+
+    it('shows import failures on the summary and does not inflate the count', async () => {
+      const user = userEvent.setup();
+      mockImportAsync.mockRejectedValue(new Error('boom'));
+      const useSources = await renderImportStep();
+
+      await user.click(screen.getByText('repoPicker.selectAll'));
+      await user.click(screen.getByRole('button', { name: 'onboarding.importSelected' }));
+
+      // Summary step: failure is surfaced, not silently swallowed
+      expect(await screen.findByText('onboarding.importFailedSources')).toBeInTheDocument();
+      // Count reflects zero imported repos — not the floored per-source count
+      expect(screen.getByText('onboarding.importSuccess')).toBeInTheDocument();
+
+      vi.mocked(useSources).mockImplementation(() => (
+        { data: [], isLoading: false } as unknown as ReturnType<typeof useSources>
+      ));
+    });
+
+    it('shows no failure message when all imports succeed', async () => {
+      const user = userEvent.setup();
+      mockImportAsync.mockResolvedValue({ imported: 2 });
+      const useSources = await renderImportStep();
+
+      await user.click(screen.getByText('repoPicker.selectAll'));
+      await user.click(screen.getByRole('button', { name: 'onboarding.importSelected' }));
+
+      expect(await screen.findByText('onboarding.importSuccess')).toBeInTheDocument();
+      expect(screen.queryByText('onboarding.importFailedSources')).not.toBeInTheDocument();
+
+      vi.mocked(useSources).mockImplementation(() => (
+        { data: [], isLoading: false } as unknown as ReturnType<typeof useSources>
+      ));
+    });
   });
 
   it('returns early when not authenticated', () => {

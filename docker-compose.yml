@@ -61,8 +61,10 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
       BEAST_SCANNER_MODE: ${BEAST_SCANNER_MODE:-t12}
+      PROMPTS_DIR: /prompts
     volumes:
       - ./keys:/app/keys:ro
+      - ./claude-container/prompts:/prompts:ro
       - claude_workspaces:/workspace
       - scan_artifacts:/data/scan-artifacts
 

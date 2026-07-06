@@ -316,7 +316,81 @@ describe('WorkspaceProvider + useWorkspace', () => {
     });
   });
 
-  // 7. useWorkspace outside provider throws
+  // 7. Fetch failure is NOT treated as an empty workspace list
+  describe('fetch failure', () => {
+    function failResponse() {
+      return Promise.resolve({ ok: false });
+    }
+
+    it('sets isError and does not set needsOnboarding', async () => {
+      mockFetch.mockReturnValue(failResponse());
+
+      const { result } = renderHook(() => useWorkspace(), {
+        wrapper: makeWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true);
+      });
+
+      expect(result.current.needsOnboarding).toBe(false);
+      expect(result.current.workspaces).toEqual([]);
+    });
+
+    it('does not clear the stored workspace selection on a transient failure', async () => {
+      localStorage.setItem('beast_workspace_id', '10');
+      mockFetch.mockReturnValue(failResponse());
+
+      const { result } = renderHook(() => useWorkspace(), {
+        wrapper: makeWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true);
+      });
+
+      expect(localStorage.getItem('beast_workspace_id')).toBe('10');
+    });
+
+    it('clears isError and recovers after a successful refetch', async () => {
+      mockFetch.mockReturnValueOnce(failResponse());
+
+      const { result } = renderHook(() => useWorkspace(), {
+        wrapper: makeWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true);
+      });
+
+      mockFetch.mockReturnValueOnce(okResponse([makeWorkspace({ id: 10 })]));
+
+      await act(async () => {
+        result.current.refetchWorkspaces();
+      });
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(false);
+      });
+      expect(result.current.currentWorkspace!.id).toBe(10);
+    });
+
+    it('is false when the fetch succeeds', async () => {
+      mockFetch.mockReturnValue(okResponse([makeWorkspace()]));
+
+      const { result } = renderHook(() => useWorkspace(), {
+        wrapper: makeWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.isError).toBe(false);
+    });
+  });
+
+  // 8. useWorkspace outside provider throws
   describe('useWorkspace outside provider', () => {
     it('throws an error when used outside WorkspaceProvider', () => {
       // Suppress React error boundary console noise

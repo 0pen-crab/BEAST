@@ -50,13 +50,6 @@ describe('authHook', () => {
     expect(mockFindSession).not.toHaveBeenCalled();
   });
 
-  it('skips webhook endpoints', async () => {
-    const req = mockRequest({ url: '/api/webhooks/bitbucket', method: 'POST' });
-    const rep = mockReply();
-    await authHook(req, rep);
-    expect(mockFindSession).not.toHaveBeenCalled();
-  });
-
   it('returns 401 when no token', async () => {
     const req = mockRequest();
     const rep = mockReply();

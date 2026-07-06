@@ -1,22 +1,23 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useParams, Link, useNavigate } from 'react-router';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { useRepository, useRepositoryTests, useFindingCounts, useFindings, useDeleteRepository, useRepoReports, useScanArtifacts, useTriggerScan, useSource } from '@/api/hooks';
+import { useRepository, useRepositoryTests, useFindingCounts, useFindingCountsByTool, useFindings, useDeleteRepository, useRepoReports, useScanArtifacts, useTriggerScan, useSource, useLatestRepoScan } from '@/api/hooks';
 import { ProviderIcon } from '@/lib/provider-icons';
 import { sourceDisplayLabel } from '@/lib/provider-display';
 import { SeverityBadge } from '@/components/severity-badge';
 import { StatusBadge } from '@/components/status-badge';
 import { CardSkeleton, Skeleton, TableSkeleton } from '@/components/skeleton';
-import { EmptyState } from '@/components/empty-state';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { MarkdownContent } from '@/components/markdown-content';
 import { TOOL_CATEGORIES, resolveToolFromTest, getToolsByCategory, type ToolInfo } from '@/lib/tool-mapping';
 import { getToolIcon } from '@/lib/tool-icons';
 import { BreadcrumbNav } from '@/components/breadcrumb-nav';
+import { ExportButton } from '@/components/export-button';
+import { AiTraceViewer } from '@/components/ai-trace-viewer';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/api/client';
-import { formatDate, formatDateShort } from '@/lib/format';
+import { formatDate } from '@/lib/format';
 import type { Test, Severity } from '@/api/types';
 
 async function downloadArtifact(repoId: number, toolKey: string, fileName: string) {
@@ -63,12 +64,41 @@ export function RepoPage() {
   const { data: repo } = useRepository(productId);
   const { data: allTests, isLoading } = useRepositoryTests(productId);
   const { data: counts } = useFindingCounts({ repositoryId: productId });
+  const { data: toolCounts } = useFindingCountsByTool([productId]);
   const { data: artifactsData } = useScanArtifacts(productId);
+
+  // Live count of OPEN findings per tool (excludes risk_accepted / false_positive /
+  // duplicate). The per-tool number on this page reflects open findings only, and
+  // updates as triage changes statuses — unlike the static tests.findings_count.
+  const openByTool = new Map<string, number>();
+  toolCounts?.forEach((tc) => openByTool.set(tc.tool, tc.active));
   const { data: source } = useSource(repo?.sourceId ?? 0);
+  // Latest scan for this repo — drives the "last scan completed with errors" notice.
+  const { data: latestScan } = useLatestRepoScan(productId);
 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  // Active tab lives in the URL (?tab=ai-trace) so refresh / shared links
+  // restore it; the default (Overview) keeps the URL clean.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab: 'overview' | 'ai-trace' = searchParams.get('tab') === 'ai-trace' ? 'ai-trace' : 'overview';
+  const setActiveTab = (tab: 'overview' | 'ai-trace') => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'overview') next.delete('tab');
+      else next.set('tab', tab);
+      return next;
+    }, { replace: true });
+  };
   const deleteRepository = useDeleteRepository();
   const triggerScan = useTriggerScan();
+
+  // Close the delete confirmation on Escape (same pattern as ReportReader).
+  useEffect(() => {
+    if (!showDeleteDialog) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowDeleteDialog(false); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [showDeleteDialog]);
 
   // Group tests by tool
   const toolTests = new Map<string, Test[]>();
@@ -83,7 +113,7 @@ export function RepoPage() {
 
   const handleDelete = () => {
     deleteRepository.mutate(productId, {
-      onSuccess: () => navigate('/teams'),
+      onSuccess: () => navigate('/repos'),
     });
   };
 
@@ -113,21 +143,60 @@ export function RepoPage() {
               </div>
             )}
           </div>
-          <div className="beast-flex beast-flex-gap-sm">
-            <button
-              onClick={() => triggerScan.mutate({ repositoryId: productId })}
-              disabled={triggerScan.isPending || repo?.status === 'analyzing'}
-              className="beast-btn beast-btn-primary beast-btn-sm"
-            >
-              {triggerScan.isPending ? '...' : t('repos.scan')}
-            </button>
-            <button
-              onClick={() => setShowDeleteDialog(true)}
-              className="beast-btn beast-btn-danger beast-btn-sm"
-            >
-              {t('common.delete')}
-            </button>
+          <div className="beast-repo-header-actions">
+            <div className="beast-flex beast-flex-gap-sm">
+              {repo && (
+                <ExportButton
+                  scope={{ type: 'repo', repositoryId: productId, repositoryName: repo.name }}
+                />
+              )}
+              <button
+                onClick={() => triggerScan.mutate({ repositoryId: productId })}
+                disabled={triggerScan.isPending || repo?.status === 'queued' || repo?.status === 'analyzing'}
+                className="beast-btn beast-btn-primary beast-btn-sm"
+              >
+                {triggerScan.isPending ? '...' : t('repos.scan')}
+              </button>
+              <button
+                onClick={() => setShowDeleteDialog(true)}
+                className="beast-btn beast-btn-danger beast-btn-sm"
+              >
+                {t('common.delete')}
+              </button>
+            </div>
           </div>
+        </div>
+
+        {/* Last-scan-completed-with-errors notice (amber, links to the scan detail) */}
+        {latestScan?.status === 'completed' && latestScan.completedWithErrors && (
+          <div
+            className="beast-card beast-flex beast-flex-gap-sm beast-stat-accent beast-stat-accent-amber"
+            data-testid="repo-scan-errors-notice"
+          >
+            <span className="status-pill beast-flex-center beast-status-icon-sm status-paused">⚠</span>
+            <span>{t('repo.lastScanCompletedWithErrors')}</span>
+            <Link to={`/scans?scan=${latestScan.id}`} className="beast-link">
+              {t('repo.openScan')}
+            </Link>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="beast-tab-bar beast-tab-bar-spaced">
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={cn('beast-tab', activeTab === 'overview' && 'beast-tab-active')}
+          >
+            {t('repo.overview')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('ai-trace')}
+            className={cn('beast-tab', activeTab === 'ai-trace' && 'beast-tab-active')}
+          >
+            {t('repo.aiTraceTab')}
+          </button>
         </div>
 
         {/* Delete confirmation */}
@@ -157,21 +226,23 @@ export function RepoPage() {
           </div>
         )}
 
-        {/* Summary stats */}
-        {counts && (
-          <div className="beast-grid-6">
-            {(['Critical', 'High', 'Medium', 'Low', 'Info'] as Severity[]).map((sev) => (
-              <div key={sev} className={`beast-metric beast-metric-${sev.toLowerCase()}`}>
-                <p className="beast-metric-label">{sev}</p>
-                <p className="beast-metric-value beast-metric-value-sm">{counts[sev]}</p>
+        {activeTab === 'overview' && (
+          <>
+            {/* Summary stats */}
+            {counts && (
+              <div className="beast-grid-6">
+                {(['Critical', 'High', 'Medium', 'Low', 'Info'] as Severity[]).map((sev) => (
+                  <div key={sev} className={`beast-metric beast-metric-${sev.toLowerCase()}`}>
+                    <p className="beast-metric-label">{t(`severity.${sev}`)}</p>
+                    <p className="beast-metric-value beast-metric-value-sm">{counts[sev]}</p>
+                  </div>
+                ))}
+                <div className="beast-metric beast-metric-accepted">
+                  <p className="beast-metric-label">{t('repo.triagedByAi')}</p>
+                  <p className="beast-metric-value beast-metric-value-sm beast-score-good-text">{counts.riskAccepted}</p>
+                </div>
               </div>
-            ))}
-            <div className="beast-metric beast-metric-accepted">
-              <p className="beast-metric-label">{t('repo.triagedByAi')}</p>
-              <p className="beast-metric-value beast-metric-value-sm beast-score-good-text">{counts.riskAccepted}</p>
-            </div>
-          </div>
-        )}
+            )}
 
             {/* Reports (Profile + Audit) */}
             <RepoReports repositoryId={productId} repoName={repo?.name} />
@@ -193,6 +264,7 @@ export function RepoPage() {
                         category={cat}
                         tools={catTools}
                         toolTests={toolTests}
+                        openByTool={openByTool}
                         productId={productId}
                         artifactsData={artifactsData}
                       />
@@ -204,6 +276,12 @@ export function RepoPage() {
 
             {/* All findings for this repo */}
             <RepoFindings productId={productId} />
+          </>
+        )}
+
+        {activeTab === 'ai-trace' && (
+          <AiTraceViewer repositoryId={productId} />
+        )}
       </div>
     </ErrorBoundary>
   );
@@ -213,12 +291,14 @@ function CategoryCard({
   category,
   tools,
   toolTests,
+  openByTool,
   productId,
   artifactsData,
 }: {
   category: import('@/lib/tool-mapping').CategoryInfo;
   tools: ToolInfo[];
   toolTests: Map<string, Test[]>;
+  openByTool: Map<string, number>;
   productId: number;
   artifactsData: { artifacts: { tool: string; fileName: string }[] } | undefined;
 }) {
@@ -227,10 +307,8 @@ function CategoryCard({
   const toolsWithData = tools.filter((tool) => (toolTests.get(tool.key) ?? []).length > 0);
   const hasData = toolsWithData.length > 0;
 
-  const totalFindings = toolsWithData.reduce((sum, tool) => {
-    const tests = toolTests.get(tool.key) ?? [];
-    return sum + (tests[0]?.findingsCount ?? 0);
-  }, 0);
+  // Per-tool number = OPEN findings (live), summed for the category total.
+  const totalFindings = toolsWithData.reduce((sum, tool) => sum + (openByTool.get(tool.key) ?? 0), 0);
 
   return (
     <div className={cn(
@@ -272,12 +350,12 @@ function CategoryCard({
                       ? <img src={icon} alt="" className="beast-tool-row-icon" />
                       : <span className={cn('beast-severity-dot', tool.bgClass)} />
                     }
-                    <Link to={`/findings?tool=${tool.key}`} className="beast-link-red beast-label">
+                    <Link to={`/findings?tool=${tool.key}&repository=${productId}&status=open`} className="beast-link-red beast-label">
                       {tool.displayName}
                     </Link>
                   </div>
                   <div className="beast-tool-row-right">
-                    <span className="beast-tool-row-count">{latestTest?.findingsCount ?? 0}</span>
+                    <span className="beast-tool-row-count">{openByTool.get(tool.key) ?? 0}</span>
                     <span className="beast-tool-row-date">{formatDate(latestTest.createdAt)}</span>
                     {artifact ? (
                       <button
@@ -365,7 +443,7 @@ function RepoFindings({ productId }: { productId: number }) {
                     ) : finding.contributorName ?? '\u2014'}
                   </td>
                   <td><StatusBadge finding={finding} /></td>
-                  <td className="beast-td-date">{formatDateShort(finding.createdAt)}</td>
+                  <td className="beast-td-date">{formatDate(finding.createdAt)}</td>
                 </tr>
                 );
               })}
@@ -443,7 +521,7 @@ function ReportReader({ title, icon, content, updatedAt, fileName, onClose }: {
             <div className="beast-reader-topbar-icon">{icon}</div>
             <span className="beast-reader-topbar-title">{title}</span>
             <span className="beast-reader-topbar-meta">
-              {t('repo.generated')} {formatDate(updatedAt)} &middot; {estimateReadingTime(content)} min read
+              {t('repo.generated')} {formatDate(updatedAt)} &middot; {t('repo.minRead', { minutes: estimateReadingTime(content) })}
             </span>
           </div>
           <div className="beast-reader-actions">
@@ -530,8 +608,17 @@ function RepoReports({ repositoryId, repoName }: { repositoryId: number; repoNam
           return (
             <div
               key={card.key}
+              role="button"
+              tabIndex={card.available ? 0 : -1}
+              aria-disabled={!card.available}
               className={cn('beast-report-card', !card.available && 'beast-report-card-disabled')}
               onClick={() => card.available && setReader(card.key)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (card.available) setReader(card.key);
+                }
+              }}
             >
               <div className="beast-report-card-top">
                 <div className="beast-report-card-icon">{card.icon}</div>
@@ -548,11 +635,11 @@ function RepoReports({ repositoryId, repoName }: { repositoryId: number; repoNam
                   </span>
                   <span className="beast-report-card-meta-item">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
-                    {estimateReadingTime(data.content)} min read
+                    {t('repo.minRead', { minutes: estimateReadingTime(data.content) })}
                   </span>
                   <span className="beast-report-card-meta-item">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6" /></svg>
-                    {Math.ceil(data.content.trim().split(/\s+/).length / 100) * 100}+ words
+                    {t('repo.wordCount', { words: Math.ceil(data.content.trim().split(/\s+/).length / 100) * 100 })}
                   </span>
                 </div>
               )}

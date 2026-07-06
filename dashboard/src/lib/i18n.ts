@@ -13,6 +13,8 @@ i18n.use(initReactI18next).init({
   lng: localStorage.getItem(LANG_KEY) || 'en',
   fallbackLng: 'en',
   interpolation: { escapeValue: false },
+  // No Locize promo line in the production console
+  showSupportNotice: false,
 });
 
 export function setLanguage(lang: string) {

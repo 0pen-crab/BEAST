@@ -5,6 +5,10 @@ import {
   validatorCompiler,
 } from 'fastify-type-provider-zod';
 import { sourceRoutes } from './sources.ts';
+import multipart from '@fastify/multipart';
+import { mkdtempSync, existsSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 // Mock auth middleware so route guards are no-ops in unit tests
 vi.mock('../middleware/auth.ts', () => ({
@@ -69,7 +73,7 @@ import {
   createWorkspaceEvent,
 } from '../orchestrator/entities.ts';
 import { getSecret } from '../lib/vault.ts';
-import { parseGitUrl, createClient } from '../orchestrator/git-providers.ts';
+import { parseGitUrl, createClient, BitBucketClient } from '../orchestrator/git-providers.ts';
 import { db } from '../db/index.ts';
 
 describe('Sources API', () => {
@@ -79,6 +83,7 @@ describe('Sources API', () => {
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
+    app.register(multipart);
     app.register(sourceRoutes, { prefix: '/api' });
     await app.ready();
   });
@@ -165,6 +170,54 @@ describe('Sources API', () => {
 
       expect(res.statusCode).toBe(201);
       expect(res.json().source.id).toBe(2);
+    });
+
+    it('reports a Bitbucket network/TLS failure as a connection error (502), not "invalid token"', async () => {
+      // The user hit this: a corporate TLS-inspecting proxy made token validation throw,
+      // and the UI said "Invalid token" even though the token was fine.
+      mockDbSelectEmpty();
+      (parseGitUrl as any).mockReturnValue(null); // provider+org_name path
+      (createClient as any).mockReturnValue({
+        detectOrgType: vi.fn().mockResolvedValue('workspace'),
+        listRepos: vi.fn().mockResolvedValue([]),
+      });
+      (BitBucketClient as any).mockImplementation(function (this: any) {
+        this.validateToken = vi.fn().mockResolvedValue({ valid: false, username: null, reason: 'network', detail: 'SELF_SIGNED_CERT_IN_CHAIN' });
+        this.detectScopes = vi.fn().mockResolvedValue([]);
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/sources',
+        payload: { workspace_id: 1, provider: 'bitbucket', org_name: 'enaminedev', access_token: 'tok', username: 'me@enamine.net' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json().reason).toBe('network');
+      expect(res.json().error.toLowerCase()).not.toContain('invalid');
+      expect(res.json().error.toLowerCase()).toContain('network');
+    });
+
+    it('still reports a genuinely bad Bitbucket token as invalid (400)', async () => {
+      mockDbSelectEmpty();
+      (parseGitUrl as any).mockReturnValue(null);
+      (createClient as any).mockReturnValue({
+        detectOrgType: vi.fn().mockResolvedValue('workspace'),
+        listRepos: vi.fn().mockResolvedValue([]),
+      });
+      (BitBucketClient as any).mockImplementation(function (this: any) {
+        this.validateToken = vi.fn().mockResolvedValue({ valid: false, username: null, reason: 'invalid_token' });
+        this.detectScopes = vi.fn().mockResolvedValue([]);
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/sources',
+        payload: { workspace_id: 1, provider: 'bitbucket', org_name: 'enaminedev', access_token: 'bad', username: 'me@enamine.net' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.toLowerCase()).toContain('invalid');
     });
 
     it('should pass username to createClient for GitHub repo discovery', async () => {
@@ -585,6 +638,154 @@ describe('Sources API', () => {
       expect(mockInsertValues).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'my-repo' }),
       );
+    });
+  });
+
+  describe('POST /api/repos/upload', () => {
+    let uploadsBase: string;
+
+    beforeAll(() => {
+      uploadsBase = mkdtempSync(join(tmpdir(), 'beast-upload-test-'));
+      process.env.UPLOADS_PATH = uploadsBase;
+    });
+
+    afterAll(() => {
+      delete process.env.UPLOADS_PATH;
+      rmSync(uploadsBase, { recursive: true, force: true });
+    });
+
+    /** Minimal valid POSIX tar (ustar) built in-process — no shell involved. */
+    function tarEntry(name: string, content: Buffer): Buffer {
+      const header = Buffer.alloc(512);
+      header.write(name, 0, 100, 'utf8');
+      header.write('0000644\0', 100, 8);
+      header.write('0000000\0', 108, 8);
+      header.write('0000000\0', 116, 8);
+      header.write(content.length.toString(8).padStart(11, '0') + '\0', 124, 12);
+      header.write('00000000000\0', 136, 12);
+      header.write('        ', 148, 8); // checksum computed over spaces
+      header.write('0', 156, 1);
+      header.write('ustar', 257, 5);
+      header[262] = 0;
+      header.write('00', 263, 2);
+      let sum = 0;
+      for (const byte of header) sum += byte;
+      header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8);
+      const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512);
+      content.copy(padded);
+      return Buffer.concat([header, padded]);
+    }
+
+    function makeTar(files: Array<[string, string]>): Buffer {
+      const entries = files.map(([n, c]) => tarEntry(n, Buffer.from(c)));
+      return Buffer.concat([...entries, Buffer.alloc(1024)]);
+    }
+
+    function buildMultipart(filename: string, content: Buffer) {
+      const boundary = 'X-TEST-BOUNDARY-7f3a';
+      const head = Buffer.from(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
+        `Content-Type: application/octet-stream\r\n\r\n`,
+      );
+      const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+      return {
+        payload: Buffer.concat([head, content, tail]),
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      };
+    }
+
+    function mockUploadDbInserts() {
+      const returningSource = vi.fn().mockResolvedValue([
+        { id: 55, workspaceId: 1, provider: 'local', baseUrl: 'local://' },
+      ]);
+      const returningRepo = vi.fn().mockResolvedValue([{ id: 100, name: 'repo-x' }]);
+      (db.insert as any).mockImplementation(() => ({
+        values: vi.fn().mockReturnValue({
+          returning: returningSource,
+          onConflictDoUpdate: vi.fn().mockReturnValue({ returning: returningRepo }),
+        }),
+      }));
+      (ensureTeam as any).mockResolvedValue({ id: 10 });
+      (createWorkspaceEvent as any).mockResolvedValue(undefined);
+    }
+
+    it('rejects a disallowed extension with 400', async () => {
+      const { payload, headers } = buildMultipart('evil.sh', Buffer.from('#!/bin/sh\n'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/repos/upload?workspace_id=1',
+        payload,
+        headers,
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('Unsupported archive format');
+    });
+
+    it('rejects a traversal filename whose basename has a disallowed extension', async () => {
+      const { payload, headers } = buildMultipart('../../../etc/cron.d/evil', Buffer.from('x'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/repos/upload?workspace_id=1',
+        payload,
+        headers,
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('neutralizes path traversal in the filename via basename()', async () => {
+      mockUploadDbInserts();
+      const tar = makeTar([['repo-x/file.txt', 'hello\n']]);
+      // Hostile client tries to plant the archive OUTSIDE the uploads dir
+      const { payload, headers } = buildMultipart('../../escaped.tar', tar);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/repos/upload?workspace_id=1',
+        payload,
+        headers,
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(res.json().count).toBe(1);
+      // Nothing may be written above the uploads base
+      expect(existsSync(join(uploadsBase, '..', 'escaped.tar'))).toBe(false);
+    });
+
+    it('does not execute shell metacharacters embedded in the filename', async () => {
+      mockUploadDbInserts();
+      const canary = join(uploadsBase, 'pwned-canary');
+      const tar = makeTar([['repo-x/file.txt', 'hello\n']]);
+      // With the old execSync template string, $(...) ran inside double quotes.
+      const { payload, headers } = buildMultipart(`pwn$(touch ${canary}).tar`, tar);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/repos/upload?workspace_id=1',
+        payload,
+        headers,
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(existsSync(canary)).toBe(false);
+    });
+
+    it('returns 400 when workspace_id is missing', async () => {
+      const { payload, headers } = buildMultipart('repo.tar', makeTar([['a/b.txt', 'x']]));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/repos/upload',
+        payload,
+        headers,
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('workspace_id');
     });
   });
 });

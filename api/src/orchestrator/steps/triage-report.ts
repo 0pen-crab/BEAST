@@ -1,39 +1,61 @@
 import fs from 'node:fs/promises';
-import { eq, and, asc, desc, getTableColumns, sql } from 'drizzle-orm';
-import { sshExec, sshWriteFile, getClaudeRunnerConfig, parseStreamJsonResult, extractAiUsage, SSHTimeoutError, type SSHExecOptions } from '../ssh.ts';
-import { checkRateLimitAndPause } from '../rate-limit.ts';
+import { sql, and, eq, desc, inArray } from 'drizzle-orm';
+import { sshWriteFile, getClaudeRunnerConfig, extractAiUsage, SSHTimeoutError } from '../ssh.ts';
+import { runClaudeWithTrace } from '../ai-trace.ts';
 import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS } from '../pipeline-types.ts';
-import type { PipelineContext, StepInput, TriageReportOutput, ResultFile, AiUsage } from '../pipeline-types.ts';
+import type {
+  PipelineContext, StepInput, TriageReportOutput, ResultFile, AiUsage,
+  PreparedFinding, TriageDecisionPlan,
+} from '../pipeline-types.ts';
 import { getLanguageInstruction } from '../prompt-languages.ts';
 import { resolveModelFlag } from '../ai-models.ts';
-import { riskAcceptFinding, falsePositiveFinding, duplicateFinding, addFindingNote, addScanFile } from '../entities.ts';
-import { findOrCreateContributor } from '../../routes/contributors.ts';
-import { storeReports, ingestContributorStats } from './finalize.ts';
+import { addScanFile } from '../entities.ts';
+import { storeReports } from './import-results.ts';
 import { db } from '../../db/index.ts';
-import { findings, tests, contributorAssessments } from '../../db/schema.ts';
+import { scanEvents, findings } from '../../db/schema.ts';
 
-export interface TriageDecision {
-  finding_id: number;
-  action: 'risk_accept' | 'false_positive' | 'duplicate' | 'keep';
-  reason: string;
-  duplicate_of?: number;
-  contributor_email?: string;
-  contributor_name?: string;
-}
+// Decisions are keyed by PreparedFinding.tempId — DB finding ids don't exist
+// yet (the commit step writes findings only after every step succeeded).
+export type TriageDecision = TriageDecisionPlan;
 
 export interface TriageOutput {
   decisions: TriageDecision[];
   reportContent: string;
-  profileContent: string;
   devAssessments: unknown[];
+  /** Human-readable descriptions of missing/corrupt AI output files. Each is also recorded as an error scan event. */
+  anomalies: string[];
   aiUsage?: AiUsage;
 }
 
-async function readFileOrDefault(path: string, fallback: string): Promise<string> {
+/** Returns null when the file is missing/unreadable — callers must decide whether that is an anomaly. */
+async function readFileOrNull(path: string): Promise<string | null> {
   try {
     return await fs.readFile(path, 'utf8');
   } catch {
-    return fallback;
+    return null;
+  }
+}
+
+// Local scan-event helper (mirrors import-results; avoids circular dep with pipeline.ts)
+async function logTriageScanEvent(
+  ctx: PipelineContext,
+  level: 'info' | 'warning' | 'error',
+  message: string,
+  details?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await db.insert(scanEvents).values({
+      scanId: ctx.scanId,
+      stepName: 'triage-report',
+      level,
+      source: 'triage-report',
+      message,
+      details: details ?? {},
+      repoName: ctx.repoName ?? null,
+      workspaceId: ctx.workspaceId ?? null,
+    });
+  } catch (err) {
+    console.error(`[triage] Failed to log scan event for ${ctx.scanId}:`, err instanceof Error ? err.message : err);
   }
 }
 
@@ -54,22 +76,81 @@ export async function fetchBaselineAssessments(repoName: string) {
   }
 }
 
+// ── Semantic cross-scan matching for AI findings ────────────────────
+// AI-generated findings (tool='beast') can NEVER match across scans by
+// fingerprint: titles are rephrased every run, lines shift, vulnId is absent.
+// Instead, the triage agent semantically matches this scan's prepared AI
+// findings against the repo's EXISTING AI findings and returns `same_as`
+// decisions; the commit step then UPDATES those rows instead of inserting
+// duplicates. Deterministic tools keep their fingerprint flow untouched.
+
+/** Existing AI finding offered to the triage agent as a semantic-match target. */
+export interface SemanticMatchCandidate {
+  id: number;
+  title: string;
+  filePath: string | null;
+  severity: string;
+  description: string | null;
+}
+
+/** Newest-first cap on candidates sent to the agent (prompt size guard). */
+export const SEMANTIC_CANDIDATE_LIMIT = 200;
+
+/** Statuses whose rows must keep matching across scans: open ones get
+ *  refreshed, manually dismissed ones (risk_accepted/false_positive) must be
+ *  recognized so re-scans don't resurrect them as new duplicates. */
+const SEMANTIC_CANDIDATE_STATUSES = ['open', 'risk_accepted', 'false_positive'];
+
+/**
+ * READ-ONLY: fetch the repo's existing AI ('beast') findings eligible as
+ * semantic-match targets. Failures degrade to "no candidates" (triage then
+ * simply treats everything as new — the pre-existing behavior).
+ */
+export async function fetchSemanticMatchCandidates(
+  ctx: PipelineContext,
+  repositoryId: number | undefined,
+): Promise<SemanticMatchCandidate[]> {
+  if (!repositoryId) return [];
+  try {
+    const rows = await db.select({
+      id: findings.id,
+      title: findings.title,
+      filePath: findings.filePath,
+      severity: findings.severity,
+      description: findings.description,
+    })
+      .from(findings)
+      .where(and(
+        eq(findings.repositoryId, repositoryId),
+        eq(findings.tool, 'beast'),
+        inArray(findings.status, SEMANTIC_CANDIDATE_STATUSES),
+      ))
+      .orderBy(desc(findings.id))
+      .limit(SEMANTIC_CANDIDATE_LIMIT + 1); // +1 to detect truncation
+    if (!Array.isArray(rows)) return [];
+    if (rows.length > SEMANTIC_CANDIDATE_LIMIT) {
+      const message = `Semantic-match candidates truncated to the ${SEMANTIC_CANDIDATE_LIMIT} newest AI findings — older open AI findings will not be matched this scan`;
+      console.warn(`[triage] ${message}`);
+      await logTriageScanEvent(ctx, 'warning', message, { limit: SEMANTIC_CANDIDATE_LIMIT });
+      return rows.slice(0, SEMANTIC_CANDIDATE_LIMIT);
+    }
+    return rows;
+  } catch (err) {
+    console.error('[triage] Failed to fetch semantic-match candidates:', err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
 export async function prepareTriageInput(
   ctx: PipelineContext,
-  repositoryId: number,
+  preparedFindings: PreparedFinding[],
   resultFiles: ResultFile[],
   emailAliases?: Record<string, string[]>,
+  existingAiFindings?: SemanticMatchCandidate[],
 ): Promise<string | null> {
-  // Fetch active findings from BEAST DB
-  const allFindings = await db.select({
-    ...getTableColumns(findings),
-    testTool: tests.tool,
-  })
-    .from(findings)
-    .innerJoin(tests, eq(tests.id, findings.testId))
-    .where(and(eq(findings.repositoryId, repositoryId), eq(findings.status, 'open')))
-    .orderBy(asc(findings.id));
-  if (allFindings.length === 0) return null;
+  // Triage operates on the PREPARED plan, not the DB — nothing has been
+  // committed yet. Findings are keyed by their temp ids.
+  if (preparedFindings.length === 0) return null;
 
   // Parse SARIF confidence and trufflehog metadata from result files
   const sarifConfidence: Record<string, string> = {};
@@ -112,11 +193,11 @@ export async function prepareTriageInput(
   }
 
   // Format findings for triage agent
-  const triageFindings = allFindings.map((f) => {
-    const tool = f.tool || f.testTool || 'unknown';
+  const triageFindings = preparedFindings.map((f) => {
+    const tool = f.tool || 'unknown';
     const ruleId = f.vulnIdFromTool || '';
     const entry: Record<string, unknown> = {
-      id: f.id,
+      id: f.tempId,
       title: f.title,
       severity: f.severity,
       description: (f.description || '').slice(0, 500),
@@ -149,7 +230,7 @@ export async function prepareTriageInput(
   const triageInput: Record<string, unknown> = {
     repo_name: ctx.repoName,
     repo_path: ctx.repoPath,
-    profile_path: ctx.profilePath,
+    scan_context_path: ctx.scanContextPath,
     results_dir: ctx.resultsDir,
     findings: triageFindings,
     baseline_assessments: baselineAssessments.map((a: any) => ({
@@ -168,6 +249,18 @@ export async function prepareTriageInput(
     triageInput.email_aliases = emailAliases;
   }
 
+  // Existing AI findings from previous scans — semantic-match targets for
+  // this scan's 'beast' findings (compact: keep the prompt small).
+  if (existingAiFindings && existingAiFindings.length > 0) {
+    triageInput.existing_ai_findings = existingAiFindings.map((c) => ({
+      id: c.id,
+      title: c.title,
+      file_path: c.filePath ?? '',
+      severity: c.severity,
+      description: (c.description ?? '').slice(0, 300),
+    }));
+  }
+
   return Buffer.from(JSON.stringify(triageInput)).toString('base64');
 }
 
@@ -180,7 +273,7 @@ export async function runTriageAndReport(
   // Write triage input if we have findings
   if (findingsB64) {
     const triageInputPath = `${agentDir}/triage-input.json`;
-    await sshWriteFile(getClaudeRunnerConfig(), triageInputPath, Buffer.from(findingsB64, 'base64'));
+    await sshWriteFile(getClaudeRunnerConfig(), triageInputPath, Buffer.from(findingsB64, 'base64'), ctx.cancelSignal);
   }
 
   const triageArg = findingsB64 ? `${agentDir}/triage-input.json` : 'NONE';
@@ -193,7 +286,7 @@ export async function runTriageAndReport(
     '',
     `Input:`,
     `- Findings: ${triageArg}`,
-    `- Profile: ${ctx.profilePath}`,
+    `- Scan context: ${ctx.scanContextPath}`,
     `- Tool results: ${toolsDir}/`,
     `- Repository: ${ctx.repoPath}`,
     '',
@@ -210,193 +303,160 @@ export async function runTriageAndReport(
 
   // Run Claude — it writes output files directly to the shared volume
   const modelId = resolveModelFlag(ctx.aiModelTriage, 'opus');
-  const command = `echo ${JSON.stringify(prompt)} | claude -p --model ${modelId} --verbose --append-system-prompt-file /prompts/triage-and-report.md --output-format stream-json --dangerously-skip-permissions`;
+  const claudeArgs = `-p --model ${modelId} --verbose --append-system-prompt-file /prompts/triage-and-report.md --output-format stream-json --dangerously-skip-permissions`;
 
-  let sshResult;
   let aiUsage: AiUsage | undefined;
   try {
-    sshResult = await sshExec(getClaudeRunnerConfig(), command, {
+    const { stdout, parsed } = await runClaudeWithTrace({
+      scanId: ctx.scanId,
+      wave: 'triage-report',
+      prompt,
+      claudeArgs,
       inactivityTimeoutMs: AI_INACTIVITY_TIMEOUT_MS,
       maxTimeoutMs: AI_MAX_TIMEOUT_MS,
-      signal: ctx.cancelSignal,
+      cancelSignal: ctx.cancelSignal,
     });
-    await addScanFile({ scanId: ctx.scanId, fileName: 'triage.log', fileType: 'log-triage', content: sshResult.stdout });
-    checkRateLimitAndPause(sshResult.stdout, '');
-    const { result: parsed } = parseStreamJsonResult(sshResult.stdout);
+    await addScanFile({ scanId: ctx.scanId, fileName: 'triage.log', fileType: 'log-triage', content: stdout });
     aiUsage = extractAiUsage(parsed);
   } catch (err) {
     if (err instanceof SSHTimeoutError && err.stdout) {
       await addScanFile({ scanId: ctx.scanId, fileName: 'triage.log', fileType: 'log-triage', content: err.stdout }).catch(() => {});
-      checkRateLimitAndPause(err.stdout, '');
     }
     throw err;
   }
 
-  // Read output files directly from the shared volume
-  const triageJson = await readFileOrDefault(`${agentDir}/triage-output.json`, '{"decisions":[]}');
-  const reportContent = await readFileOrDefault(`${agentDir}/final-report.md`, '');
-  let profileContent = await readFileOrDefault(ctx.profilePath, '');
-  const assessmentsJson = await readFileOrDefault(
-    `${toolsDir}/contributor-assessments.json`,
-    '[]',
-  );
+  // Read output files directly from the shared volume. The AI invocation
+  // SUCCEEDED at this point, so a missing/corrupt output file is an anomaly
+  // that must scream — "AI produced nothing" must be distinguishable from
+  // "file lost".
+  const anomalies: string[] = [];
+  const triageJson = await readFileOrNull(`${agentDir}/triage-output.json`);
+  const reportContent = (await readFileOrNull(`${agentDir}/final-report.md`)) ?? '';
+  const assessmentsJson = await readFileOrNull(`${toolsDir}/contributor-assessments.json`);
 
   // Parse JSON outputs
   let decisions: TriageDecision[] = [];
-  try {
-    const parsed = JSON.parse(triageJson);
-    decisions = parsed.decisions || [];
-  } catch (err) {
-    console.error('[triage] Failed to parse triage-output.json:', err instanceof Error ? err.message : err);
+  if (triageJson === null || !triageJson.trim()) {
+    // Only an anomaly when there were findings to triage — with no findings
+    // the agent legitimately has nothing to decide on.
+    if (findingsB64) {
+      anomalies.push(`triage-output.json missing or empty at ${agentDir}/triage-output.json after successful AI triage run — triage decisions were lost`);
+    }
+  } else {
+    try {
+      const parsed = JSON.parse(triageJson);
+      decisions = parsed.decisions || [];
+    } catch (err) {
+      anomalies.push(`Failed to parse triage-output.json: ${err instanceof Error ? err.message : String(err)}. First 200 chars: ${triageJson.slice(0, 200)}`);
+    }
+  }
+
+  if (!reportContent.trim()) {
+    anomalies.push(`final-report.md missing or empty at ${agentDir}/final-report.md after successful AI triage run — no report generated`);
   }
 
   let devAssessments: unknown[] = [];
-  try {
-    const parsed = JSON.parse(assessmentsJson);
-    if (Array.isArray(parsed) && parsed.length > 0) devAssessments = parsed;
-  } catch (err) {
-    console.error('[triage] Failed to parse contributor-assessments.json:', err instanceof Error ? err.message : err);
-  }
-
-  return { decisions, reportContent, profileContent, devAssessments, aiUsage };
-}
-
-const DISPOSE_LABELS: Record<string, string> = {
-  risk_accept: 'Risk accepted',
-  false_positive: 'False positive',
-  duplicate: 'Duplicate',
-};
-
-async function applyDisposition(d: TriageDecision): Promise<void> {
-  switch (d.action) {
-    case 'risk_accept':
-      await riskAcceptFinding(d.finding_id, d.reason);
-      return;
-    case 'false_positive':
-      await falsePositiveFinding(d.finding_id, d.reason);
-      return;
-    case 'duplicate':
-      await duplicateFinding(d.finding_id, d.reason, d.duplicate_of);
-      return;
-  }
-}
-
-export async function applyTriageDecisions(
-  decisions: TriageDecision[],
-): Promise<number> {
-  let dismissed = 0;
-  for (const d of decisions) {
-    const label = DISPOSE_LABELS[d.action];
-    if (!label) continue;
+  if (assessmentsJson !== null) {
     try {
-      await applyDisposition(d);
-      await addFindingNote({
-        findingId: d.finding_id,
-        author: 'beast-triage',
-        noteType: 'triage',
-        content: `[Auto-Triage] ${label}: ${d.reason}`,
-      });
-      dismissed++;
+      const parsed = JSON.parse(assessmentsJson);
+      if (Array.isArray(parsed) && parsed.length > 0) devAssessments = parsed;
     } catch (err) {
-      console.error(`[triage] Failed to apply triage decision for finding ${d.finding_id}:`, err instanceof Error ? err.message : err);
+      anomalies.push(`Failed to parse contributor-assessments.json: ${err instanceof Error ? err.message : String(err)}. First 200 chars: ${assessmentsJson.slice(0, 200)}`);
     }
   }
-  return dismissed;
+
+  for (const message of anomalies) {
+    console.error(`[triage] ${message}`);
+    await logTriageScanEvent(ctx, 'error', message);
+  }
+
+  // Triage was supposed to produce this output and didn't — fail the scan
+  // (the pipeline treats triage as required when the workspace toggle is on)
+  // instead of completing with silently lost decisions/report.
+  if (anomalies.length > 0) {
+    throw new Error(`Triage output incomplete: ${anomalies.join(' | ')}`);
+  }
+
+  return { decisions, reportContent, devAssessments, anomalies, aiUsage };
 }
 
+const DISMISS_ACTIONS = new Set(['risk_accept', 'false_positive', 'duplicate']);
+
 // ── StepFn wrapper ──────────────────────────────────────────────────
+// NO repo-data writes here: decisions and assessment enhancements are emitted
+// in the step output (resume-safe via scan_steps.output) and applied to the
+// DB by the final 'commit' step. Only scan_files diagnostics (triage.log,
+// final-report.md) are stored mid-scan.
 
 export async function runTriageStep({ ctx, prev }: StepInput): Promise<TriageReportOutput> {
+  // Skips carry an explicit skipReason (mirrors ai-research's skipped/skipReason)
+  // so the step output shows WHY everything is zero instead of bare zeroes.
   if (!ctx.aiTriageEnabled) {
     console.log(`[triage] AI triage disabled for workspace ${ctx.workspaceId}, skipping`);
-    return { triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0 };
+    return { skipped: true, skipReason: 'ai-triage-disabled', triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0, decisions: [], devAssessments: [] };
   }
   if (!prev.aiAvailable) {
-    return { triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0 };
+    return { skipped: true, skipReason: 'analysis-failed', triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0, decisions: [], devAssessments: [] };
   }
 
   const start = Date.now();
-  const repositoryId = prev.repositoryId as number;
-  const workspaceId = prev.workspaceId as number;
   const resultFiles = (prev.resultFiles ?? []) as ResultFile[];
+  const preparedFindings = (prev.preparedFindings ?? []) as PreparedFinding[];
 
-  // 1. Prepare triage input (fetch active findings, enrich with tool metadata)
+  // 1. Prepare triage input from the PREPARED plan, enriched with tool metadata.
+  //    When this scan produced AI findings, also offer the repo's existing AI
+  //    findings as semantic-match targets (fingerprints never match for AI).
   const emailAliases = (prev.emailAliases ?? {}) as Record<string, string[]>;
-  const findingsB64 = await prepareTriageInput(ctx, repositoryId, resultFiles, emailAliases);
+  const repositoryId = (prev.repositoryId as number) ?? ctx.repositoryId;
+  const hasAiFindings = preparedFindings.some(f => f.tool === 'beast');
+  const semanticCandidates = hasAiFindings
+    ? await fetchSemanticMatchCandidates(ctx, repositoryId)
+    : [];
+  const findingsB64 = await prepareTriageInput(ctx, preparedFindings, resultFiles, emailAliases, semanticCandidates);
 
   // 2. Run triage agent via SSH (writes input via SFTP, reads output from shared volume)
   const triageOutput = await runTriageAndReport(ctx, findingsB64);
 
-  // 3. Apply triage decisions (dismiss false positives, duplicates, risk-accepted)
-  const dismissed = await applyTriageDecisions(triageOutput.decisions);
-
-  // 4. Attribute findings to contributors
+  // 2b. Validate semantic `same_as` matches: must be an integer id from the
+  //     candidate set, and the SOURCE prepared finding must itself be an AI
+  //     ('beast') finding. Anything else → warn + treat as new (strip same_as).
+  const candidateIds = new Set(semanticCandidates.map(c => c.id));
+  const beastTempIds = new Set(preparedFindings.filter(f => f.tool === 'beast').map(f => f.tempId));
   for (const d of triageOutput.decisions) {
-    if (!d.contributor_email || d.action === 'risk_accept') continue;
-    try {
-      const name = d.contributor_name || d.contributor_email.split('@')[0];
-      const contribId = await findOrCreateContributor(d.contributor_email, name, ctx.workspaceId);
-      await db.update(findings).set({ contributorId: contribId }).where(eq(findings.id, d.finding_id));
-    } catch (err) {
-      console.error(`[triage] Failed to attribute finding ${d.finding_id}:`, err instanceof Error ? err.message : err);
+    if (d.same_as == null) continue;
+    let problem: string | null = null;
+    if (!Number.isInteger(d.same_as)) {
+      problem = `same_as '${d.same_as}' is not an integer`;
+    } else if (!beastTempIds.has(d.finding_id)) {
+      problem = `finding ${d.finding_id} is not an AI ('beast') finding — semantic matching applies to AI findings only`;
+    } else if (!candidateIds.has(d.same_as)) {
+      problem = `same_as ${d.same_as} is not in the offered candidate set`;
+    }
+    if (problem) {
+      const message = `Ignoring invalid semantic match for finding ${d.finding_id}: ${problem} — treating as new`;
+      console.warn(`[triage] ${message}`);
+      await logTriageScanEvent(ctx, 'warning', message, { findingId: d.finding_id, sameAs: d.same_as });
+      delete d.same_as;
     }
   }
 
-  // 5. Store reports (profile + final report as scan files)
-  await storeReports(ctx.scanId, triageOutput.reportContent, triageOutput.profileContent);
+  // 3. Store the final report (scan_files — diagnostic record, allowed mid-scan)
+  await storeReports(ctx.scanId, triageOutput.reportContent);
 
-  // 6. Append Security Findings section to existing assessments (from analyzer)
-  if (triageOutput.devAssessments.length > 0) {
-    for (const a of triageOutput.devAssessments as any[]) {
-      const email = a.contributor_email || a.email || '';
-      if (!email) continue;
-      try {
-        const { findOrCreateContributor: findContrib } = await import('../../routes/contributors.ts');
-        const contribId = await findContrib(email, a.contributor_name || email.split('@')[0], ctx.workspaceId);
-
-        // Extract ONLY the "### Security Findings" section from triage feedback
-        const rawFeedback = a.feedback || '';
-        const secMatch = rawFeedback.match(/### Security Findings[\s\S]*/);
-        const securitySection = secMatch ? secMatch[0].trim() : '';
-        if (!securitySection) continue; // Nothing to append
-
-        // Find existing assessment for this repo
-        const [existing] = await db.select({ id: contributorAssessments.id, feedback: contributorAssessments.feedback })
-          .from(contributorAssessments)
-          .where(and(eq(contributorAssessments.contributorId, contribId), eq(contributorAssessments.repoName, ctx.repoName)))
-          .orderBy(desc(contributorAssessments.assessedAt))
-          .limit(1);
-
-        if (existing) {
-          // Strip old security section and append new one
-          const currentFeedback = existing.feedback || '';
-          const withoutOldSecurity = currentFeedback.replace(/\n*### Security Findings[\s\S]*$/, '').trim();
-          const updatedFeedback = withoutOldSecurity + '\n\n' + securitySection;
-          await db.update(contributorAssessments).set({ feedback: updatedFeedback }).where(eq(contributorAssessments.id, existing.id));
-        } else {
-          // No analyzer assessment exists — create one with just security findings
-          await db.insert(contributorAssessments).values({
-            contributorId: contribId,
-            repoName: ctx.repoName,
-            executionId: ctx.scanId,
-            feedback: securitySection,
-          });
-        }
-      } catch (err) {
-        console.error(`[triage] Failed to append security findings for ${email}:`, err instanceof Error ? err.message : err);
-      }
-    }
-  }
-
+  const dismissed = triageOutput.decisions.filter(d => DISMISS_ACTIONS.has(d.action)).length;
   const kept = triageOutput.decisions.filter(d => d.action === 'keep').length;
 
   return {
     triaged: triageOutput.decisions.length,
+    // Decisions that WILL dismiss findings when the commit step applies them
     dismissed,
     kept,
-    reportsGenerated: true,
+    // Reflect reality — an empty/missing final report must not be reported as generated
+    reportsGenerated: triageOutput.reportContent.trim().length > 0,
     assessmentsEnhanced: triageOutput.devAssessments.length,
     durationMs: Date.now() - start,
     aiUsage: triageOutput.aiUsage,
+    decisions: triageOutput.decisions,
+    devAssessments: triageOutput.devAssessments,
   };
 }

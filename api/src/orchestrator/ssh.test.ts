@@ -369,6 +369,79 @@ describe('sshExec', () => {
     expect(result.stdout).toBe('partial');
   });
 
+  it('removes its abort listener from the scan-lifetime signal on normal completion', async () => {
+    // The cancelSignal lives for the WHOLE scan while each sshExec is one of
+    // hundreds — a listener leaked per exec piles up into
+    // MaxListenersExceededWarning spam on big scans.
+    const { sshExec, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const config = getClaudeRunnerConfig();
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, 'addEventListener');
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.execImpl = (_cmd, cb) => {
+      const streamEvents: Record<string, (...args: unknown[]) => void> = {};
+      const stream = {
+        on(evt: string, handler: (...args: unknown[]) => void) {
+          streamEvents[evt] = handler;
+          return stream;
+        },
+        stderr: { on() { return stream.stderr; } },
+      };
+      cb(null, stream);
+      streamEvents['data'](Buffer.from('done'));
+      streamEvents['close'](0);
+    };
+
+    const result = await sshExec(config, 'echo done', { signal: controller.signal });
+
+    expect(result.stdout).toBe('done');
+    expect(addSpy).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  it('removes its abort listener when the exec fails, too', async () => {
+    const { sshExec, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const config = getClaudeRunnerConfig();
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.execImpl = (_cmd, cb) => {
+      cb(new Error('exec failed'), null);
+    };
+
+    await expect(sshExec(config, 'bad', { signal: controller.signal })).rejects.toThrow('exec failed');
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+
+  it('still aborts in-flight commands when the signal fires', async () => {
+    const { sshExec, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const config = getClaudeRunnerConfig();
+    const controller = new AbortController();
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.execImpl = (_cmd, cb) => {
+      const stream = {
+        on() { return stream; },
+        stderr: { on() { return stream.stderr; } },
+        signal: vi.fn(),
+      };
+      cb(null, stream);
+      // Never closes — simulates a long-running remote command
+    };
+
+    const promise = sshExec(config, 'sleep 999', { signal: controller.signal });
+    const caught = promise.catch((e: Error) => e);
+    await new Promise(r => setTimeout(r, 5));
+    controller.abort();
+
+    const err = await caught as Error;
+    expect(err.message).toContain('SSH command aborted by cancellation');
+    expect(lastMockEnd).toHaveBeenCalled();
+  });
+
   it('does not apply timeout when inactivityTimeoutMs is not set', async () => {
     const { sshExec, getClaudeRunnerConfig } = await import('./ssh.ts');
     const config = getClaudeRunnerConfig();
@@ -401,9 +474,9 @@ describe('sshExec', () => {
 // ── sshWriteFile ────────────────────────────────────────────────────
 
 describe('sshWriteFile', () => {
-  it('has correct function signature (config, remotePath, data) => Promise', async () => {
+  it('has correct function signature (config, remotePath, data, signal?) => Promise', async () => {
     const { sshWriteFile } = await import('./ssh.ts');
-    expect(sshWriteFile.length).toBe(3);
+    expect(sshWriteFile.length).toBe(4);
   });
 
   it('connects to SSH and writes file via SFTP on success', async () => {
@@ -448,6 +521,144 @@ describe('sshWriteFile', () => {
       sshWriteFile(config, '/tmp/test.txt', Buffer.from('data')),
     ).rejects.toThrow('SFTP failed');
     expect(lastMockEnd).toHaveBeenCalled();
+  });
+
+  it('rejects immediately when the signal is already aborted', async () => {
+    const { sshWriteFile, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const controller = new AbortController();
+    controller.abort();
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.sftpImpl = () => { throw new Error('must not reach SFTP'); };
+
+    await expect(
+      sshWriteFile(getClaudeRunnerConfig(), '/tmp/test.txt', 'data', controller.signal),
+    ).rejects.toThrow('SFTP write aborted by cancellation');
+  });
+
+  it('rejects and tears down the connection when aborted mid-write', async () => {
+    const { sshWriteFile, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const controller = new AbortController();
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.sftpImpl = (cb) => {
+      // Write stream that never completes — simulates a hung SFTP transfer
+      const mockWriteStream = {
+        on() { return mockWriteStream; },
+        end() {},
+      };
+      cb(null, { createWriteStream: vi.fn().mockReturnValue(mockWriteStream) });
+    };
+
+    const promise = sshWriteFile(getClaudeRunnerConfig(), '/tmp/test.txt', 'data', controller.signal);
+    const caught = promise.catch((e: Error) => e);
+    // Let the connection reach 'ready'
+    await new Promise(r => setTimeout(r, 5));
+    controller.abort();
+
+    const err = await caught as Error;
+    expect(err.message).toContain('SFTP write aborted by cancellation');
+    expect(lastMockEnd).toHaveBeenCalled();
+  });
+
+  it('removes its abort listener from the scan-lifetime signal on completion', async () => {
+    const { sshWriteFile, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.sftpImpl = (cb) => {
+      const writeStreamEvents: Record<string, (...args: unknown[]) => void> = {};
+      const mockWriteStream = {
+        on(evt: string, handler: (...args: unknown[]) => void) {
+          writeStreamEvents[evt] = handler;
+          return mockWriteStream;
+        },
+        end() { setTimeout(() => writeStreamEvents['close']?.(), 0); },
+      };
+      cb(null, { createWriteStream: vi.fn().mockReturnValue(mockWriteStream) });
+    };
+
+    await sshWriteFile(getClaudeRunnerConfig(), '/tmp/test.txt', 'data', controller.signal);
+
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+});
+
+// ── sshReadFile ─────────────────────────────────────────────────────
+
+describe('sshReadFile', () => {
+  function readableSftp(content: string) {
+    return (cb: (err: Error | null, sftp: unknown) => void) => {
+      const rsEvents: Record<string, (...args: unknown[]) => void> = {};
+      const rs = {
+        on(evt: string, handler: (...args: unknown[]) => void) {
+          rsEvents[evt] = handler;
+          if (evt === 'end') {
+            setTimeout(() => {
+              rsEvents['data']?.(Buffer.from(content));
+              rsEvents['end']?.();
+            }, 0);
+          }
+          return rs;
+        },
+      };
+      cb(null, { createReadStream: vi.fn().mockReturnValue(rs) });
+    };
+  }
+
+  it('reads file content via SFTP', async () => {
+    const { sshReadFile, getClaudeRunnerConfig } = await import('./ssh.ts');
+    sshBehavior.mode = 'ready';
+    sshBehavior.sftpImpl = readableSftp('file body');
+
+    const content = await sshReadFile(getClaudeRunnerConfig(), '/tmp/file.txt');
+    expect(content).toBe('file body');
+    expect(lastMockEnd).toHaveBeenCalled();
+  });
+
+  it('rejects immediately when the signal is already aborted', async () => {
+    const { sshReadFile, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      sshReadFile(getClaudeRunnerConfig(), '/tmp/file.txt', controller.signal),
+    ).rejects.toThrow('SFTP read aborted by cancellation');
+  });
+
+  it('rejects and tears down the connection when aborted mid-read', async () => {
+    const { sshReadFile, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const controller = new AbortController();
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.sftpImpl = (cb) => {
+      // Read stream that never emits — simulates a hung transfer
+      const rs = { on() { return rs; } };
+      cb(null, { createReadStream: vi.fn().mockReturnValue(rs) });
+    };
+
+    const promise = sshReadFile(getClaudeRunnerConfig(), '/tmp/file.txt', controller.signal);
+    const caught = promise.catch((e: Error) => e);
+    await new Promise(r => setTimeout(r, 5));
+    controller.abort();
+
+    const err = await caught as Error;
+    expect(err.message).toContain('SFTP read aborted by cancellation');
+    expect(lastMockEnd).toHaveBeenCalled();
+  });
+
+  it('removes its abort listener from the scan-lifetime signal on completion', async () => {
+    const { sshReadFile, getClaudeRunnerConfig } = await import('./ssh.ts');
+    const controller = new AbortController();
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    sshBehavior.mode = 'ready';
+    sshBehavior.sftpImpl = readableSftp('ok');
+
+    await sshReadFile(getClaudeRunnerConfig(), '/tmp/file.txt', controller.signal);
+
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
   });
 });
 
@@ -506,20 +717,6 @@ describe('extractAiUsage', () => {
 
 // ── Context window tracking helpers ──────────────────────────────────
 
-describe('contextLimitForModel', () => {
-  it('returns 1M for models with [1m] suffix', async () => {
-    const { contextLimitForModel } = await import('./ssh.ts');
-    expect(contextLimitForModel('claude-opus-4-6[1m]')).toBe(1_000_000);
-  });
-
-  it('returns 200K for standard models', async () => {
-    const { contextLimitForModel } = await import('./ssh.ts');
-    expect(contextLimitForModel('claude-sonnet-4-6')).toBe(200_000);
-    expect(contextLimitForModel('claude-haiku-4-5-20251001')).toBe(200_000);
-    expect(contextLimitForModel('claude-opus-4-6')).toBe(200_000);
-  });
-});
-
 describe('buildAgentMetric', () => {
   it('computes peak window as cacheCreate + input + output (excludes cacheRead billing metric)', async () => {
     const { buildAgentMetric } = await import('./ssh.ts');
@@ -556,6 +753,63 @@ describe('buildAgentMetric', () => {
     // peak window = 0 + 100K + 5K = 105K
     expect(m.totalContext).toBe(105_000);
     expect(m.utilizationPct).toBeCloseTo(10.5, 1);
+  });
+
+  it('uses the 1M window when the wave was launched as a [1m] variant but the API reports the plain id', async () => {
+    const { buildAgentMetric } = await import('./ssh.ts');
+    // API modelUsage keys never carry the CLI '[1m]' suffix — before the registry
+    // fix this was computed against 200K and over-reported utilization ~5x.
+    const m = buildAgentMetric('analyzer', {
+      model: 'claude-sonnet-5',
+      inputTokens: 100_000,
+      outputTokens: 5_000,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      costUSD: 1.0,
+    }, 60_000, 'claude-sonnet-5[1m]');
+
+    expect(m.contextLimit).toBe(1_000_000);
+    expect(m.utilizationPct).toBeCloseTo(10.5, 1);
+  });
+
+  it('handles date-suffixed API ids with a launched [1m] model', async () => {
+    const { buildAgentMetric } = await import('./ssh.ts');
+    const m = buildAgentMetric('sniper:core', {
+      model: 'claude-opus-4-6-20261101',
+      inputTokens: 200_000,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      costUSD: 2.0,
+    }, 60_000, 'claude-opus-4-6[1m]');
+
+    expect(m.contextLimit).toBe(1_000_000);
+    expect(m.utilizationPct).toBeCloseTo(20, 1);
+  });
+
+  it('warns loudly and skips utilization for unknown models (no lying 200K default)', async () => {
+    const { buildAgentMetric } = await import('./ssh.ts');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const m = buildAgentMetric('recon', {
+        model: 'claude-mystery-9',
+        inputTokens: 10_000,
+        outputTokens: 1_000,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 5_000,
+        costUSD: 0.1,
+      }, 5_000);
+
+      expect(m.contextLimit).toBeUndefined();
+      expect(m.utilizationPct).toBeUndefined();
+      // token accounting still works — only the utilization metric is skipped
+      expect(m.totalContext).toBe(16_000);
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[context] Unknown model claude-mystery-9 — add it to the model registry with its context window',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

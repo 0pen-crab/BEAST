@@ -19,6 +19,8 @@ vi.mock('child_process', () => ({
 }));
 
 // ── Mock entities ────────────────────────────────────────────────
+// createTest/upsertFinding/updateTestFindingsCount stay spied so the tests can
+// PROVE the prepare step never writes repo data (they moved to the commit step).
 const mockCreateTest = vi.fn();
 const mockUpsertFinding = vi.fn();
 const mockUpdateTestFindingsCount = vi.fn();
@@ -28,16 +30,23 @@ const mockEnsureTeam = vi.fn();
 const mockEnsureRepository = vi.fn();
 const mockCreateWorkspaceEvent = vi.fn();
 
-vi.mock('../entities.ts', () => ({
-  createTest: (...args: unknown[]) => mockCreateTest(...args),
-  upsertFinding: (...args: unknown[]) => mockUpsertFinding(...args),
-  updateTestFindingsCount: (...args: unknown[]) => mockUpdateTestFindingsCount(...args),
-  addScanFile: (...args: unknown[]) => mockAddScanFile(...args),
-  ensureWorkspace: (...args: unknown[]) => mockEnsureWorkspace(...args),
-  ensureTeam: (...args: unknown[]) => mockEnsureTeam(...args),
-  ensureRepository: (...args: unknown[]) => mockEnsureRepository(...args),
-  createWorkspaceEvent: (...args: unknown[]) => mockCreateWorkspaceEvent(...args),
-}));
+vi.mock('../entities.ts', async (importOriginal) => {
+  // computeFingerprint / normalizeSeverity are pure helpers — use the real ones
+  // so prepared fingerprints match what the commit step will compute.
+  const actual = await importOriginal<typeof import('../entities.ts')>();
+  return {
+    computeFingerprint: actual.computeFingerprint,
+    normalizeSeverity: actual.normalizeSeverity,
+    createTest: (...args: unknown[]) => mockCreateTest(...args),
+    upsertFinding: (...args: unknown[]) => mockUpsertFinding(...args),
+    updateTestFindingsCount: (...args: unknown[]) => mockUpdateTestFindingsCount(...args),
+    addScanFile: (...args: unknown[]) => mockAddScanFile(...args),
+    ensureWorkspace: (...args: unknown[]) => mockEnsureWorkspace(...args),
+    ensureTeam: (...args: unknown[]) => mockEnsureTeam(...args),
+    ensureRepository: (...args: unknown[]) => mockEnsureRepository(...args),
+    createWorkspaceEvent: (...args: unknown[]) => mockCreateWorkspaceEvent(...args),
+  };
+});
 
 // ── Mock parsers ─────────────────────────────────────────────────
 const mockParseSarif = vi.fn().mockReturnValue([]);
@@ -76,6 +85,12 @@ function mockDbResolves(value: unknown) {
   mockDb.then = (resolve: (v: unknown) => void) => resolve(value);
 }
 
+// Resolve successive `await db…` calls with successive values (last value sticks).
+function mockDbResolvesSeq(values: unknown[]) {
+  let i = 0;
+  mockDb.then = (resolve: (v: unknown) => void) => resolve(values[Math.min(i++, values.length - 1)]);
+}
+
 // ── Helper: make pipeline context ────────────────────────────────
 function makeCtx(overrides: Record<string, unknown> = {}): any {
   return {
@@ -94,6 +109,7 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     agentDir: '/tmp/work/agent',
     resultsDir: '/tmp/work/results',
     profilePath: '/tmp/work/agent/repo-profile.md',
+    scanContextPath: '/tmp/work/agent/scan-context.md',
     cloneUrl: 'https://github.com/org/repo.git',
     reportLanguage: 'en',
     aiAnalysisEnabled: true,
@@ -154,9 +170,14 @@ describe('import-results module exports', () => {
     expect(typeof mod.readResults).toBe('function');
   });
 
-  it('exports importToDatabase as a function', async () => {
+  it('exports prepareImportPlan as a function', async () => {
     const mod = await import('./import-results.ts');
-    expect(typeof mod.importToDatabase).toBe('function');
+    expect(typeof mod.prepareImportPlan).toBe('function');
+  });
+
+  it('exports matchExistingFindings as a function', async () => {
+    const mod = await import('./import-results.ts');
+    expect(typeof mod.matchExistingFindings).toBe('function');
   });
 
   it('exports setupDatabase as a function', async () => {
@@ -316,81 +337,179 @@ describe('readResults', () => {
   });
 });
 
-// ── importToDatabase ─────────────────────────────────────────────
+// ── prepareImportPlan ────────────────────────────────────────────
+// The prepare step must NOT write repo data: no createTest, no upsertFinding,
+// no updateTestFindingsCount. It builds a serializable plan the commit step
+// writes after the whole pipeline has succeeded (maintainer policy).
 
-describe('importToDatabase', () => {
+describe('prepareImportPlan', () => {
   it('skips stats files (scanType === "_stats")', async () => {
     const resultFiles = [
       { key: 'git-stats', filename: 'git-contributor-stats.json', scanType: '_stats', testTitle: '', content_b64: 'W10=' },
     ];
 
-    const { importToDatabase } = await import('./import-results.ts');
-    const summary = await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
 
     expect(summary.imports).toHaveLength(0);
-    expect(mockCreateTest).not.toHaveBeenCalled();
+    expect(summary.preparedTests).toHaveLength(0);
+    expect(summary.preparedFindings).toHaveLength(0);
   });
 
-  it('creates test, parses results, and upserts findings for gitleaks', async () => {
+  it('prepares a test + findings for gitleaks WITHOUT writing them to the DB', async () => {
     const content = JSON.stringify([{ RuleID: 'secret' }]);
     const content_b64 = Buffer.from(content).toString('base64');
     const resultFiles = [
       { key: 'gitleaks', filename: 'gitleaks-results.json', scanType: 'Gitleaks Scan', testTitle: '', content_b64 },
     ];
 
-    mockCreateTest.mockResolvedValueOnce({ id: 100 });
     mockAddScanFile.mockResolvedValueOnce(undefined);
     mockParseGitleaks.mockReturnValueOnce([
-      { title: 'Secret found', severity: 'High', description: 'desc', filePath: 'a.ts', line: 1, vulnIdFromTool: 'secret', cwe: null, cvssScore: null },
+      { title: 'Secret found', severity: 'High', description: 'desc', filePath: 'a.ts', line: 1, vulnIdFromTool: 'secret', cwe: null, cvssScore: null, secretValue: 'sk-123' },
     ]);
-    mockUpsertFinding.mockResolvedValueOnce({ id: 1 });
-    mockUpdateTestFindingsCount.mockResolvedValueOnce(undefined);
+    mockDbResolves([]); // matchExistingFindings → no existing rows
 
-    const { importToDatabase } = await import('./import-results.ts');
-    const summary = await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
 
     expect(summary.imports).toHaveLength(1);
-    expect(summary.imports[0]).toEqual({ key: 'gitleaks', testId: 100, findingsCount: 1 });
-    expect(mockCreateTest).toHaveBeenCalledWith(expect.objectContaining({ tool: 'gitleaks', scanType: 'Gitleaks Scan' }));
-    expect(mockParseGitleaks).toHaveBeenCalledWith(content);
-    expect(mockUpsertFinding).toHaveBeenCalledTimes(1);
-    expect(mockUpdateTestFindingsCount).toHaveBeenCalledWith(100, 1);
+    expect(summary.imports[0]).toEqual({ key: 'gitleaks', findingsCount: 1 });
+    expect(mockParseGitleaks).toHaveBeenCalledWith(content, 'gitleaks-results.json');
+
+    expect(summary.preparedTests).toEqual([expect.objectContaining({
+      key: 'gitleaks',
+      tool: 'gitleaks',
+      scanType: 'Gitleaks Scan',
+      fileName: 'gitleaks-results.json',
+      findingsCount: 1,
+    })]);
+    expect(summary.preparedFindings).toEqual([expect.objectContaining({
+      tempId: 0,
+      testKey: 'gitleaks',
+      title: 'Secret found',
+      severity: 'High',
+      tool: 'gitleaks',
+      category: 'secrets',
+      secretValue: 'sk-123',
+    })]);
+    expect(summary.preparedFindings[0].fingerprint).toMatch(/^[0-9a-f]{40}$/);
+    expect(summary.preparedFindings[0].matchedFindingId).toBeUndefined();
+
+    // NO repo-data writes in the prepare step — they belong to commit
+    expect(mockCreateTest).not.toHaveBeenCalled();
+    expect(mockUpsertFinding).not.toHaveBeenCalled();
+    expect(mockUpdateTestFindingsCount).not.toHaveBeenCalled();
+    // Raw artifact IS stored (scan_files = diagnostic data, allowed mid-scan)
+    expect(mockAddScanFile).toHaveBeenCalledWith(expect.objectContaining({
+      scanId: 'scan-1',
+      fileName: 'gitleaks-results.json',
+      fileType: 'raw-gitleaks',
+    }));
   });
 
-  it('uses parseSarif for code-analysis files', async () => {
+  it('collapses duplicate reports by fingerprint — prepared count is distinct, raw count preserved', async () => {
+    // A tool can report the same finding multiple times (e.g. one CVE on a package
+    // that appears in several lockfile entries). The plan collapses them so the
+    // committed rows and the per-tool count match the (deduplicated) findings list.
+    const content_b64 = Buffer.from('{}').toString('base64');
+    const resultFiles = [
+      { key: 'osv-scanner', filename: 'osv-scanner-results.sarif', scanType: 'SARIF', testTitle: '', content_b64 },
+    ];
+
+    mockAddScanFile.mockResolvedValueOnce(undefined);
+    mockParseSarif.mockReturnValueOnce([
+      { title: 'CVE-1 in lodash', severity: 'High', description: 'd', filePath: 'package-lock.json', line: 1, vulnIdFromTool: 'CVE-1', cwe: null, cvssScore: null },
+      { title: 'CVE-1 in lodash', severity: 'High', description: 'd', filePath: 'package-lock.json', line: 1, vulnIdFromTool: 'CVE-1', cwe: null, cvssScore: null },
+      { title: 'CVE-2 in axios', severity: 'Medium', description: 'd', filePath: 'package-lock.json', line: 5, vulnIdFromTool: 'CVE-2', cwe: null, cvssScore: null },
+    ]);
+    mockDbResolves([]);
+
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
+
+    // 3 parsed, 2 distinct fingerprints → 2 prepared findings, count 2
+    expect(summary.preparedFindings).toHaveLength(2);
+    expect(summary.preparedTests[0].findingsCount).toBe(2);
+    expect(summary.imports[0].findingsCount).toBe(3); // raw parsed count for the log
+  });
+
+  it('records matchedFindingId for findings that match existing DB rows (read-only dedup)', async () => {
+    const content_b64 = Buffer.from('{}').toString('base64');
+    const resultFiles = [
+      { key: 'semgrep', filename: 'semgrep-results.sarif', scanType: 'SARIF', testTitle: 'Semgrep SAST', content_b64 },
+    ];
+
+    mockAddScanFile.mockResolvedValueOnce(undefined);
+    mockParseSarif.mockReturnValueOnce([
+      { title: 'XSS', severity: 'High', description: 'd', filePath: 'a.ts', line: 3, vulnIdFromTool: 'xss-rule', cwe: null, cvssScore: null },
+      { title: 'SQLi', severity: 'Critical', description: 'd', filePath: 'b.ts', line: 9, vulnIdFromTool: 'sqli-rule', cwe: null, cvssScore: null },
+    ]);
+
+    // Compute the real fingerprint the plan will produce for the first finding
+    const { computeFingerprint } = await vi.importActual<typeof import('../entities.ts')>('../entities.ts');
+    const fp = computeFingerprint('semgrep', 'a.ts', 3, 'xss-rule', 'XSS');
+    mockDbResolves([{ id: 777, fingerprint: fp }]);
+
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
+
+    expect(summary.preparedFindings[0].matchedFindingId).toBe(777);
+    expect(summary.preparedFindings[1].matchedFindingId).toBeUndefined();
+    // Matching is READ-ONLY — the update/re-parent happens at commit
+    expect(mockUpsertFinding).not.toHaveBeenCalled();
+    expect(mockDb.update).not.toHaveBeenCalled();
+    expect(mockDb.insert).not.toHaveBeenCalled();
+  });
+
+  it('normalizes severity and forces PII findings to Info', async () => {
+    const content_b64 = Buffer.from('{}').toString('base64');
+    const resultFiles = [
+      { key: 'presidio', filename: 'presidio-results.sarif', scanType: 'SARIF', testTitle: 'Presidio PII', content_b64 },
+    ];
+
+    mockAddScanFile.mockResolvedValueOnce(undefined);
+    mockParseSarif.mockReturnValueOnce([
+      { title: 'Email address', severity: 'HIGH', description: 'd', filePath: 'a.ts', line: 1, vulnIdFromTool: 'pii', cwe: null, cvssScore: null },
+    ]);
+    mockDbResolves([]);
+
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
+
+    expect(summary.preparedFindings[0].severity).toBe('Info');
+    expect(summary.preparedFindings[0].category).toBe('pii');
+  });
+
+  it('uses parseSarif for code-analysis files and maps the beast tool', async () => {
     const content_b64 = Buffer.from('{}').toString('base64');
     const resultFiles = [
       { key: 'code-analysis', filename: 'code-analysis.sarif', scanType: 'SARIF', testTitle: 'BEAST Code Analysis', content_b64 },
     ];
 
-    mockCreateTest.mockResolvedValueOnce({ id: 101 });
     mockAddScanFile.mockResolvedValueOnce(undefined);
     mockParseSarif.mockReturnValueOnce([]);
-    mockUpdateTestFindingsCount.mockResolvedValueOnce(undefined);
 
-    const { importToDatabase } = await import('./import-results.ts');
-    await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
 
-    expect(mockParseSarif).toHaveBeenCalledWith('{}');
-    expect(mockCreateTest).toHaveBeenCalledWith(expect.objectContaining({ tool: 'beast' }));
+    expect(mockParseSarif).toHaveBeenCalledWith('{}', 'code-analysis.sarif');
+    expect(summary.preparedTests[0].tool).toBe('beast');
   });
 
-  it('uses parseSarif for jf-audit files', async () => {
+  it('uses parseSarif for jf-audit files and maps the jfrog tool', async () => {
     const content_b64 = Buffer.from('{}').toString('base64');
     const resultFiles = [
       { key: 'jf-audit', filename: 'jf-audit-results.sarif', scanType: 'SARIF', testTitle: 'JFrog Xray', content_b64 },
     ];
 
-    mockCreateTest.mockResolvedValueOnce({ id: 102 });
     mockAddScanFile.mockResolvedValueOnce(undefined);
     mockParseSarif.mockReturnValueOnce([]);
-    mockUpdateTestFindingsCount.mockResolvedValueOnce(undefined);
 
-    const { importToDatabase } = await import('./import-results.ts');
-    await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
 
     expect(mockParseSarif).toHaveBeenCalled();
-    expect(mockCreateTest).toHaveBeenCalledWith(expect.objectContaining({ tool: 'jfrog' }));
+    expect(summary.preparedTests[0].tool).toBe('jfrog');
   });
 
   it('uses parseTrufflehog for trufflehog files', async () => {
@@ -399,13 +518,11 @@ describe('importToDatabase', () => {
       { key: 'trufflehog', filename: 'trufflehog-results.json', scanType: 'Trufflehog Scan', testTitle: '', content_b64 },
     ];
 
-    mockCreateTest.mockResolvedValueOnce({ id: 103 });
     mockAddScanFile.mockResolvedValueOnce(undefined);
     mockParseTrufflehog.mockReturnValueOnce([]);
-    mockUpdateTestFindingsCount.mockResolvedValueOnce(undefined);
 
-    const { importToDatabase } = await import('./import-results.ts');
-    await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    await prepareImportPlan('scan-1', 10, resultFiles);
 
     expect(mockParseTrufflehog).toHaveBeenCalled();
   });
@@ -416,31 +533,29 @@ describe('importToDatabase', () => {
       { key: 'trivy-sca', filename: 'trivy-sca-results.json', scanType: 'Trivy SCA', testTitle: '', content_b64 },
     ];
 
-    mockCreateTest.mockResolvedValueOnce({ id: 104 });
     mockAddScanFile.mockResolvedValueOnce(undefined);
     mockParseTrivy.mockReturnValueOnce([]);
-    mockUpdateTestFindingsCount.mockResolvedValueOnce(undefined);
 
-    const { importToDatabase } = await import('./import-results.ts');
-    await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    await prepareImportPlan('scan-1', 10, resultFiles);
 
     expect(mockParseTrivy).toHaveBeenCalled();
   });
 
-  it('captures errors per result file without failing entire import', async () => {
+  it('captures errors per result file without failing the entire prepare', async () => {
     const content_b64 = Buffer.from('{}').toString('base64');
     const resultFiles = [
       { key: 'gitleaks', filename: 'gitleaks-results.json', scanType: 'Gitleaks Scan', testTitle: '', content_b64 },
     ];
 
-    mockCreateTest.mockRejectedValueOnce(new Error('DB connection failed'));
+    mockAddScanFile.mockRejectedValueOnce(new Error('DB connection failed'));
 
-    const { importToDatabase } = await import('./import-results.ts');
-    const summary = await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
 
     expect(summary.imports).toHaveLength(1);
     expect(summary.imports[0].error).toBe('DB connection failed');
-    expect(summary.imports[0].testId).toBeUndefined();
+    expect(summary.preparedTests).toHaveLength(0);
   });
 
   it('returns empty parsed array for unknown file keys', async () => {
@@ -449,32 +564,84 @@ describe('importToDatabase', () => {
       { key: 'unknown-tool', filename: 'unknown.json', scanType: 'Custom', testTitle: '', content_b64 },
     ];
 
-    mockCreateTest.mockResolvedValueOnce({ id: 105 });
     mockAddScanFile.mockResolvedValueOnce(undefined);
-    mockUpdateTestFindingsCount.mockResolvedValueOnce(undefined);
 
-    const { importToDatabase } = await import('./import-results.ts');
-    const summary = await importToDatabase('scan-1', 10, resultFiles);
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles);
 
     expect(summary.imports[0].findingsCount).toBe(0);
-    expect(mockUpsertFinding).not.toHaveBeenCalled();
+    expect(summary.preparedFindings).toHaveLength(0);
+  });
+});
+
+// ── matchExistingFindings ────────────────────────────────────────
+
+describe('matchExistingFindings', () => {
+  it('returns an empty map without querying when there are no fingerprints', async () => {
+    const { matchExistingFindings } = await import('./import-results.ts');
+    const result = await matchExistingFindings(10, []);
+
+    expect(result.size).toBe(0);
+    expect(mockDb.select).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty map without querying when repositoryId is falsy (legacy scans)', async () => {
+    const { matchExistingFindings } = await import('./import-results.ts');
+    const result = await matchExistingFindings(0, ['fp-1']);
+
+    expect(result.size).toBe(0);
+    expect(mockDb.select).not.toHaveBeenCalled();
+  });
+
+  it('maps fingerprints to existing finding ids, first row winning on duplicates', async () => {
+    mockDbResolves([
+      { id: 5, fingerprint: 'fp-a' },
+      { id: 9, fingerprint: 'fp-a' }, // duplicate fingerprint — first wins (mirrors upsertFinding)
+      { id: 7, fingerprint: 'fp-b' },
+    ]);
+
+    const { matchExistingFindings } = await import('./import-results.ts');
+    const result = await matchExistingFindings(10, ['fp-a', 'fp-b', 'fp-c']);
+
+    expect(result.get('fp-a')).toBe(5);
+    expect(result.get('fp-b')).toBe(7);
+    expect(result.has('fp-c')).toBe(false);
   });
 });
 
 // ── setupDatabase ────────────────────────────────────────────────
 
 describe('setupDatabase', () => {
-  it('looks up repo by name when workspaceId > 0', async () => {
-    mockDbResolves([{ id: 42, teamId: 5 }]);
+  it('uses the scan\'s own repository_id when workspaceId > 0 (not a name lookup)', async () => {
+    // Two repos can share a name across sources (e.g. a bitbucket + a local-upload
+    // "trinity"). Resolving by name picked the wrong one and misattributed findings.
+    // The scan row is the source of truth — its repository_id must win.
+    // 1st await → scan row {repositoryId: 157}; 2nd await → repo row {id: 157, teamId: 5}
+    mockDbResolvesSeq([[{ repositoryId: 157 }], [{ id: 157, teamId: 5 }]]);
+
+    const { setupDatabase } = await import('./import-results.ts');
+    const ctx = makeCtx({ workspaceId: 10, repoName: 'trinity' });
+    const ids = await setupDatabase(ctx);
+
+    expect(ids.workspaceId).toBe(10);
+    expect(ids.repositoryId).toBe(157);
+    expect(ids.teamId).toBe(5);
+    expect(mockEnsureWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('falls back to legacy path when the scan has no repository_id', async () => {
+    // scan row has no repositoryId → drop to ensureWorkspace/Team/Repository
+    mockDbResolvesSeq([[{ repositoryId: null }]]);
+    mockEnsureWorkspace.mockResolvedValueOnce({ id: 1 });
+    mockEnsureTeam.mockResolvedValueOnce({ id: 2 });
+    mockEnsureRepository.mockResolvedValueOnce({ id: 3 });
 
     const { setupDatabase } = await import('./import-results.ts');
     const ctx = makeCtx({ workspaceId: 10 });
     const ids = await setupDatabase(ctx);
 
-    expect(ids.workspaceId).toBe(10);
-    expect(ids.repositoryId).toBe(42);
-    expect(ids.teamId).toBe(5);
-    expect(mockEnsureWorkspace).not.toHaveBeenCalled();
+    expect(ids.repositoryId).toBe(3);
+    expect(mockEnsureWorkspace).toHaveBeenCalled();
   });
 
   it('falls back to legacy path when workspaceId is 0', async () => {
@@ -550,54 +717,28 @@ describe('setupDatabase', () => {
 // ── storeReports ─────────────────────────────────────────────────
 
 describe('storeReports', () => {
-  it('stores both profile and report', async () => {
+  it('stores the audit report only (profile is persisted by the analyzer step)', async () => {
     mockAddScanFile.mockResolvedValue(undefined);
 
     const { storeReports } = await import('./import-results.ts');
-    await storeReports('scan-1', 'report content', 'profile content');
+    await storeReports('scan-1', 'report content');
 
-    expect(mockAddScanFile).toHaveBeenCalledTimes(2);
-    expect(mockAddScanFile).toHaveBeenCalledWith(expect.objectContaining({
-      scanId: 'scan-1',
-      fileName: 'repo-profile.md',
-      fileType: 'profile',
-      content: 'profile content',
-    }));
+    expect(mockAddScanFile).toHaveBeenCalledTimes(1);
     expect(mockAddScanFile).toHaveBeenCalledWith(expect.objectContaining({
       scanId: 'scan-1',
       fileName: 'final-report.md',
       fileType: 'audit',
       content: 'report content',
     }));
-  });
-
-  it('skips profile when empty', async () => {
-    mockAddScanFile.mockResolvedValue(undefined);
-
-    const { storeReports } = await import('./import-results.ts');
-    await storeReports('scan-1', 'report content', '');
-
-    expect(mockAddScanFile).toHaveBeenCalledTimes(1);
-    expect(mockAddScanFile).toHaveBeenCalledWith(expect.objectContaining({
-      fileName: 'final-report.md',
+    // Must NOT store a 'profile' file — that would duplicate the analyzer's.
+    expect(mockAddScanFile).not.toHaveBeenCalledWith(expect.objectContaining({
+      fileType: 'profile',
     }));
   });
 
-  it('skips report when empty', async () => {
-    mockAddScanFile.mockResolvedValue(undefined);
-
+  it('stores nothing when report is empty', async () => {
     const { storeReports } = await import('./import-results.ts');
-    await storeReports('scan-1', '', 'profile content');
-
-    expect(mockAddScanFile).toHaveBeenCalledTimes(1);
-    expect(mockAddScanFile).toHaveBeenCalledWith(expect.objectContaining({
-      fileName: 'repo-profile.md',
-    }));
-  });
-
-  it('stores nothing when both empty', async () => {
-    const { storeReports } = await import('./import-results.ts');
-    await storeReports('scan-1', '', '');
+    await storeReports('scan-1', '');
 
     expect(mockAddScanFile).not.toHaveBeenCalled();
   });
@@ -624,6 +765,34 @@ describe('ingestContributorStats', () => {
     await ingestContributorStats(ctx, 'scan-1', 10, resultFiles as any, [], 1);
 
     expect(mockIngestContributors).not.toHaveBeenCalled();
+  });
+
+  it('records scan + workspace events when git-stats JSON is corrupt (must not be silent)', async () => {
+    mockCreateWorkspaceEvent.mockResolvedValueOnce(undefined);
+
+    const { ingestContributorStats } = await import('./import-results.ts');
+    const ctx = makeCtx();
+    const resultFiles = [{
+      key: 'git-stats',
+      content_b64: Buffer.from('{"corrupt').toString('base64'),
+    }];
+    await ingestContributorStats(ctx, 'scan-1', 10, resultFiles as any, [], 1);
+
+    expect(mockIngestContributors).not.toHaveBeenCalled();
+    // scan_events insert
+    expect(mockDb.insert).toHaveBeenCalled();
+    expect(mockDb.values).toHaveBeenCalledWith(expect.objectContaining({
+      scanId: 'scan-1',
+      level: 'error',
+      source: 'contributor-ingest',
+      message: expect.stringContaining('git-stats'),
+    }));
+    // workspace event for the Events feed
+    expect(mockCreateWorkspaceEvent).toHaveBeenCalledWith(1, 'contributor_ingest_failed', expect.objectContaining({
+      scan_id: 'scan-1',
+      repo_name: 'repo',
+      error: expect.stringContaining('git-stats'),
+    }));
   });
 
   it('returns early when empty array', async () => {
@@ -658,7 +827,10 @@ describe('ingestContributorStats', () => {
     }));
   });
 
-  it('queues feedback compilation for contributors with new assessments', async () => {
+  // Feedback compilation must NOT be queued here — the pipeline queues the
+  // returned ids only after the whole scan succeeds (a failed scan must not
+  // update developer profiles).
+  it('returns contributor ids with new assessments WITHOUT queueing feedback', async () => {
     mockIngestContributors.mockResolvedValueOnce({
       newAssessments: 2,
       contributorIds: { 'dev@a.com': 100, 'dev@b.com': 200 },
@@ -671,10 +843,28 @@ describe('ingestContributorStats', () => {
       key: 'git-stats',
       content_b64: Buffer.from(JSON.stringify(stats)).toString('base64'),
     }];
-    await ingestContributorStats(ctx, 'scan-1', 10, resultFiles as any, [], 1);
+    const ids = await ingestContributorStats(ctx, 'scan-1', 10, resultFiles as any, [], 1);
 
-    expect(mockQueueFeedbackCompilation).toHaveBeenCalledWith(100);
-    expect(mockQueueFeedbackCompilation).toHaveBeenCalledWith(200);
+    expect(ids.sort()).toEqual([100, 200]);
+    expect(mockQueueFeedbackCompilation).not.toHaveBeenCalled();
+  });
+
+  it('returns no ids when there are no new assessments', async () => {
+    mockIngestContributors.mockResolvedValueOnce({
+      newAssessments: 0,
+      contributorIds: { 'dev@a.com': 100 },
+    });
+
+    const { ingestContributorStats } = await import('./import-results.ts');
+    const ctx = makeCtx();
+    const stats = [{ email: 'dev@a.com', name: 'A' }];
+    const resultFiles = [{
+      key: 'git-stats',
+      content_b64: Buffer.from(JSON.stringify(stats)).toString('base64'),
+    }];
+    const ids = await ingestContributorStats(ctx, 'scan-1', 10, resultFiles as any, [], 1);
+
+    expect(ids).toEqual([]);
   });
 
   it('handles failure gracefully', async () => {
@@ -691,9 +881,9 @@ describe('ingestContributorStats', () => {
       content_b64: Buffer.from(JSON.stringify(stats)).toString('base64'),
     }];
 
-    // Should not throw
+    // Should not throw — returns no ids on ingest failure
     await expect(ingestContributorStats(ctx, 'scan-1', 10, resultFiles as any, [], 1))
-      .resolves.toBeUndefined();
+      .resolves.toEqual([]);
   });
 });
 
@@ -803,12 +993,78 @@ describe('extractGitStats', () => {
   });
 });
 
+// ── mergeStatsByContributor ──────────────────────────────────────
+
+describe('mergeStatsByContributor', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function stat(overrides: Record<string, unknown> = {}) {
+    return {
+      email: 'dev@a.com',
+      name: 'Dev',
+      commits: 1,
+      loc_added: 10,
+      loc_removed: 2,
+      first_commit: '2026-01-01',
+      last_commit: '2026-01-10',
+      file_types: { '.ts': 1 },
+      daily_activity: { '2026-01-10': 1 },
+      ...overrides,
+    };
+  }
+
+  it('an alias with a NEWER last_commit wins the display name', async () => {
+    // Both emails resolve to the same contributor
+    mockFindOrCreateContributor.mockResolvedValue(7);
+
+    const { mergeStatsByContributor } = await import('./import-results.ts');
+    const { merged } = await mergeStatsByContributor([
+      stat({ email: 'old@a.com', name: 'Old Name', last_commit: '2025-06-01', first_commit: '2025-01-01' }),
+      stat({ email: 'new@a.com', name: 'New Name', last_commit: '2026-03-01', first_commit: '2026-01-01' }),
+    ] as any, 1);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].name).toBe('New Name');
+    expect(merged[0].last_commit).toBe('2026-03-01');
+    expect(merged[0].first_commit).toBe('2025-01-01');
+    expect(merged[0].commits).toBe(2);
+  });
+
+  it('an alias with an OLDER last_commit does not steal the display name', async () => {
+    mockFindOrCreateContributor.mockResolvedValue(7);
+
+    const { mergeStatsByContributor } = await import('./import-results.ts');
+    const { merged } = await mergeStatsByContributor([
+      stat({ email: 'new@a.com', name: 'New Name', last_commit: '2026-03-01' }),
+      stat({ email: 'old@a.com', name: 'Old Name', last_commit: '2025-06-01' }),
+    ] as any, 1);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].name).toBe('New Name');
+    expect(merged[0].last_commit).toBe('2026-03-01');
+  });
+
+  it('builds email alias map for multi-email contributors', async () => {
+    mockFindOrCreateContributor.mockResolvedValue(7);
+
+    const { mergeStatsByContributor } = await import('./import-results.ts');
+    const { emailAliases } = await mergeStatsByContributor([
+      stat({ email: 'a@a.com' }),
+      stat({ email: 'b@a.com' }),
+    ] as any, 1);
+
+    expect(emailAliases['a@a.com']).toEqual(['b@a.com']);
+  });
+});
+
 // ── runImportStep ────────────────────────────────────────────────
 
 describe('runImportStep', () => {
-  it('orchestrates all sub-functions', async () => {
+  it('orchestrates all sub-functions and emits the prepared plan', async () => {
     // Setup DB lookup
-    mockDbResolves([{ id: 42, teamId: 5 }]);
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
     // extractGitStats returns empty
     mockExecSync.mockReturnValueOnce('');
     // readResults: no files on disk
@@ -821,13 +1077,38 @@ describe('runImportStep', () => {
 
     expect(result.repositoryId).toBe(42);
     expect(result.workspaceId).toBe(10);
-    expect(typeof result.findingsImported).toBe('number');
-    expect(typeof result.testsCreated).toBe('number');
+    expect(typeof result.findingsPrepared).toBe('number');
+    expect(typeof result.testsPrepared).toBe('number');
     expect(Array.isArray(result.resultFiles)).toBe(true);
+    expect(Array.isArray(result.preparedTests)).toBe(true);
+    expect(Array.isArray(result.preparedFindings)).toBe(true);
+    expect(Array.isArray(result.analyzerAssessments)).toBe(true);
+  });
+
+  it('does NOT ingest contributor stats or write repo data (moved to the commit step)', async () => {
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
+    // extractGitStats returns real stats — they must ride along, not be ingested
+    mockExecSync.mockReturnValueOnce([
+      'dev@example.com|Dev User|2026-01-15T10:30:00+00:00',
+      '10\t5\tsrc/main.ts',
+      '',
+    ].join('\n'));
+    mockReadFileSync.mockImplementation(() => { throw new Error('not found'); });
+    mockFindOrCreateContributor.mockResolvedValue(1);
+
+    const { runImportStep } = await import('./import-results.ts');
+    const result = await runImportStep({ ctx: makeCtx({ workspaceId: 10 }), prev: {} });
+
+    expect(mockIngestContributors).not.toHaveBeenCalled();
+    expect(mockCreateTest).not.toHaveBeenCalled();
+    expect(mockUpsertFinding).not.toHaveBeenCalled();
+    // git-stats ride along in resultFiles for the commit step to ingest
+    const gitStatsFile = result.resultFiles.find((f: any) => f.key === 'git-stats');
+    expect(gitStatsFile).toBeDefined();
   });
 
   it('logs tool warnings', async () => {
-    mockDbResolves([{ id: 42, teamId: 5 }]);
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
     mockExecSync.mockReturnValueOnce('');
     mockReadFileSync.mockImplementation(() => { throw new Error('not found'); });
 
@@ -848,9 +1129,9 @@ describe('runImportStep', () => {
     expect(insertMock).toHaveBeenCalled();
   });
 
-  it('calculates totalFindings from import summary', async () => {
+  it('counts prepared (deduplicated) findings in findingsPrepared', async () => {
     // Setup DB
-    mockDbResolves([{ id: 42, teamId: 5 }]);
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
     mockExecSync.mockReturnValueOnce('');
     mockReadFileSync.mockImplementation(() => { throw new Error('not found'); });
 
@@ -867,24 +1148,23 @@ describe('runImportStep', () => {
       throw new Error('not found');
     });
 
-    mockCreateTest.mockResolvedValueOnce({ id: 100 });
     mockAddScanFile.mockResolvedValue(undefined);
     mockParseGitleaks.mockReturnValueOnce([
       { title: 'Secret', severity: 'High', description: 'd', filePath: 'a.ts', line: 1 },
       { title: 'Secret2', severity: 'Medium', description: 'd', filePath: 'b.ts', line: 2 },
     ]);
-    mockUpsertFinding.mockResolvedValue({ id: 1 });
-    mockUpdateTestFindingsCount.mockResolvedValue(undefined);
 
     const { runImportStep } = await import('./import-results.ts');
     const ctx = makeCtx({ workspaceId: 10 });
     const result = await runImportStep({ ctx, prev: {} });
 
-    expect(result.findingsImported).toBe(2);
+    expect(result.findingsPrepared).toBe(2);
+    expect(result.preparedFindings).toHaveLength(2);
+    expect(result.testsPrepared).toBe(1);
   });
 
   it('does not add git-stats to resultFiles when extractGitStats returns empty', async () => {
-    mockDbResolves([{ id: 42, teamId: 5 }]);
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
     mockExecSync.mockReturnValueOnce('');
     mockReadFileSync.mockImplementation(() => { throw new Error('not found'); });
 
@@ -894,6 +1174,112 @@ describe('runImportStep', () => {
 
     const gitStatsFile = result.resultFiles.find((f: any) => f.key === 'git-stats');
     expect(gitStatsFile).toBeUndefined();
+  });
+});
+
+// ── error screaming (corrupt tool output / assessments) ─────────
+
+describe('corrupt tool output handling', () => {
+  it('prepareImportPlan records the parser error for the corrupt tool and continues with the others', async () => {
+    const resultFiles = [
+      { key: 'gitleaks', filename: 'gitleaks-results.json', scanType: 'Gitleaks Scan', testTitle: '', content_b64: Buffer.from('{"trunc').toString('base64') },
+      { key: 'trufflehog', filename: 'trufflehog-results.json', scanType: 'Trufflehog Scan', testTitle: '', content_b64: Buffer.from('[]').toString('base64') },
+    ];
+    mockAddScanFile.mockResolvedValue(undefined);
+    mockParseGitleaks.mockImplementationOnce(() => {
+      throw new Error('[parseGitleaks] Failed to parse gitleaks-results.json — file may be corrupt or truncated');
+    });
+    mockParseTrufflehog.mockReturnValueOnce([]);
+
+    const { prepareImportPlan } = await import('./import-results.ts');
+    const summary = await prepareImportPlan('scan-1', 10, resultFiles as any);
+
+    expect(summary.imports).toHaveLength(2);
+    expect(summary.imports[0].key).toBe('gitleaks');
+    expect(summary.imports[0].error).toContain('parseGitleaks');
+    // The other tool is still prepared
+    expect(summary.imports[1]).toEqual(expect.objectContaining({ key: 'trufflehog', findingsCount: 0 }));
+    expect(summary.preparedTests.map(t => t.key)).toEqual(['trufflehog']);
+  });
+
+  it('prepareImportPlan passes the file name to the parser for descriptive errors', async () => {
+    const content = '[]';
+    const resultFiles = [
+      { key: 'gitleaks', filename: 'gitleaks-results.json', scanType: 'Gitleaks Scan', testTitle: '', content_b64: Buffer.from(content).toString('base64') },
+    ];
+    mockAddScanFile.mockResolvedValue(undefined);
+
+    const { prepareImportPlan } = await import('./import-results.ts');
+    await prepareImportPlan('scan-1', 10, resultFiles as any);
+
+    expect(mockParseGitleaks).toHaveBeenCalledWith(content, 'gitleaks-results.json');
+  });
+
+  it('runImportStep logs an error scan event when one tool import fails', async () => {
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
+    mockExecSync.mockReturnValueOnce('');
+
+    const content = Buffer.from('{"trunc');
+    mockStatSync.mockImplementation((filePath: string) => {
+      if (String(filePath).includes('gitleaks-results.json')) return { size: content.length };
+      const err: any = new Error('ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    });
+    mockReadFileSync.mockImplementation((filePath: string) => {
+      if (String(filePath).includes('gitleaks-results.json')) return content;
+      const err: any = new Error('ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    });
+
+    mockAddScanFile.mockResolvedValue(undefined);
+    mockParseGitleaks.mockImplementationOnce(() => { throw new Error('[parseGitleaks] corrupt'); });
+
+    const { runImportStep } = await import('./import-results.ts');
+    await runImportStep({ ctx: makeCtx({ workspaceId: 10 }), prev: {} });
+
+    expect(mockDb.values).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'error',
+      message: expect.stringContaining('Import failed for gitleaks'),
+    }));
+  });
+});
+
+describe('contributor-assessments.json handling', () => {
+  it('stays quiet when the file is absent (ENOENT is normal)', async () => {
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
+    mockExecSync.mockReturnValueOnce('');
+    mockReadFileSync.mockImplementation(() => {
+      const err: any = new Error('ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    });
+
+    const { runImportStep } = await import('./import-results.ts');
+    await runImportStep({ ctx: makeCtx({ workspaceId: 10 }), prev: {} });
+
+    const eventMessages = mockDb.values.mock.calls.map((c: any[]) => String(c[0]?.message ?? ''));
+    expect(eventMessages.join('\n')).not.toContain('contributor-assessments');
+  });
+
+  it('records an error scan event when the file is corrupt JSON', async () => {
+    mockDbResolvesSeq([[{ repositoryId: 42 }], [{ id: 42, teamId: 5 }]]);
+    mockExecSync.mockReturnValueOnce('');
+    mockReadFileSync.mockImplementation((filePath: string) => {
+      if (String(filePath).includes('contributor-assessments.json')) return 'corrupt{{{';
+      const err: any = new Error('ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    });
+
+    const { runImportStep } = await import('./import-results.ts');
+    await runImportStep({ ctx: makeCtx({ workspaceId: 10 }), prev: {} });
+
+    expect(mockDb.values).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'error',
+      message: expect.stringContaining('contributor-assessments.json'),
+    }));
   });
 });
 

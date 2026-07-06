@@ -1,11 +1,37 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PipelineContext } from '../pipeline-types.ts';
 
 // ── Mock child_process ─────────────────────────────────────────────
-const mockExecSync = vi.fn();
+// clone.ts uses async execFile('git', [args], opts, cb) — never execSync.
+const mockExecFile = vi.fn();
 vi.mock('child_process', () => ({
-  execSync: (...args: unknown[]) => mockExecSync(...args),
+  execFile: (...args: unknown[]) => mockExecFile(...args),
 }));
+
+type ExecFileCb = (err: (Error & { code?: number | string; name?: string }) | null, stdout: string, stderr: string) => void;
+
+/** Default mock: every git command succeeds. */
+function execFileOk(_file: string, _args: string[], _opts: unknown, cb: ExecFileCb): void {
+  cb(null, '', '');
+}
+
+/** Builds a mock implementation that fails once with the given exit code + stderr. */
+function execFileFail(code: number, stderr: string) {
+  return (_file: string, _args: string[], _opts: unknown, cb: ExecFileCb): void => {
+    const err: Error & { code?: number } = new Error(`Command failed: git`);
+    err.code = code;
+    cb(err as Error & { code: number }, '', stderr);
+  };
+}
+
+/** All git invocations reconstructed as "git <args...>" strings, in call order. */
+function gitCommands(): string[] {
+  return mockExecFile.mock.calls.map((c) => ['git', ...(c[1] as string[])].join(' '));
+}
+
+function cloneCalls(): string[] {
+  return gitCommands().filter((c) => c.startsWith('git clone'));
+}
 
 // ── Mock fs ────────────────────────────────────────────────────────
 const mockExistsSync = vi.fn();
@@ -38,11 +64,12 @@ vi.mock('../git-providers.ts', () => ({
   buildAuthCloneUrl: (...args: unknown[]) => mockBuildAuthCloneUrl(...args),
 }));
 
-import { cloneRepo, runCloneStep } from './clone.ts';
+import { cloneRepo, runCloneStep, stripCredentials } from './clone.ts';
 
 function makeCtx(overrides: Partial<PipelineContext> = {}): PipelineContext {
   return {
     scanId: 'scan-1',
+    repositoryId: 42,
     repoUrl: 'https://github.com/org/repo.git',
     repoName: 'repo',
     branch: '',
@@ -51,12 +78,14 @@ function makeCtx(overrides: Partial<PipelineContext> = {}): PipelineContext {
     teamName: 'team-a',
     workspaceName: 'org',
     workspaceId: 10,
+    repoBaseDir: '/workspace/src-1/repo',
     workDir: '/workspace/repo',
     repoPath: '/workspace/repo/repo',
     toolsDir: '/workspace/repo/results',
     agentDir: '/workspace/repo',
     resultsDir: '/workspace/repo/results',
     profilePath: '/workspace/repo/repo-profile.md',
+    scanContextPath: '/workspace/repo/scan-context.md',
     cloneUrl: 'https://github.com/org/repo.git',
     reportLanguage: 'en',
     aiAnalysisEnabled: true,
@@ -69,11 +98,14 @@ function makeCtx(overrides: Partial<PipelineContext> = {}): PipelineContext {
   } as PipelineContext;
 }
 
+const DNS_STDERR = "fatal: unable to access 'https://example.com/foo': Could not resolve host: example.com (DNS server returned general failure)";
+
 describe('cloneRepo', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: repo doesn't exist yet
+    // Default: repo doesn't exist yet; git commands succeed
     mockExistsSync.mockReturnValue(false);
+    mockExecFile.mockImplementation(execFileOk);
   });
 
   it('exports a callable function', () => {
@@ -86,9 +118,11 @@ describe('cloneRepo', () => {
     await cloneRepo(makeCtx());
 
     expect(mockMkdirSync).toHaveBeenCalledWith('/workspace/repo', { recursive: true });
-    expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining('git clone'),
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'git',
+      ['clone', 'https://github.com/org/repo.git', '/workspace/repo/repo'],
       expect.objectContaining({ timeout: 300_000 }),
+      expect.any(Function),
     );
   });
 
@@ -98,9 +132,9 @@ describe('cloneRepo', () => {
 
     await cloneRepo(makeCtx());
 
-    const commands = mockExecSync.mock.calls.map((c: any) => c[0]);
-    expect(commands[0]).toContain('git fetch --all --prune');
-    expect(commands[1]).toContain('git pull');
+    const commands = gitCommands();
+    expect(commands).toContainEqual('git fetch --all --prune');
+    expect(commands.some((c) => c.includes('git pull'))).toBe(true);
     // clone no longer manages toolsDir/agentDir — pipeline handles that
     expect(mockRmSync).not.toHaveBeenCalled();
   });
@@ -110,7 +144,7 @@ describe('cloneRepo', () => {
 
     await cloneRepo(makeCtx({ cloneUrl: '', localPath: '/some/local/path' }));
 
-    expect(mockExecSync).not.toHaveBeenCalled();
+    expect(mockExecFile).not.toHaveBeenCalled();
     // clone no longer creates directories — just validates the path
     expect(mockMkdirSync).not.toHaveBeenCalled();
   });
@@ -125,49 +159,174 @@ describe('cloneRepo', () => {
 
   it('throws when clone command fails', async () => {
     mockExistsSync.mockReturnValue(false);
-    // mkdir succeeds, then git clone fails
-    mockExecSync.mockImplementationOnce(() => {
-      const err: any = new Error('git clone failed');
-      err.status = 128;
-      err.stderr = Buffer.from('fatal: repo not found');
-      err.stdout = Buffer.from('');
-      throw err;
-    });
+    mockExecFile.mockImplementationOnce(execFileFail(128, 'fatal: repo not found'));
 
     await expect(cloneRepo(makeCtx())).rejects.toThrow('Clone failed');
   });
 
-  it('retries clone on transient DNS errors and succeeds on a later attempt', async () => {
+  it('preserves the "Clone failed (exit N): ..." error message format', async () => {
     mockExistsSync.mockReturnValue(false);
-    const dnsErr = () => {
-      const err: any = new Error('git clone failed');
-      err.status = 128;
-      err.stderr = Buffer.from("fatal: unable to access 'https://example.com/foo': Could not resolve host: example.com (DNS server returned general failure)");
-      err.stdout = Buffer.from('');
-      throw err;
-    };
-    // First two attempts: DNS fail. Third: success.
-    mockExecSync.mockImplementationOnce(dnsErr).mockImplementationOnce(dnsErr).mockImplementationOnce(() => Buffer.from(''));
+    mockExecFile.mockImplementationOnce(execFileFail(128, 'fatal: repo not found'));
 
-    await cloneRepo(makeCtx());
-
-    const cloneCalls = mockExecSync.mock.calls.filter((c: any) => String(c[0]).startsWith('git clone'));
-    expect(cloneCalls).toHaveLength(3);
+    await expect(cloneRepo(makeCtx())).rejects.toThrow('Clone failed (exit 128): fatal: repo not found');
   });
 
-  it('does NOT retry on non-DNS clone errors (auth, 404, etc.)', async () => {
+  it('falls back to stdout in the error message when stderr is empty', async () => {
     mockExistsSync.mockReturnValue(false);
-    mockExecSync.mockImplementationOnce(() => {
-      const err: any = new Error('clone fail');
-      err.status = 128;
-      err.stderr = Buffer.from("fatal: Authentication failed for 'https://example.com/foo'");
-      err.stdout = Buffer.from('');
-      throw err;
+    mockExecFile.mockImplementationOnce((_f: string, _a: string[], _o: unknown, cb: ExecFileCb) => {
+      const err: Error & { code?: number } = new Error('Command failed');
+      err.code = 1;
+      cb(err as Error & { code: number }, 'stdout detail', '');
     });
 
-    await expect(cloneRepo(makeCtx())).rejects.toThrow('Clone failed');
-    const cloneCalls = mockExecSync.mock.calls.filter((c: any) => String(c[0]).startsWith('git clone'));
-    expect(cloneCalls).toHaveLength(1);
+    await expect(cloneRepo(makeCtx())).rejects.toThrow('Clone failed (exit 1): stdout detail');
+  });
+
+  describe('transient DNS retry (async backoff, no busy-wait)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('retries clone on transient DNS errors and succeeds on a later attempt', async () => {
+      mockExistsSync.mockReturnValue(false);
+      // First two attempts: DNS fail. Third: success (default impl).
+      mockExecFile
+        .mockImplementationOnce(execFileFail(128, DNS_STDERR))
+        .mockImplementationOnce(execFileFail(128, DNS_STDERR));
+
+      const done = cloneRepo(makeCtx());
+      await vi.runAllTimersAsync();
+      await done;
+
+      expect(cloneCalls()).toHaveLength(3);
+    });
+
+    it('waits with async backoff between retries instead of busy-waiting', async () => {
+      mockExistsSync.mockReturnValue(false);
+      mockExecFile
+        .mockImplementationOnce(execFileFail(128, DNS_STDERR))
+        .mockImplementationOnce(execFileFail(128, DNS_STDERR));
+
+      const done = cloneRepo(makeCtx());
+      done.catch(() => { /* inspected below */ });
+
+      // First attempt fires immediately, then sleeps — no second attempt yet
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cloneCalls()).toHaveLength(1);
+
+      // Backoff #1: 2s
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(cloneCalls()).toHaveLength(2);
+
+      // Backoff #2: 4s (exponential)
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(cloneCalls()).toHaveLength(3);
+
+      await done;
+    });
+
+    it('gives up after 3 attempts and rethrows the DNS error', async () => {
+      mockExistsSync.mockReturnValue(false);
+      mockExecFile.mockImplementation(execFileFail(128, DNS_STDERR));
+
+      const done = cloneRepo(makeCtx());
+      const assertion = expect(done).rejects.toThrow('Clone failed (exit 128)');
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      expect(cloneCalls()).toHaveLength(3);
+    });
+
+    it('does NOT retry on non-DNS clone errors (auth, 404, etc.)', async () => {
+      mockExistsSync.mockReturnValue(false);
+      mockExecFile.mockImplementationOnce(
+        execFileFail(128, "fatal: Authentication failed for 'https://example.com/foo'"),
+      );
+
+      const done = cloneRepo(makeCtx());
+      const assertion = expect(done).rejects.toThrow('Clone failed');
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      expect(cloneCalls()).toHaveLength(1);
+    });
+  });
+
+  describe('cancellation', () => {
+    it('passes ctx.cancelSignal through to the git child process', async () => {
+      mockExistsSync.mockReturnValue(false);
+      const ac = new AbortController();
+
+      await cloneRepo(makeCtx({ cancelSignal: ac.signal }));
+
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        expect.any(Array),
+        expect.objectContaining({ signal: ac.signal }),
+        expect.any(Function),
+      );
+    });
+
+    it('rejects promptly without spawning git when the signal is already aborted', async () => {
+      mockExistsSync.mockReturnValue(false);
+      const ac = new AbortController();
+      ac.abort();
+
+      await expect(cloneRepo(makeCtx({ cancelSignal: ac.signal })))
+        .rejects.toThrow('Git command aborted by cancellation');
+      expect(mockExecFile).not.toHaveBeenCalled();
+    });
+
+    it('aborts an in-flight git process and rejects with a cancellation error', async () => {
+      mockExistsSync.mockReturnValue(false);
+      const ac = new AbortController();
+
+      // Simulate node's execFile signal behavior: child hangs until abort,
+      // then the callback fires with an AbortError.
+      mockExecFile.mockImplementation((_f: string, _a: string[], opts: { signal?: AbortSignal }, cb: ExecFileCb) => {
+        opts.signal?.addEventListener('abort', () => {
+          const err: Error & { code?: string } = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          err.code = 'ABORT_ERR';
+          cb(err as Error & { code: string }, '', '');
+        }, { once: true });
+      });
+
+      const done = cloneRepo(makeCtx({ cancelSignal: ac.signal }));
+      const assertion = expect(done).rejects.toThrow('Git command aborted by cancellation');
+
+      ac.abort();
+      await assertion;
+      // Only the first git command was ever spawned — the sequence stopped on cancel
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a clone that was cancelled mid-flight', async () => {
+      vi.useFakeTimers();
+      try {
+        mockExistsSync.mockReturnValue(false);
+        const ac = new AbortController();
+
+        // First call: DNS failure. Abort before the backoff sleep finishes.
+        mockExecFile.mockImplementationOnce(execFileFail(128, DNS_STDERR));
+
+        const done = cloneRepo(makeCtx({ cancelSignal: ac.signal }));
+        const assertion = expect(done).rejects.toThrow();
+        await vi.advanceTimersByTimeAsync(0);
+        ac.abort();
+        await vi.runAllTimersAsync();
+        await assertion;
+
+        // Retry loop must not spawn another git process after cancellation
+        expect(cloneCalls().length).toBeLessThanOrEqual(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('checks out specific branch when provided', async () => {
@@ -175,8 +334,7 @@ describe('cloneRepo', () => {
 
     await cloneRepo(makeCtx({ branch: 'develop' }));
 
-    const commands = mockExecSync.mock.calls.map((c: any) => c[0]);
-    expect(commands).toContainEqual(expect.stringContaining('git checkout develop'));
+    expect(gitCommands()).toContainEqual('git checkout develop');
   });
 
   it('checks out specific commit when provided', async () => {
@@ -184,8 +342,7 @@ describe('cloneRepo', () => {
 
     await cloneRepo(makeCtx({ commitHash: 'abc123' }));
 
-    const commands = mockExecSync.mock.calls.map((c: any) => c[0]);
-    expect(commands).toContainEqual(expect.stringContaining('git checkout abc123'));
+    expect(gitCommands()).toContainEqual('git checkout abc123');
   });
 
   it('on existing repo with branch, checks out and pulls', async () => {
@@ -193,7 +350,7 @@ describe('cloneRepo', () => {
 
     await cloneRepo(makeCtx({ branch: 'feature' }));
 
-    const commands = mockExecSync.mock.calls.map((c: any) => c[0]);
+    const commands = gitCommands();
     expect(commands).toContainEqual('git fetch --all --prune');
     expect(commands).toContainEqual('git checkout feature');
     expect(commands).toContainEqual('git pull origin feature');
@@ -204,9 +361,62 @@ describe('cloneRepo', () => {
 
     await cloneRepo(makeCtx({ commitHash: 'deadbeef' }));
 
-    const commands = mockExecSync.mock.calls.map((c: any) => c[0]);
+    const commands = gitCommands();
     expect(commands).toContainEqual('git fetch --all --prune');
     expect(commands).toContainEqual('git checkout deadbeef');
+  });
+
+  it('scrubs the access token from .git/config after a fresh clone', async () => {
+    mockExistsSync.mockReturnValue(false);
+
+    await cloneRepo(makeCtx({
+      cloneUrl: 'https://x-token-auth:ATATT_secret@bitbucket.org/org/repo.git',
+    }));
+
+    const commands = gitCommands();
+    expect(commands).toContainEqual('git remote set-url origin https://bitbucket.org/org/repo.git');
+    expect(commands.some((c) => c.includes('ATATT_secret') && c.startsWith('git remote'))).toBe(false);
+  });
+
+  it('does not rewrite the remote when the clone URL has no credentials', async () => {
+    mockExistsSync.mockReturnValue(false);
+
+    await cloneRepo(makeCtx({ cloneUrl: 'https://github.com/org/repo.git' }));
+
+    expect(gitCommands().some((c) => c.startsWith('git remote set-url'))).toBe(false);
+  });
+
+  it('restores auth on the remote before fetching an existing repo', async () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith('/.git'));
+
+    await cloneRepo(makeCtx({
+      cloneUrl: 'https://x-token-auth:ATATT_secret@bitbucket.org/org/repo.git',
+    }));
+
+    const commands = gitCommands();
+    const setAuth = commands.indexOf('git remote set-url origin https://x-token-auth:ATATT_secret@bitbucket.org/org/repo.git');
+    const fetch = commands.indexOf('git fetch --all --prune');
+    const setClean = commands.indexOf('git remote set-url origin https://bitbucket.org/org/repo.git');
+    expect(setAuth).toBeGreaterThanOrEqual(0);
+    expect(setAuth).toBeLessThan(fetch);
+    expect(setClean).toBeGreaterThan(fetch);
+  });
+});
+
+describe('stripCredentials', () => {
+  it('removes user:token@ from https URLs', () => {
+    expect(stripCredentials('https://x-token-auth:ATATT_secret@bitbucket.org/org/repo.git'))
+      .toBe('https://bitbucket.org/org/repo.git');
+  });
+
+  it('leaves credential-free https URLs unchanged', () => {
+    expect(stripCredentials('https://github.com/org/repo.git'))
+      .toBe('https://github.com/org/repo.git');
+  });
+
+  it('leaves ssh URLs unchanged', () => {
+    expect(stripCredentials('git@github.com:org/repo.git'))
+      .toBe('git@github.com:org/repo.git');
   });
 });
 
@@ -216,6 +426,7 @@ describe('runCloneStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(false);
+    mockExecFile.mockImplementation(execFileOk);
     mockGetRepoCloneCredentials.mockResolvedValue(null);
     mockBuildAuthCloneUrl.mockImplementation((_p: string, url: string) => url);
   });
@@ -248,6 +459,15 @@ describe('runCloneStep', () => {
     expect(mockMkdirSync).toHaveBeenCalledWith(ctx.agentDir, { recursive: true });
   });
 
+  it('chowns the repo base dir to scanner so the analyzer can write the profile', async () => {
+    mockExistsSync.mockReturnValue(false);
+
+    const ctx = makeCtx({ repoName: 'matrix', repoBaseDir: '/workspace/src-1/matrix' });
+    await runCloneStep({ ctx, prev: {} });
+
+    expect(mockChownSync).toHaveBeenCalledWith('/workspace/src-1/matrix', expect.any(Number), expect.any(Number));
+  });
+
   it('resolves authenticated clone URL when credentials exist', async () => {
     mockExistsSync.mockReturnValue(false);
     const creds = { provider: 'github', token: 'ghp_secret', email: undefined };
@@ -258,7 +478,8 @@ describe('runCloneStep', () => {
     const originalCloneUrl = ctx.cloneUrl;
     const result = await runCloneStep({ ctx, prev: {} });
 
-    expect(mockGetRepoCloneCredentials).toHaveBeenCalledWith(ctx.repoName, ctx.repoUrl);
+    // Credentials are resolved by the unique repository_id (passed through), not by name
+    expect(mockGetRepoCloneCredentials).toHaveBeenCalledWith(ctx.repoName, ctx.repoUrl, 42);
     expect(mockBuildAuthCloneUrl).toHaveBeenCalledWith(
       creds.provider,
       originalCloneUrl,

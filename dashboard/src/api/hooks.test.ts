@@ -5,7 +5,16 @@ import { createElement, type ReactNode } from 'react';
 
 // ── Mock workspace ──────────────────────────────────────────────
 
-const mockUseWorkspace = vi.fn(() => ({
+interface MockWorkspaceState {
+  currentWorkspace: { id: number; name: string; description: null; defaultLanguage: string; createdAt: string } | null;
+  workspaces: unknown[];
+  switchWorkspace: () => void;
+  isLoading: boolean;
+  needsOnboarding: boolean;
+  refetchWorkspaces: () => void;
+}
+
+const mockUseWorkspace = vi.fn((): MockWorkspaceState => ({
   currentWorkspace: { id: 1, name: 'Test Workspace', description: null, defaultLanguage: 'en', createdAt: '2026-01-01' },
   workspaces: [],
   switchWorkspace: vi.fn(),
@@ -15,7 +24,7 @@ const mockUseWorkspace = vi.fn(() => ({
 }));
 
 vi.mock('@/lib/workspace', () => ({
-  useWorkspace: (...args: unknown[]) => mockUseWorkspace(...args),
+  useWorkspace: () => mockUseWorkspace(),
 }));
 
 // ── Mock global fetch ───────────────────────────────────────────
@@ -71,6 +80,8 @@ function mockFetch204() {
 // ── Imports (after mocks) ───────────────────────────────────────
 
 import {
+  useAiTraces,
+  isScanActive,
   useTeams,
   useTeam,
   useRepositories,
@@ -95,7 +106,6 @@ import {
   useSyncSource,
   useUpdateSource,
   useDeleteSource,
-  useAddRepoUrl,
   useUploadRepoZip,
   useWorkspaceEvents,
   useBulkUpdateRepositories,
@@ -111,6 +121,7 @@ import {
   useWorkspaceTools,
   useUpdateWorkspaceTools,
   useMergeContributors,
+  useScanLogContent,
 } from './hooks';
 
 // ── Setup / Teardown ────────────────────────────────────────────
@@ -618,6 +629,8 @@ describe('useUpdateFinding', () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['findings'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['findingCounts'] });
+    // Export dialog counts (useFindingCountsByTool) must refresh after triage
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['findingCountsByTool'] });
   });
 
   it('invalidates the specific finding query on success', async () => {
@@ -634,6 +647,22 @@ describe('useUpdateFinding', () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['finding', 10] });
     invalidateSpy.mockRestore();
+  });
+
+  it('sends risk_accepted_reason in snake_case (API contract)', async () => {
+    mockFetchSuccess({ id: 10, status: 'risk_accepted' });
+
+    const qc = createTestQueryClient();
+    const { result } = renderHook(() => useUpdateFinding(), { wrapper: createWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: 10, status: 'risk_accepted', riskAcceptedReason: 'accepted by CISO' });
+    });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).toEqual({ status: 'risk_accepted', risk_accepted_reason: 'accepted by CISO' });
+    // camelCase key must NOT leak onto the wire — zod strips it server-side (silent no-op)
+    expect(body).not.toHaveProperty('riskAcceptedReason');
   });
 });
 
@@ -678,6 +707,81 @@ describe('useScanEvents', () => {
     });
 
     const { result } = renderHook(() => useScanEvents(), { wrapper: createWrapper() });
+    expect(result.current.fetchStatus).toBe('idle');
+  });
+
+  it('polls every 30s so the table refreshes alongside the stats cards', async () => {
+    mockFetchSuccess({ count: 0, results: [] });
+
+    const qc = createTestQueryClient();
+    const { result } = renderHook(() => useScanEvents(), { wrapper: createWrapper(qc) });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // refetchInterval is an observer option — inspect the live observer
+    const query = qc.getQueryCache().getAll()[0] as unknown as {
+      observers: Array<{ options: { refetchInterval?: number } }>;
+    };
+    expect(query.observers[0].options.refetchInterval).toBe(30_000);
+  });
+});
+
+describe('useScanLogContent', () => {
+  it('fetches log text through the shared client (auth header injected)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('{"type":"result"}\n'),
+    });
+    localStorage.setItem('beast_token', 'tok-123');
+
+    const { result } = renderHook(
+      () => useScanLogContent('scan-1', 'triage'),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toBe('{"type":"result"}\n');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/scan-logs/scan-1/triage');
+    // Shared client injects the standard Token auth header — no hand-built Bearer
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Token tok-123');
+    localStorage.removeItem('beast_token');
+  });
+
+  it('URL-encodes the step segment', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+    });
+
+    const { result } = renderHook(
+      () => useScanLogContent('scan-1', 'ai research/step'),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isFetched).toBe(true));
+    expect(mockFetch.mock.calls[0][0]).toBe('/api/scan-logs/scan-1/ai%20research%2Fstep');
+  });
+
+  it('surfaces an error on non-2xx responses', async () => {
+    mockFetchError('Log not found', 404);
+
+    const { result } = renderHook(
+      () => useScanLogContent('scan-1', 'triage'),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as Error).message).toBe('Log not found');
+  });
+
+  it('is disabled without a scan id or step', () => {
+    const { result } = renderHook(
+      () => useScanLogContent(null, null),
+      { wrapper: createWrapper() },
+    );
     expect(result.current.fetchStatus).toBe('idle');
   });
 });
@@ -1073,7 +1177,7 @@ describe('useSourceRepos', () => {
 
 describe('useUpdateSource', () => {
   it('sends PUT request and invalidates sources', async () => {
-    const updatedSource = { id: 2, provider: 'bitbucket', prCommentsEnabled: true };
+    const updatedSource = { id: 2, provider: 'bitbucket', syncIntervalMinutes: 120 };
     mockFetchSuccess(updatedSource);
 
     const qc = createTestQueryClient();
@@ -1082,7 +1186,7 @@ describe('useUpdateSource', () => {
     const { result } = renderHook(() => useUpdateSource(), { wrapper: createWrapper(qc) });
 
     await act(async () => {
-      await result.current.mutateAsync({ id: 2, prCommentsEnabled: true });
+      await result.current.mutateAsync({ id: 2, syncIntervalMinutes: 120 });
     });
 
     expect(mockFetch).toHaveBeenCalledWith('/api/sources/2', expect.objectContaining({
@@ -1093,7 +1197,8 @@ describe('useUpdateSource', () => {
     expect(sourceHeaders.get('Content-Type')).toBe('application/json');
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body).toEqual({ prCommentsEnabled: true });
+    // snake_case on the wire — the API's PUT /sources/:id schema
+    expect(body).toEqual({ sync_interval_minutes: 120 });
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['sources'] });
   });
@@ -1110,7 +1215,7 @@ describe('useUpdateSource', () => {
     });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body).toEqual({ syncIntervalMinutes: 60 });
+    expect(body).toEqual({ sync_interval_minutes: 60 });
   });
 });
 
@@ -1139,60 +1244,6 @@ describe('useImportFromSource', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['sourceRepos'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['repositories'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['workspaceEvents'] });
-  });
-});
-
-describe('useAddRepoUrl', () => {
-  it('sends POST with repo URL and invalidates repositories, workspaceEvents', async () => {
-    const addResult = { repository: { id: 10, name: 'new-repo', teamId: 1 } };
-    mockFetchSuccess(addResult);
-
-    const qc = createTestQueryClient();
-    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
-
-    const { result } = renderHook(() => useAddRepoUrl(), { wrapper: createWrapper(qc) });
-
-    await act(async () => {
-      await result.current.mutateAsync({
-        workspace_id: 1,
-        repo_url: 'https://github.com/org/repo.git',
-        team_id: 3,
-      });
-    });
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/repos/add-url', expect.objectContaining({
-      method: 'POST',
-    }));
-
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body).toEqual({
-      workspace_id: 1,
-      repo_url: 'https://github.com/org/repo.git',
-      team_id: 3,
-    });
-
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['repositories'] });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['workspaceEvents'] });
-  });
-
-  it('sends POST without optional team_id', async () => {
-    mockFetchSuccess({ repository: { id: 11, name: 'solo-repo' } });
-
-    const qc = createTestQueryClient();
-    const { result } = renderHook(() => useAddRepoUrl(), { wrapper: createWrapper(qc) });
-
-    await act(async () => {
-      await result.current.mutateAsync({
-        workspace_id: 1,
-        repo_url: 'https://github.com/org/solo.git',
-      });
-    });
-
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body).toEqual({
-      workspace_id: 1,
-      repo_url: 'https://github.com/org/solo.git',
-    });
   });
 });
 
@@ -1584,5 +1635,64 @@ describe('useUpdateWorkspaceTools', () => {
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.tools[0].credentials).toEqual({ SNYK_TOKEN: 'tok_123' });
+  });
+});
+
+describe('useAiTraces', () => {
+  it('fetches traces for the repository', async () => {
+    const payload = {
+      scan: { id: 's1', scan_type: 'full', status: 'completed', started_at: null, completed_at: null, created_at: '', error: null },
+      traces: [{ wave: 'wave1', file_name: 'wave1.jsonl', content: '', created_at: '' }],
+    };
+    mockFetchSuccess(payload);
+
+    const { result } = renderHook(() => useAiTraces(7), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(payload);
+    expect(mockFetch.mock.calls[0][0]).toBe('/api/repositories/7/ai-traces');
+  });
+
+  it('is disabled for repositoryId <= 0', () => {
+    const { result } = renderHook(() => useAiTraces(0), { wrapper: createWrapper() });
+    expect(result.current.fetchStatus).toBe('idle');
+  });
+
+  it('polls while the related scan is active and stops when terminal', async () => {
+    mockFetchSuccess({ scan: { status: 'running' }, traces: [] });
+
+    const qc = createTestQueryClient();
+    const { result } = renderHook(() => useAiTraces(7), { wrapper: createWrapper(qc) });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // refetchInterval is a conditional function (same pattern as useScans)
+    const query = qc.getQueryCache().getAll()[0] as unknown as {
+      observers: Array<{ options: { refetchInterval?: (q: unknown) => number | false } }>;
+    };
+    const interval = query.observers[0].options.refetchInterval!;
+    expect(typeof interval).toBe('function');
+
+    const queryWith = (status: string | null) => ({
+      state: { data: status === null ? { scan: null, traces: [] } : { scan: { status }, traces: [] } },
+    });
+    expect(interval(queryWith('running'))).toBe(7_000);
+    expect(interval(queryWith('queued'))).toBe(7_000);
+    expect(interval(queryWith('paused'))).toBe(7_000);
+    expect(interval(queryWith('completed'))).toBe(false);
+    expect(interval(queryWith('failed'))).toBe(false);
+    expect(interval(queryWith(null))).toBe(false);
+    expect(interval({ state: { data: undefined } })).toBe(false);
+  });
+});
+
+describe('isScanActive', () => {
+  it('treats running/queued/paused as active, everything else as terminal', () => {
+    expect(isScanActive('running')).toBe(true);
+    expect(isScanActive('queued')).toBe(true);
+    expect(isScanActive('paused')).toBe(true);
+    expect(isScanActive('completed')).toBe(false);
+    expect(isScanActive('failed')).toBe(false);
+    expect(isScanActive(undefined)).toBe(false);
+    expect(isScanActive(null)).toBe(false);
   });
 });

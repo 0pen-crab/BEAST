@@ -27,13 +27,48 @@
     "title": "Бекенд недоступний",
     "degradedTitle": "Проблема з інфраструктурою",
     "detail": "Перевірка стану API не пройшла. Переконайтесь, що контейнер API запущений.",
-    "retry": "Повторити"
+    "retry": "Повторити",
+    "systems": {
+      "db": "База даних",
+      "worker": "Воркер",
+      "claude-runner": "Claude runner",
+      "security-tools": "Інструменти безпеки"
+    }
+  },
+  "toast": {
+    "errorTitle": "Помилка запиту",
+    "successTitle": "Успішно",
+    "warningTitle": "Попередження"
+  },
+  "export": {
+    "button": "Експорт",
+    "processing": "Обробка…",
+    "title": "Експорт вразливостей",
+    "description": "Репозиторіїв: {{count}}",
+    "descriptionWorkspace": "Експортувати знахідки з усього робочого простору.",
+    "format": "Формат",
+    "mdDesc": "Звіт для людини",
+    "csvDesc": "Готовий для таблиць",
+    "severity": "Серйозність",
+    "status": "Статус",
+    "tools": "Інструменти",
+    "noTools": "Жоден інструмент не знайшов знахідок для обраних репозиторіїв.",
+    "aiCurated": "Хай ШІ відфільтрує тільки найцікавіше",
+    "aiCuratedDesc": "Claude поверне CSV з 10–30 критичними знахідками, які варті уваги в першу чергу",
+    "aiFailed": "ШІ-експорт не вдався",
+    "preparing": "Готуємо експорт…",
+    "failed": "Експорт не вдався",
+    "downloadFailed": "Не вдалося завантажити файл",
+    "all": "всі",
+    "none": "жодного"
   },
   "workspace": {
     "select": "Обрати простір",
     "namePlaceholder": "Назва простору",
     "add": "Додати",
     "create": "Створити простір",
+    "loadErrorTitle": "Не вдалося завантажити робочі простори",
+    "loadErrorDetail": "Не вдалося отримати список робочих просторів. Перевірте з'єднання та спробуйте ще раз.",
     "defaultLanguage": "Мова для звітів",
     "defaultLanguageDesc": "Оберіть мову для генерованих звітів (Огляд репозиторію, Аудит вразливостей, Профіль розробника тощо). Рекомендуємо рідну мову — довгі звіти, написані агентом, важко читати англійською, навіть якщо вам зручно користуватись англійською в інтерфейсі."
   },
@@ -54,6 +89,7 @@
     "viewAll": "Переглянути все",
     "name": "Назва",
     "search": "Пошук",
+    "noResults": "Нічого не знайдено",
     "loading": "Завантаження...",
     "saved": "Збережено",
     "optional": "необовʼязково",
@@ -72,7 +108,29 @@
     "remove": "Видалити",
     "first": "Перша",
     "last": "Остання",
-    "create": "Створити"
+    "create": "Створити",
+    "selectAll": "Обрати все",
+    "deselectAll": "Зняти вибір",
+    "export": "Експорт",
+    "min": "Мін",
+    "max": "Макс",
+    "dismiss": "Закрити",
+    "retry": "Повторити",
+    "status": "Статус",
+    "resultsCount_one": "{{count}} результат",
+    "resultsCount_few": "{{count}} результати",
+    "resultsCount_many": "{{count}} результатів",
+    "resultsCount_other": "{{count}} результату",
+    "reposCount_one": "{{count}} репозиторій",
+    "reposCount_few": "{{count}} репозиторії",
+    "reposCount_many": "{{count}} репозиторіїв",
+    "reposCount_other": "{{count}} репозиторію",
+    "justNow": "щойно",
+    "minutesAgo": "{{count}} хв тому",
+    "hoursAgo": "{{count}} год тому",
+    "durationS": "{{s}} с",
+    "durationMS": "{{m}} хв {{s}} с",
+    "durationHM": "{{h}} год {{m}} хв"
   },
   "severity": {
     "Critical": "Критичний",
@@ -84,6 +142,7 @@
   "status": {
     "Open": "Відкритий",
     "Accepted": "Ризик прийнято",
+    "RiskAccepted": "Ризик прийнято",
     "FalsePositive": "Хибний результат",
     "Fixed": "Виправлено",
     "Duplicate": "Дублікат",
@@ -93,7 +152,9 @@
     "queued": "в черзі",
     "paused": "на паузі",
     "failed": "помилка",
-    "Resolved": "Вирішено"
+    "Resolved": "Вирішено",
+    "pending": "очікує",
+    "skipped": "пропущено"
   },
   "login": {
     "signIn": "Увійти до BEAST",
@@ -127,9 +188,10 @@
     "creating": "Створення...",
     "createWorkspace": "Створити простір",
     "step1": "Простір",
-    "step2": "Інструменти",
-    "step3": "Джерело",
-    "step4": "Імпорт",
+    "step2": "ШІ-аналіз",
+    "step3": "Інструменти",
+    "step4": "Джерело",
+    "step5": "Імпорт",
     "connectSource": "Підʼєднати джерела репозиторіїв",
     "connectSourceDesc": "Імпортувати репозиторії з git-організації або локальної папки",
     "publicTab": "Публічний Git",
@@ -154,6 +216,7 @@
     "scanning": "Сканування...",
     "importSuccess": "Підʼєднано — {{count}} репозиторіїв імпортовано",
     "importError": "Не вдалося підʼєднати",
+    "importFailedSources": "Не вдалося імпортувати з: {{sources}}",
     "goToDashboard": "Перейти на головну",
     "back": "Назад",
     "importRepos": "Імпорт репозиторіїв",
@@ -181,7 +244,49 @@
     "alreadyImported": "Вже імпортовано",
     "importSelected": "Імпортувати вибрані ({{count}})",
     "nothingToImport": "Всі репозиторії вже були імпортовані",
-    "continueSource": "Продовжити"
+    "continueSource": "Продовжити",
+    "aiAnalysis": {
+      "title": "ШІ-аналіз коду",
+      "subtitle": "Claude читає ваш код разом із security tools, щоб знайти архітектурні проблеми, відсутні перевірки та шляхи експлуатації, які сканери не бачать.",
+      "badgeEnabled": "УВІМКНЕНО",
+      "badgeDisabled": "ВИМКНЕНО",
+      "selectedPreset": "Обраний пресет",
+      "axisCost": "ТОКЕНИ І ЧАС",
+      "axisDepth": "ЗНАХІДКИ",
+      "specs": {
+        "depth": "Файлів на агента",
+        "cost": "Вартість (medium repo)",
+        "duration": "Тривалість",
+        "findings": "Знахідок vs Quick"
+      },
+      "modes": {
+        "quick": {
+          "desc": "Швидкий поверхневий аналіз. Claude позначає лише знахідки з високою впевненістю. Підходить для малих репо чи швидкого зворотного зв'язку.",
+          "cost": "~$5",
+          "duration": "~5 хв",
+          "multiplier": "×1"
+        },
+        "standard": {
+          "badge": "BALANCED",
+          "desc": "Збалансований глибокий аналіз. Claude вивчає cross-file контекст і архітектуру разом із security tools. Рекомендовано для більшості команд.",
+          "cost": "~$13",
+          "duration": "~20 хв",
+          "multiplier": "×3"
+        },
+        "deep": {
+          "badge": "BEAST MODE",
+          "desc": "Кожен файл, кожен шлях. Claude працює на максимальній глибині та зв'язує міркування по всій кодовій базі. Для критичних чи security-чутливих проєктів.",
+          "cost": "~$50",
+          "duration": "~1г 40хв",
+          "multiplier": "×10"
+        }
+      },
+      "off": {
+        "label": "AI · OFF",
+        "desc": "Скани запускатимуть лише security tools, які ви налаштуєте на наступному кроці. Без ШІ-аналізу, без архітектурного огляду, без cross-file міркування."
+      },
+      "continue": "Продовжити"
+    }
   },
   "dashboard": {
     "title": "Головна",
@@ -205,7 +310,8 @@
     "securityBriefProcessing": "Аналізуємо...",
     "securityBriefDownload": "Завантажити Brief",
     "securityBriefFailed": "Аналіз не вдався",
-    "securityBriefNoFindings": "Немає відкритих знахідок для аналізу"
+    "securityBriefNoFindings": "Немає відкритих знахідок для аналізу",
+    "scansError": "Не вдалося завантажити сканування"
   },
   "scans": {
     "title": "Сканування",
@@ -258,10 +364,59 @@
     "latest": "Останній",
     "scanQueued": "Сканування додано в чергу.",
     "startScan": "Почати сканування",
-    "submitting": "Відправлення..."
+    "submitting": "Відправлення...",
+    "types": {
+      "pr": "PR-скан",
+      "full": "Повний скан"
+    },
+    "stages": {
+      "clone": "Клонування репозиторію",
+      "analysis": "Аналіз репозиторію",
+      "security-tools": "Інструменти безпеки",
+      "ai-research": "AI-дослідження",
+      "import": "Імпорт знахідок",
+      "triage-report": "Тріаж і звіт",
+      "commit": "Запис результатів"
+    },
+    "stepsProgress": "{{completed}}/{{total}} кроків",
+    "unknown": "Невідомо",
+    "stepLog": "Лог «{{step}}»",
+    "logTitle_one": "Лог «{{step}}» ({{count}} подія)",
+    "logTitle_few": "Лог «{{step}}» ({{count}} події)",
+    "logTitle_many": "Лог «{{step}}» ({{count}} подій)",
+    "logTitle_other": "Лог «{{step}}» ({{count}} події)",
+    "logNotAvailable": "Лог недоступний",
+    "input": "Вхідні дані",
+    "output": "Вихідні дані",
+    "started": "Початок",
+    "ended": "Завершення",
+    "aiUsage": {
+      "cost": "вартість",
+      "inputTokens": "вхідні токени",
+      "outputTokens": "вихідні токени",
+      "cacheRead": "читання кешу",
+      "model": "модель"
+    },
+    "logError": "Помилка",
+    "logSuccess": "Успішно",
+    "removeScan": "Видалити сканування",
+    "removeScanConfirm": "Ви впевнені, що хочете видалити з черги сканування",
+    "removing": "Видалення...",
+    "completedWithErrors": "Завершено з помилками",
+    "completedWithErrorsTooltip": "Деякі інструменти безпеки або AI-модулі впали навіть після повторної спроби — результати часткові. Відкрийте скан для деталей.",
+    "stepErrorsTitle": "Помилки під час цього скану",
+    "stepErrorsSubtitle": "Ці інструменти/модулі впали навіть після автоматичного ретраю. Їхніх результатів у цьому скані немає; все інше збережено.",
+    "stepErrorTool": "Інструмент",
+    "stepErrorModule": "Модуль",
+    "failedAfterRetry": "впав після повторної спроби"
   },
   "repos": {
     "title": "Репозиторії",
+    "subtitle": "Всі проскановані репозиторії",
+    "count_one": "{{count}} репозиторій",
+    "count_few": "{{count}} репозиторії",
+    "count_many": "{{count}} репозиторіїв",
+    "count_other": "{{count}} репозиторія",
     "searchPlaceholder": "Пошук репозиторіїв...",
     "allTeams": "Всі команди",
     "noMatchingRepos": "Репозиторіїв не знайдено",
@@ -321,7 +476,16 @@
     "hasFindings": "Є знахідки",
     "noFindings": "Без знахідок",
     "exportFindings": "Експорт знахідок",
-    "exporting": "Експорт..."
+    "exporting": "Експорт...",
+    "bulkScanFailed": "Не вдалося поставити сканування в чергу",
+    "bulkDeleteTitle": "Видалити репозиторії",
+    "bulkDeleteConfirm_one": "Видалити {{count}} репозиторій з усіма даними? Цю дію неможливо скасувати.",
+    "bulkDeleteConfirm_few": "Видалити {{count}} репозиторії з усіма даними? Цю дію неможливо скасувати.",
+    "bulkDeleteConfirm_many": "Видалити {{count}} репозиторіїв з усіма даними? Цю дію неможливо скасувати.",
+    "bulkDeleteConfirm_other": "Видалити {{count}} репозиторія з усіма даними? Цю дію неможливо скасувати.",
+    "bulkDeleteFailed": "Не вдалося видалити {{failed}} з {{total}}",
+    "exportFailed": "Помилка експорту",
+    "aiExportFailed": "Не вдалося згенерувати AI-звіт"
   },
   "repo": {
     "scanResultsByTool": "Результати сканування за інструментом",
@@ -341,10 +505,55 @@
     "repoProfile": "Профіль репозиторію",
     "securityAudit": "Аудит безпеки",
     "generated": "Згенеровано",
+    "minRead": "{{minutes}} хв читання",
+    "wordCount": "{{words}}+ слів",
     "noReportAvailable": "Звіт недоступний",
     "overview": "Огляд",
     "triagedByAi": "Тріаж AI, Прийнято",
-    "downloadMd": "Завантажити .md"
+    "downloadMd": "Завантажити .md",
+    "aiTraceTab": "AI-трейс",
+    "aiTrace": {
+      "emptyNoScan": "Сканів на цьому репозиторії ще не було.",
+      "emptyNoTraces": "Останній скан не зберіг AI-трейсів.",
+      "prompt": "Промпт користувача",
+      "assistant": "Асистент",
+      "thinking": "Роздуми",
+      "toolResult": "Результат інструмента",
+      "completed": "Завершено",
+      "failed": "Впало",
+      "events": "подій",
+      "turns": "обертів",
+      "live": "Наживо",
+      "system": "система",
+      "tool": "інструмент",
+      "toolsCount": "{{n}} інструментів",
+      "toolPending": "виконується…",
+      "traceError": "Помилка трейсу:",
+      "showMore": "Показати більше",
+      "showLess": "Згорнути",
+      "downloadRaw": "Завантажити сирий трейс (.jsonl)",
+      "copyRaw": "Скопіювати сирий трейс",
+      "copied": "Скопійовано",
+      "status": {
+        "completed": "ok",
+        "failed": "впало",
+        "partial": "частково"
+      },
+      "wave": {
+        "wave1": "Хвиля 1 · Фільтр шуму",
+        "wave2": "Хвиля 2 · {{name}}",
+        "wave3": "Хвиля 3 · Детектив ланцюжків",
+        "wave4": "Хвиля 4 · {{name}}",
+        "report": "Побудова звіту",
+        "analyzer": "Аналіз профілю",
+        "scanner": "Сканер коду",
+        "triageReport": "Тріаж і звіт",
+        "scout": "Скаут · пачка {{batch}}",
+        "sniper": "Снайпер · {{name}}"
+      }
+    },
+    "lastScanCompletedWithErrors": "Останній скан завершився з помилками — детальніше в скані.",
+    "openScan": "Відкрити скан"
   },
   "findings": {
     "title": "Знахідки",
@@ -364,6 +573,10 @@
     "columnSettings": "Налаштування колонок",
     "cvss": "CVSS",
     "contributor": "Контрибʼютор",
+    "exportCsv": "Експортувати CSV",
+    "duplicates": "Дублікати",
+    "showDuplicates": "Показати дублікати",
+    "hideDuplicates": "Приховати дублікати",
     "detail": {
       "description": "Опис",
       "location": "Розташування",
@@ -437,18 +650,27 @@
     "syncFailed": "Помилка синхронізації",
     "pipelineError": "Помилка сканування",
     "apiError": "Помилка API",
-    "prScanTriggered": "Запущено сканування PR",
-    "prDiffFetchFailed": "Не вдалося отримати diff PR",
-    "prCommentFailed": "Не вдалося залишити коментар PR",
     "contributorIngestFailed": "Помилка імпорту даних контрибʼютора",
-    "webhookRegistrationFailed": "Помилка реєстрації вебхука",
     "reposAdded": "репозиторіїв додано",
     "reposUpdated": "репозиторіїв оновлено",
     "level": "Рівень",
     "source": "Джерело",
     "repo": "Репозиторій",
     "date": "Дата",
-    "type": "Тип"
+    "type": "Тип",
+    "levels": {
+      "all": "Всі",
+      "error": "Помилка",
+      "warning": "Попередження",
+      "info": "Інфо"
+    },
+    "id": "ID",
+    "scan": "Скан",
+    "step": "Крок",
+    "workspaceId": "ID простору",
+    "created": "Створено",
+    "resolvedMeta": "Вирішено: {{date}}",
+    "resolvedMetaBy": "Вирішено: {{date}} — {{user}}"
   },
   "contributors": {
     "title": "Контрибʼютори",
@@ -482,7 +704,26 @@
     "mergeSearchPlaceholder": "Пошук за імʼям або email...",
     "mergePickTarget": "Оберіть контрибʼютора, якого залишити",
     "mergeTransfers": "Усі email, статистика репозиторіїв, активність, знахідки та оцінки будуть перенесені",
-    "mergePartialFailure": "{{succeeded}} обʼєднано, {{failed}} невдало"
+    "mergePartialFailure": "{{succeeded}} обʼєднано, {{failed}} невдало",
+    "duplicatesBanner_one": "Можливі дублікати: {{count}} група",
+    "duplicatesBanner_few": "Можливі дублікати: {{count}} групи",
+    "duplicatesBanner_many": "Можливі дублікати: {{count}} груп",
+    "duplicatesBanner_other": "Можливі дублікати: {{count}} груп",
+    "duplicateReasonSameName": "Однакове імʼя",
+    "duplicateReasonSameEmailLocal": "Однакове імʼя email на різних доменах",
+    "duplicateReasonInitialPattern": "Ініціал збігається з повним імʼям",
+    "dismissSuggestion": "Приховати пропозицію",
+    "count_one": "{{count}} контрибʼютор",
+    "count_few": "{{count}} контрибʼютори",
+    "count_many": "{{count}} контрибʼюторів",
+    "count_other": "{{count}} контрибʼютора",
+    "contributionsLastYear_one": "{{count}} внесок за останній рік",
+    "contributionsLastYear_few": "{{count}} внески за останній рік",
+    "contributionsLastYear_many": "{{count}} внесків за останній рік",
+    "contributionsLastYear_other": "{{count}} внеску за останній рік",
+    "noContributionsLastYear": "Немає внесків за останній рік",
+    "heatmapLess": "Менше",
+    "heatmapMore": "Більше"
   },
   "sources": {
     "title": "Джерела репозиторіїв",
@@ -589,16 +830,18 @@
         "api": "Тариф API"
       },
       "quick": {
-        "label": "QUICK",
+        "label": "ШВИДКИЙ",
         "tag": "Для малих репозиторіїв або базового аналізу"
       },
       "standard": {
-        "label": "STANDARD",
-        "tag": "Помірна швидкість. Надійне покриття"
+        "label": "СТАНДАРТ",
+        "tag": "Помірна швидкість. Надійне покриття",
+        "badge": "ЗБАЛАНСОВАНИЙ"
       },
       "deep": {
-        "label": "DEEP",
-        "tag": "Повільно. Дорого. Максимум знахідок"
+        "label": "ГЛИБОКИЙ",
+        "tag": "Повільно. Дорого. Максимум знахідок",
+        "badge": "BEAST MODE"
       },
       "sizes": {
         "small": "МАЛИЙ РЕПО",
@@ -609,7 +852,8 @@
         "small": "CLI-утиліта, пакет, мікросервіс",
         "medium": "Типовий SaaS продукт, full-stack додаток",
         "large": "Enterprise monorepo, платформа середнього розміру"
-      }
+      },
+      "filesApprox": "~{{n}} файлів"
     }
   },
   "pipeline": {
@@ -624,26 +868,9 @@
     "aiResearchShort": "AI Дослід.",
     "triageReportShort": "Тріаж & Звіт"
   },
-  "pullRequests": {
-    "tab": "Pull-запити",
-    "title": "Назва",
-    "author": "Автор",
-    "branches": "Гілки",
-    "status": "Статус",
-    "scanStatus": "Статус сканування",
-    "scan": "Сканувати",
-    "notScanned": "Не скановано",
-    "empty": "Немає pull-запитів",
-    "emptySubtitle": "Pull-запити з'являться тут після отримання через webhook або ручну синхронізацію"
-  },
   "integrations": {
     "capabilities": "Можливості інтеграції",
     "capRepos": "Список репозиторіїв",
-    "capPullRequests": "Моніторинг PR",
-    "capWebhooks": "Автосканування через webhooks",
-    "capPrComments": "Коментарі до PR",
-    "prComments": "Публікувати результати сканування як коментарі до PR",
-    "prCommentsNoScope": "Токен не має дозволу pullrequest:write",
     "noScope": "немає дозволу"
   },
   "members": {
@@ -663,11 +890,14 @@
     "workspaceAdmin": "Адмін простору",
     "member": "Учасник",
     "usernamePlaceholder": "Імʼя користувача або email",
+    "searchUserPlaceholder": "Пошук користувачів за іменем або email…",
+    "clearSelection": "Очистити вибір",
     "addSuccess": "Користувач {{username}} доданий",
     "tempPassword": "Тимчасовий пароль",
     "copyCredentials": "Копіювати",
     "copied": "Скопійовано!",
-    "alreadyMember": "Користувач вже є учасником цього простору"
+    "alreadyMember": "Користувач вже є учасником цього простору",
+    "noMatchingUsers": "Користувачів не знайдено"
   },
   "tools": {
     "categories": {
@@ -691,7 +921,24 @@
     "whereGetToken": "Де отримати токен?",
     "saveError": "Не вдалося зберегти налаштування інструментів",
     "enabled": "Увімкнено",
-    "disabled": "Вимкнено"
+    "disabled": "Вимкнено",
+    "descriptions": {
+      "gitleaks": "Виявляє захардкоджені секрети в git-репозиторіях за допомогою регулярних виразів та ентропійного аналізу.",
+      "trufflehog": "Знаходить і верифікує витоки облікових даних у git-історії та коді.",
+      "trivy-secrets": "Виявляє секрети у вихідному коді та конфігураційних файлах.",
+      "gitguardian": "Виявляє розповзання секретів і усуває його за допомогою сканування на основі політик.",
+      "semgrep": "Легкий статичний аналіз із правилами спільноти для багатьох мов.",
+      "snyk-code": "SAST на основі ШІ, що виявляє вразливості безпеки у вашому коді.",
+      "osv-scanner": "Сканує залежності за базою вразливостей OSV.",
+      "trivy-sca": "Знаходить відомі вразливості в пакетах ОС та мовних залежностях.",
+      "snyk-sca": "Виявляє та виправляє вразливості у відкритих залежностях.",
+      "jfrog": "Глибоке рекурсивне сканування вразливостей у бінарних артефактах та залежностях.",
+      "checkov": "Сканує IaC-файли на місконфігурації в Terraform, CloudFormation та інших форматах.",
+      "trivy-iac": "Виявляє місконфігурації в Dockerfile, Kubernetes та Terraform.",
+      "snyk-iac": "Знаходить і виправляє місконфігурації в Terraform, Kubernetes та ARM-шаблонах.",
+      "presidio": "Виявлення PII на основі NLP — імена, телефони, кредитні картки, IBAN та інші персональні дані.",
+      "semgrep-pii": "Semgrep із PII-правилами для виявлення патернів витоку персональних даних."
+    }
   },
   "language": {
     "en": "English",

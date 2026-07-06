@@ -1,0 +1,18 @@
+{
+  "name": "@beast/benchmark",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Reusable benchmark tooling — aggregates Claude AI token/cost metrics from scan_files",
+  "scripts": {
+    "aggregate": "tsx aggregate-metrics.ts"
+  },
+  "dependencies": {
+    "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

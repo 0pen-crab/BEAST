@@ -53,6 +53,19 @@ describe('ErrorBoundary', () => {
     expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
   });
 
+  it('logs the error and component stack loudly via componentDidCatch', () => {
+    render(
+      <ErrorBoundary>
+        <ThrowingComponent message="kaboom" />
+      </ErrorBoundary>,
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[ErrorBoundary]',
+      expect.objectContaining({ message: 'kaboom' }),
+      expect.any(String),
+    );
+  });
+
   it('renders a Retry button in default fallback', () => {
     render(
       <ErrorBoundary>

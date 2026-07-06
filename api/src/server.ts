@@ -1,4 +1,8 @@
-import { buildApp } from './app.ts';
+import { buildApp, installCrashHandlers } from './app.ts';
+
+// A stray unhandled rejection/exception must crash loudly (docker restarts us),
+// never zombify the API silently.
+installCrashHandlers();
 
 const API_HOST = process.env.API_HOST ?? '0.0.0.0';
 const API_PORT = Number(process.env.API_PORT) || 3000;

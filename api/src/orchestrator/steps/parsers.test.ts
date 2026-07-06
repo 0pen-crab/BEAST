@@ -324,12 +324,31 @@ describe('parseSarif', () => {
     expect(findings).toHaveLength(3);
   });
 
-  it('returns empty array for invalid JSON', () => {
-    expect(parseSarif('not json')).toEqual([]);
+  it('throws a descriptive error for invalid JSON (truncated file must not look like a clean repo)', () => {
+    expect(() => parseSarif('not json')).toThrow(/parseSarif/);
+    expect(() => parseSarif('not json')).toThrow(/not json/);
   });
 
-  it('returns empty array for empty string', () => {
-    expect(parseSarif('')).toEqual([]);
+  it('includes the file name and a content snippet in the parse error', () => {
+    const truncated = '{"runs":[{"results":[{"ruleId":"R1"'; // truncated mid-object
+    expect(() => parseSarif(truncated, 'code-analysis.sarif')).toThrow(/code-analysis\.sarif/);
+    expect(() => parseSarif(truncated, 'code-analysis.sarif')).toThrow(/\{"runs":\[/);
+  });
+
+  it('truncates the content snippet in the error to 200 chars', () => {
+    const junk = 'x'.repeat(1000);
+    try {
+      parseSarif(junk, 'big.sarif');
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      const msg = (err as Error).message;
+      expect(msg).toContain('x'.repeat(200));
+      expect(msg).not.toContain('x'.repeat(201));
+    }
+  });
+
+  it('throws for empty string (empty file is corrupt, not clean)', () => {
+    expect(() => parseSarif('')).toThrow(/parseSarif/);
   });
 
   it('returns empty array when runs is missing', () => {
@@ -533,24 +552,25 @@ describe('parseGitleaks', () => {
     expect(parseGitleaks('[]')).toEqual([]);
   });
 
-  it('returns empty array for invalid JSON', () => {
-    expect(parseGitleaks('not json at all')).toEqual([]);
+  it('throws a descriptive error for invalid JSON', () => {
+    expect(() => parseGitleaks('not json at all')).toThrow(/parseGitleaks/);
+    expect(() => parseGitleaks('not json at all', 'gitleaks-results.json')).toThrow(/gitleaks-results\.json/);
   });
 
-  it('returns empty array for empty string', () => {
-    expect(parseGitleaks('')).toEqual([]);
+  it('throws for empty string (empty file is corrupt, not clean)', () => {
+    expect(() => parseGitleaks('')).toThrow(/parseGitleaks/);
   });
 
-  it('returns empty array for non-array JSON (object)', () => {
-    expect(parseGitleaks('{"key": "value"}')).toEqual([]);
+  it('throws for non-array JSON (object)', () => {
+    expect(() => parseGitleaks('{"key": "value"}')).toThrow(/expected a JSON array/i);
   });
 
-  it('returns empty array for non-array JSON (string)', () => {
-    expect(parseGitleaks('"hello"')).toEqual([]);
+  it('throws for non-array JSON (string)', () => {
+    expect(() => parseGitleaks('"hello"')).toThrow(/expected a JSON array/i);
   });
 
-  it('returns empty array for non-array JSON (number)', () => {
-    expect(parseGitleaks('42')).toEqual([]);
+  it('throws for non-array JSON (number)', () => {
+    expect(() => parseGitleaks('42')).toThrow(/expected a JSON array/i);
   });
 
   it('extracts Secret field as secretValue', () => {
@@ -669,12 +689,12 @@ describe('parseTrufflehog', () => {
     expect(findings[1].title).toBe('Potential secret: GitHub');
   });
 
-  it('skips invalid lines in NDJSON and continues parsing', () => {
+  it('throws a descriptive error for an invalid NDJSON line (truncated output must scream)', () => {
     const validLine = JSON.stringify({ DetectorName: 'AWS', Verified: false });
-    const content = `not valid json\n${validLine}\nalso bad`;
-    const findings = parseTrufflehog(content);
-    expect(findings).toHaveLength(1);
-    expect(findings[0].vulnIdFromTool).toBe('trufflehog-AWS');
+    const content = `${validLine}\n{"DetectorName":"GitHub","Ver`; // truncated last line
+    expect(() => parseTrufflehog(content)).toThrow(/parseTrufflehog/);
+    expect(() => parseTrufflehog(content, 'trufflehog-results.json')).toThrow(/trufflehog-results\.json/);
+    expect(() => parseTrufflehog(content)).toThrow(/"DetectorName":"GitHub"/);
   });
 
   it('returns empty array for empty string', () => {
@@ -1191,12 +1211,13 @@ describe('parseTrivy', () => {
 
   // -- Edge cases --
 
-  it('returns empty array for invalid JSON', () => {
-    expect(parseTrivy('not json')).toEqual([]);
+  it('throws a descriptive error for invalid JSON', () => {
+    expect(() => parseTrivy('not json')).toThrow(/parseTrivy/);
+    expect(() => parseTrivy('not json', 'trivy-sca-results.json')).toThrow(/trivy-sca-results\.json/);
   });
 
-  it('returns empty array for empty string', () => {
-    expect(parseTrivy('')).toEqual([]);
+  it('throws for empty string (empty file is corrupt, not clean)', () => {
+    expect(() => parseTrivy('')).toThrow(/parseTrivy/);
   });
 
   it('returns empty array when Results is missing', () => {

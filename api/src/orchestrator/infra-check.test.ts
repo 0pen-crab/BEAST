@@ -106,6 +106,21 @@ describe('runInfraCheck', () => {
   });
 });
 
+describe('infraTargetFromMessage', () => {
+  it('maps persisted event messages back to their target host', async () => {
+    const { infraTargetFromMessage } = await import('./infra-check.ts');
+    expect(infraTargetFromMessage('Cannot reach security-tools: auth failed')).toBe('security-tools');
+    expect(infraTargetFromMessage('Cannot reach claude-runner: connect ECONNREFUSED')).toBe('claude-runner');
+  });
+
+  it('returns null for messages that are not infra-check reachability failures', async () => {
+    const { infraTargetFromMessage } = await import('./infra-check.ts');
+    expect(infraTargetFromMessage('Pipeline failed: boom')).toBeNull();
+    expect(infraTargetFromMessage('Cannot reach some-other-host: nope')).toBeNull();
+    expect(infraTargetFromMessage('')).toBeNull();
+  });
+});
+
 describe('hasOpenInfraIssues', () => {
   it('returns false when no unresolved infra events exist', async () => {
     mockDb.where.mockResolvedValueOnce([]);

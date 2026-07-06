@@ -29,6 +29,41 @@
       "when": 1778889800000,
       "tag": "0003_add_scan_resume_support",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778889900000,
+      "tag": "0004_add_worker_heartbeat",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778890000000,
+      "tag": "0005_add_feedback_compiled_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782900000000,
+      "tag": "0006_drop_removed_feature_artifacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782950000000,
+      "tag": "0007_add_completed_with_errors",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783296000000,
+      "tag": "0008_truncate_legacy_error_blobs",
+      "breakpoints": true
     }
   ]
 }

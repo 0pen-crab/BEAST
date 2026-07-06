@@ -568,10 +568,10 @@ function SourcesSection({ workspaceId }: { workspaceId: number }) {
     const now = new Date();
     const diffMs = now.getTime() - d.getTime();
     const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) return 'just now';
-    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffMin < 1) return t('common.justNow');
+    if (diffMin < 60) return t('common.minutesAgo', { count: diffMin });
     const diffH = Math.floor(diffMin / 60);
-    if (diffH < 24) return `${diffH}h ago`;
+    if (diffH < 24) return t('common.hoursAgo', { count: diffH });
     return formatDate(d);
   }
 
@@ -682,7 +682,7 @@ function SourceCard({
             )}
             {repoCount > 0 && (
               <span className="beast-source-meta">
-                {repoCount} repos
+                {t('common.reposCount', { count: repoCount })}
               </span>
             )}
           </div>
@@ -856,18 +856,18 @@ const SCAN_DEPTH_PRESETS: {
   labelKey: string;
   tagKey: string;
   findingsMult: string;
-  badge?: string;
+  badgeKey?: string;
   badgeRed?: boolean;
 }[] = [
   { depth: 1500, labelKey: 'settings.scanDepth.quick.label',    tagKey: 'settings.scanDepth.quick.tag',    findingsMult: '1' },
-  { depth: 500,  labelKey: 'settings.scanDepth.standard.label', tagKey: 'settings.scanDepth.standard.tag', findingsMult: '3',  badge: 'BALANCED' },
-  { depth: 100,  labelKey: 'settings.scanDepth.deep.label',     tagKey: 'settings.scanDepth.deep.tag',     findingsMult: '10', badge: 'BEAST MODE', badgeRed: true },
+  { depth: 500,  labelKey: 'settings.scanDepth.standard.label', tagKey: 'settings.scanDepth.standard.tag', findingsMult: '3',  badgeKey: 'settings.scanDepth.standard.badge' },
+  { depth: 100,  labelKey: 'settings.scanDepth.deep.label',     tagKey: 'settings.scanDepth.deep.tag',     findingsMult: '10', badgeKey: 'settings.scanDepth.deep.badge', badgeRed: true },
 ];
 
-const REPO_PROFILES: { key: 'small' | 'medium' | 'large'; files: number; hint: string }[] = [
-  { key: 'small',  files: 500,   hint: '~500 files' },
-  { key: 'medium', files: 2500,  hint: '~2,500 files' },
-  { key: 'large',  files: 10000, hint: '~10,000 files' },
+const REPO_PROFILES: { key: 'small' | 'medium' | 'large'; files: number; hintN: string }[] = [
+  { key: 'small',  files: 500,   hintN: '500' },
+  { key: 'medium', files: 2500,  hintN: '2,500' },
+  { key: 'large',  files: 10000, hintN: '10,000' },
 ];
 
 const SINGLE_MODULE_THRESHOLD = 2000;
@@ -1016,8 +1016,8 @@ function ScanDepthSection() {
             disabled={updateAi.isPending}
             className={cn('beast-preset-tab', selected === p.depth && 'beast-preset-tab-active')}
           >
-            {p.badge && (
-              <div className={cn('beast-preset-tab-badge', p.badgeRed && 'beast-preset-tab-badge-red')}>{p.badge}</div>
+            {p.badgeKey && (
+              <div className={cn('beast-preset-tab-badge', p.badgeRed && 'beast-preset-tab-badge-red')}>{t(p.badgeKey)}</div>
             )}
             <div className="beast-preset-tab-title">{t(p.labelKey)}</div>
             <div className="beast-preset-tab-tag">{t(p.tagKey)}</div>
@@ -1047,7 +1047,7 @@ function ScanDepthSection() {
                 <div key={profile.key} className="beast-repo-preview-card">
                   <div className="beast-repo-preview-header">
                     <span className="beast-repo-preview-size">{t(`settings.scanDepth.sizes.${profile.key}`)}</span>
-                    <span className="beast-repo-preview-count">{profile.hint}</span>
+                    <span className="beast-repo-preview-count">{t('settings.scanDepth.filesApprox', { n: profile.hintN })}</span>
                   </div>
                   <div className="beast-repo-preview-desc">
                     {t(`settings.scanDepth.sizeDesc.${profile.key}`)}

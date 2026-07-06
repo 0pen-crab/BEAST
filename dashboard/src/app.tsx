@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { ProtectedRoute } from '@/components/protected-route';
 import { HealthNotification } from '@/components/health-notification';
+import { ErrorBoundary } from '@/components/error-boundary';
+import { ToastProvider } from '@/lib/toast';
 import { LoginPage } from '@/pages/login';
 import { SetupPage } from '@/pages/setup';
 import { AppLayout } from '@/components/layout/app-layout';
@@ -37,50 +39,54 @@ import { Demo11Embers } from '@/pages/demo/demo-11-embers';
 import { PipelineTestPage } from '@/pages/pipeline-test';
 export function App() {
   return (
-    <BrowserRouter>
-      <HealthNotification />
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/setup" element={<SetupPage />} />
-        <Route element={<ProtectedRoute />}>
-          <Route element={<AppLayout />}>
-            <Route index element={<DashboardPage />} />
-            <Route path="teams" element={<TeamsPage />} />
-            <Route path="teams/:id" element={<TeamDetailPage />} />
-            <Route path="scans" element={<ScansPage />} />
-            <Route path="events" element={<EventsPage />} />
-            <Route path="findings" element={<FindingsPage />} />
-            <Route path="repos" element={<ReposPage />} />
-            <Route path="repos/:id" element={<RepoPage />} />
-            <Route path="contributors" element={<ContributorsPage />} />
-            <Route path="contributors/:id" element={<ContributorProfilePage />} />
-            <Route path="findings/:id" element={<FindingDetailPage />} />
-            <Route path="members" element={<MembersPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="settings/:section" element={<SettingsPage />} />
-          </Route>
-          <Route path="onboarding/*" element={<NewWorkspacePage />} />
-          <Route path="admin" element={<AdminLayout />}>
-            <Route index element={<Navigate to="/admin/workspaces" replace />} />
-            <Route path="users" element={<AdminUsersPage />} />
-            <Route path="workspaces" element={<AdminWorkspacesPage />} />
-          </Route>
-        </Route>
-        <Route path="demo" element={<DemoIndexPage />} />
-        <Route path="demo/1" element={<Demo1EyeGlow />} />
-        <Route path="demo/2" element={<Demo2EyeTracking />} />
-        <Route path="demo/3" element={<Demo3VerticalDrift />} />
-        <Route path="demo/4" element={<Demo4MicroShake />} />
-        <Route path="demo/5" element={<Demo5Tilt />} />
-        <Route path="demo/6" element={<Demo6ShadowBreathe />} />
-        <Route path="demo/7" element={<Demo7VignettePulse />} />
-        <Route path="demo/8" element={<Demo8FilmGrain />} />
-        <Route path="demo/9" element={<Demo9Chromatic />} />
-        <Route path="demo/10" element={<Demo10RedFlash />} />
-        <Route path="demo/11" element={<Demo11Embers />} />
-        <Route path="pipeline-test" element={<PipelineTestPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
-    </BrowserRouter>
+    <ToastProvider>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <HealthNotification />
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/setup" element={<SetupPage />} />
+            <Route element={<ProtectedRoute />}>
+              <Route element={<AppLayout />}>
+                <Route index element={<DashboardPage />} />
+                <Route path="teams" element={<TeamsPage />} />
+                <Route path="teams/:id" element={<TeamDetailPage />} />
+                <Route path="scans" element={<ScansPage />} />
+                <Route path="events" element={<EventsPage />} />
+                <Route path="findings" element={<FindingsPage />} />
+                <Route path="repos" element={<ReposPage />} />
+                <Route path="repos/:id" element={<RepoPage />} />
+                <Route path="contributors" element={<ContributorsPage />} />
+                <Route path="contributors/:id" element={<ContributorProfilePage />} />
+                <Route path="findings/:id" element={<FindingDetailPage />} />
+                <Route path="members" element={<MembersPage />} />
+                <Route path="settings" element={<SettingsPage />} />
+                <Route path="settings/:section" element={<SettingsPage />} />
+              </Route>
+              <Route path="onboarding/*" element={<NewWorkspacePage />} />
+              <Route path="admin" element={<AdminLayout />}>
+                <Route index element={<Navigate to="/admin/workspaces" replace />} />
+                <Route path="users" element={<AdminUsersPage />} />
+                <Route path="workspaces" element={<AdminWorkspacesPage />} />
+              </Route>
+            </Route>
+            <Route path="demo" element={<DemoIndexPage />} />
+            <Route path="demo/1" element={<Demo1EyeGlow />} />
+            <Route path="demo/2" element={<Demo2EyeTracking />} />
+            <Route path="demo/3" element={<Demo3VerticalDrift />} />
+            <Route path="demo/4" element={<Demo4MicroShake />} />
+            <Route path="demo/5" element={<Demo5Tilt />} />
+            <Route path="demo/6" element={<Demo6ShadowBreathe />} />
+            <Route path="demo/7" element={<Demo7VignettePulse />} />
+            <Route path="demo/8" element={<Demo8FilmGrain />} />
+            <Route path="demo/9" element={<Demo9Chromatic />} />
+            <Route path="demo/10" element={<Demo10RedFlash />} />
+            <Route path="demo/11" element={<Demo11Embers />} />
+            <Route path="pipeline-test" element={<PipelineTestPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+        </BrowserRouter>
+      </ErrorBoundary>
+    </ToastProvider>
   );
 }
