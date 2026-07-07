@@ -6,7 +6,7 @@ import { getRepoCloneCredentials } from '../entities.ts';
 import { buildAuthCloneUrl } from '../git-providers.ts';
 import { withRetry } from '../../lib/retry.ts';
 
-const GIT_TIMEOUT_MS = 300_000; // 5 min per git command
+const GIT_TIMEOUT_MS = 1_200_000; // 20 min per git command (corporate proxy throttles egress ~700 KiB/s; large clones need headroom)
 
 function ensureScanDir(dir: string): void {
   if (fs.existsSync(dir)) {

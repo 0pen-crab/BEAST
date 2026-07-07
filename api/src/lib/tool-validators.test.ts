@@ -115,10 +115,10 @@ describe('validateSnyk', () => {
 });
 
 describe('validateJFrog', () => {
-  it('returns valid:true when both version check and token check succeed', async () => {
+  it('returns valid:true when version check and scan/graph both succeed', async () => {
     mockFetch
       .mockResolvedValueOnce(makeResponse(200)) // version check
-      .mockResolvedValueOnce(makeResponse(200)); // token check
+      .mockResolvedValueOnce(makeResponse(201)); // scan/graph accepted
 
     const result = await validateJFrog({
       JF_URL: 'https://example.jfrog.io',
@@ -133,15 +133,16 @@ describe('validateJFrog', () => {
     );
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
-      'https://example.jfrog.io/access/api/v1/cert/root',
+      'https://example.jfrog.io/xray/api/v1/scan/graph',
       expect.objectContaining({
+        method: 'POST',
         headers: expect.objectContaining({ Authorization: 'Bearer mytoken' }),
       }),
     );
   });
 
   it('returns invalid with URL error when version check returns non-ok', async () => {
-    mockFetch.mockResolvedValueOnce(makeResponse(404)); // version check fails
+    mockFetch.mockResolvedValueOnce(makeResponse(404));
 
     const result = await validateJFrog({
       JF_URL: 'https://bad.jfrog.io',
@@ -170,10 +171,10 @@ describe('validateJFrog', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('returns invalid with token error when URL ok but token check returns 401', async () => {
+  it('returns invalid access token when scan/graph returns 401', async () => {
     mockFetch
-      .mockResolvedValueOnce(makeResponse(200)) // version check ok
-      .mockResolvedValueOnce(makeResponse(401)); // token check fails
+      .mockResolvedValueOnce(makeResponse(200)) // version ok
+      .mockResolvedValueOnce(makeResponse(401)); // scan/graph unauthorized
 
     const result = await validateJFrog({
       JF_URL: 'https://example.jfrog.io',
@@ -183,17 +184,18 @@ describe('validateJFrog', () => {
     expect(result).toEqual({ valid: false, error: 'Invalid access token' });
   });
 
-  it('returns invalid with token error when URL ok but token check returns 403', async () => {
+  it('returns an Xray-permission error when scan/graph returns 403', async () => {
     mockFetch
-      .mockResolvedValueOnce(makeResponse(200)) // version check ok
-      .mockResolvedValueOnce(makeResponse(403)); // token check fails
+      .mockResolvedValueOnce(makeResponse(200)) // version ok, token authenticates
+      .mockResolvedValueOnce(makeResponse(403)); // scan/graph forbidden
 
     const result = await validateJFrog({
       JF_URL: 'https://example.jfrog.io',
-      JF_ACCESS_TOKEN: 'badtoken',
+      JF_ACCESS_TOKEN: 'lowprivtoken',
     });
 
-    expect(result).toEqual({ valid: false, error: 'Invalid access token' });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Xray scan permission');
   });
 
   it('returns invalid with missing credentials error when URL is absent', async () => {

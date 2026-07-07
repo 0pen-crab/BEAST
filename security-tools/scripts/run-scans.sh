@@ -391,23 +391,23 @@ fi
 echo "[security-tools] All scans complete"
 
 # -- Build JSON summary (last line of stdout) ------------------------------
-TOOLS_JSON=()
-for key in gitleaks trufflehog trivy-secrets trivy-sca trivy-iac jf-audit semgrep osv-scanner checkov gitguardian snyk-sca snyk-code snyk-iac presidio semgrep-pii; do
-  if [ -n "${TOOL_STATUS[$key]+x}" ]; then
-    status="${TOOL_STATUS[$key]}"
-    exit_code="${TOOL_EXIT[$key]}"
-    duration_ms="${TOOL_DURATION[$key]:-0}"
-    error_msg="${TOOL_ERROR[$key]:-}"
-    [[ -z "$exit_code" ]] && exit_code="null"
-    # Escape quotes and backslashes in error message for valid JSON
-    error_msg="${error_msg//\\/\\\\}"
-    error_msg="${error_msg//\"/\\\"}"
-    if [ -n "$error_msg" ]; then
-      TOOLS_JSON+=("\"${key}\":{\"status\":\"${status}\",\"exit_code\":${exit_code},\"duration_ms\":${duration_ms},\"error\":\"${error_msg}\"}")
-    else
-      TOOLS_JSON+=("\"${key}\":{\"status\":\"${status}\",\"exit_code\":${exit_code},\"duration_ms\":${duration_ms}}")
-    fi
-  fi
+# Built with jq (present in the image) so tool error text can never produce
+# invalid JSON — jq escapes control chars, quotes, backslashes and unicode.
+# (trivy writes tab-delimited log lines; raw tabs in a hand-built JSON string
+# previously broke the orchestrator's JSON.parse and failed the whole scan.)
+summary='{}'
+for key in gitleaks trufflehog trivy-secrets trivy-sca trivy-iac jf-audit \
+           semgrep osv-scanner checkov gitguardian snyk-sca snyk-code \
+           snyk-iac presidio semgrep-pii; do
+  [ -n "${TOOL_STATUS[$key]+x}" ] || continue
+  exit_code="${TOOL_EXIT[$key]:-}"; [ -z "$exit_code" ] && exit_code="null"
+  entry=$(jq -n \
+    --arg     status      "${TOOL_STATUS[$key]}" \
+    --argjson exit_code   "$exit_code" \
+    --argjson duration_ms "${TOOL_DURATION[$key]:-0}" \
+    --arg     error       "${TOOL_ERROR[$key]:-}" \
+    '{status:$status, exit_code:$exit_code, duration_ms:$duration_ms}
+     + (if $error=="" then {} else {error:$error} end)')
+  summary=$(jq -c --arg k "$key" --argjson v "$entry" '.[$k]=$v' <<<"$summary")
 done
-
-echo "{\"tools\":{$(IFS=,; echo "${TOOLS_JSON[*]}")}}"
+jq -cn --argjson tools "$summary" '{tools:$tools}'

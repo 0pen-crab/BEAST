@@ -92,22 +92,40 @@ export async function validateJFrog(credentials: Credentials): Promise<Validatio
     return { valid: false, error: `Could not reach JFrog instance at ${url}` };
   }
 
-  // Step 2: check token validity
-  let tokenResponse: Response;
+  // Step 2: exercise the exact operation BEAST needs — an Xray on-demand SCA
+  // scan (scan/graph). A token can authenticate (e.g. against /access/...) yet
+  // lack Xray scan permission; that used to surface only mid-scan as a 403.
+  // Probing scan/graph here rejects a permission-less token at config time.
+  let scanResponse: Response;
   try {
-    tokenResponse = await fetchWithTimeout(`${url}/access/api/v1/cert/root`, {
-      headers: { Authorization: `Bearer ${token}` },
+    scanResponse = await fetchWithTimeout(`${url}/xray/api/v1/scan/graph`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        component_id: 'root',
+        nodes: [{ component_id: 'gav://junit:junit:4.12' }],
+      }),
     });
   } catch (err) {
     return handleError(err, 'JFrog');
   }
 
-  if (tokenResponse.ok) return { valid: true };
-  if (tokenResponse.status === 401 || tokenResponse.status === 403) {
+  if (scanResponse.ok) return { valid: true }; // 200/201 — scan accepted
+  if (scanResponse.status === 401) {
     return { valid: false, error: 'Invalid access token' };
   }
+  if (scanResponse.status === 403) {
+    return {
+      valid: false,
+      error:
+        'Token authenticates but lacks Xray scan permission (scan/graph returned 403). Grant this token Xray scan access, then retry.',
+    };
+  }
 
-  return { valid: false, error: 'Could not reach JFrog API' };
+  return { valid: false, error: `JFrog Xray scan check failed (HTTP ${scanResponse.status})` };
 }
 
 export function getValidator(toolKey: string): ValidatorFn | undefined {
