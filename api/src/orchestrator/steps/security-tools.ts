@@ -84,10 +84,13 @@ async function runScanPass(
   try {
     // Timeouts: run-scans.sh is the only long-running step in its parallel
     // group — a hung tool (semgrep/snyk on a network stall) used to leave the
-    // scan `running` forever. Inactivity 10 min, hard cap 2 h.
+    // scan `running` forever. Inactivity 60 min (trivy re-downloads its ~99 MiB
+    // vuln DB through the throttled corporate proxy with no stdout once the
+    // 24 h DB cache expires — 10 min was shorter than that download and killed
+    // the whole step mid-fetch, so it never re-cached), hard cap 2 h.
     result = await sshExec(sshConfig, cmd, {
       signal: ctx.cancelSignal,
-      inactivityTimeoutMs: 10 * 60_000,
+      inactivityTimeoutMs: 60 * 60_000,
       maxTimeoutMs: 120 * 60_000,
     });
   } finally {
