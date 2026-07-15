@@ -257,6 +257,7 @@ export function waveLabel(wave: string): WaveLabel {
   if (wave === 'analyzer') return { key: 'repo.aiTrace.wave.analyzer' };
   if (wave === 'scanner') return { key: 'repo.aiTrace.wave.scanner' };
   if (wave === 'triage-report') return { key: 'repo.aiTrace.wave.triageReport' };
+  if (wave === 'mitigation-check') return { key: 'repo.aiTrace.wave.mitigationCheck' };
   if (wave.startsWith('wave2-')) return { key: 'repo.aiTrace.wave.wave2', params: { name: titleCase(wave.slice(6)) } };
   if (wave.startsWith('wave4-')) return { key: 'repo.aiTrace.wave.wave4', params: { name: wave.slice(6) } };
   if (wave.startsWith('scout-unclear-')) return { key: 'repo.aiTrace.wave.scout', params: { batch: wave.slice(14) } };

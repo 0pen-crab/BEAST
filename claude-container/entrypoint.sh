@@ -21,6 +21,15 @@ cp /opt/beast/settings.json /home/scanner/.claude/settings.json
 chown scanner:scanner /home/scanner/.claude/settings.json
 echo "[entrypoint] Claude Code hooks installed"
 
+# ~/.claude.json (onboarding/config state) lives OUTSIDE the claude_auth
+# volume, so a container recreate loses it and the CLI refuses to run even
+# though the OAuth credentials in ~/.claude/ survived. Recreate a minimal one.
+if [ ! -f /home/scanner/.claude.json ]; then
+  echo '{"hasCompletedOnboarding": true}' > /home/scanner/.claude.json
+  chown scanner:scanner /home/scanner/.claude.json
+  echo "[entrypoint] Restored minimal /home/scanner/.claude.json (lost on container recreate)"
+fi
+
 # Check if Claude Code is authenticated (OAuth tokens present)
 if [ -d "/home/scanner/.claude" ] && find /home/scanner/.claude -name "*.json" -maxdepth 2 2>/dev/null | grep -q .; then
   echo "[entrypoint] Claude Code OAuth credentials found"

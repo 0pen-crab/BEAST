@@ -15,6 +15,7 @@ import { runSecToolsStep } from './steps/security-tools.ts';
 import { runAiResearchStep } from './steps/scanner.ts';
 import { runImportStep } from './steps/import-results.ts';
 import { runTriageStep } from './steps/triage-report.ts';
+import { runMitigationCheckStep } from './steps/mitigation-check.ts';
 import { runCommitStep } from './steps/commit-results.ts';
 
 // Re-export PipelineContext for backward compat (worker.ts, etc.)
@@ -53,6 +54,9 @@ const STEPS: (StepDef | StepDef[])[] = [
   ],
   { name: 'import',         run: runImportStep,      required: true },
   { name: 'triage-report',  run: runTriageStep,      required: ctx => ctx.aiTriageEnabled },
+  // Verified auto-closing of fixed findings — shares the triage toggle: when
+  // the workspace trusts AI triage, it trusts AI fix-verification too.
+  { name: 'mitigation-check', run: runMitigationCheckStep, required: ctx => ctx.aiTriageEnabled },
   { name: 'commit',         run: runCommitStep,      required: true },
 ];
 
@@ -208,6 +212,7 @@ export async function buildContext(scan: Scan): Promise<PipelineContext> {
     repoName,
     branch: scan.branch || '',
     commitHash: scan.commitHash || '',
+    scanType: scan.scanType ?? 'full',
     localPath,
     teamName: '',
     workspaceName,

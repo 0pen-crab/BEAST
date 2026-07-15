@@ -3,7 +3,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router';
 import { renderWithProviders } from '@/test-utils';
-import { ScansPage, PIPELINE_STAGES } from './scans';
+import { ScansPage, PIPELINE_STAGES, FINDINGS_SUB_STEPS, aggregateFindingsStatus } from './scans';
 
 /** Renders the current URL so tests can assert what the page wrote to it. */
 function LocationSpy() {
@@ -118,28 +118,62 @@ function makeScan(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PIPELINE_STAGES', () => {
-  it('mirrors the orchestrator pipeline: 7 steps ending with commit', () => {
+  it('shows 6 display stages — triage/mitigation/commit fold into one findings stage', () => {
     expect(PIPELINE_STAGES.map(s => s.key)).toEqual([
       'clone',
       'analysis',
       'security-tools',
       'ai-research',
       'import',
-      'triage-report',
-      'commit',
+      'findings',
     ]);
   });
 
-  it('labels the commit stage via an i18n key in the same style as the other stages', () => {
-    const commit = PIPELINE_STAGES.find(s => s.key === 'commit');
-    expect(commit?.labelKey).toBe('scans.stages.commit');
-  });
-
-  it('every stage has a scans.stages.* label key (used for step counts like "N/7 steps")', () => {
+  it('every stage has a scans.stages.* label key (used for step counts like "N/6 steps")', () => {
     for (const stage of PIPELINE_STAGES) {
       expect(stage.labelKey).toBe(`scans.stages.${stage.key}`);
     }
-    expect(PIPELINE_STAGES).toHaveLength(7);
+    expect(PIPELINE_STAGES).toHaveLength(6);
+  });
+
+  it('the findings stage folds exactly the three findings-work backend steps', () => {
+    expect(FINDINGS_SUB_STEPS).toEqual(['triage-report', 'mitigation-check', 'commit']);
+  });
+});
+
+// ── Findings stage status aggregation ──────────────────────────
+// The displayed 'findings' stage covers three sequential backend steps —
+// its status must reflect the WHOLE group.
+
+describe('aggregateFindingsStatus', () => {
+  const sub = (statuses: Record<string, string>) =>
+    Object.entries(statuses).map(([stepName, status]) => ({ stepName, status }) as any);
+
+  it('is pending when no sub-step ran', () => {
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'pending', 'mitigation-check': 'pending', 'commit': 'pending' }))).toBe('pending');
+    expect(aggregateFindingsStatus([])).toBe('pending');
+  });
+
+  it('is running while any sub-step runs', () => {
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'running', 'mitigation-check': 'pending', 'commit': 'pending' }))).toBe('running');
+  });
+
+  it('is running BETWEEN sub-steps (some completed, rest pending) — the group is not done', () => {
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'completed', 'mitigation-check': 'pending', 'commit': 'pending' }))).toBe('running');
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'completed', 'mitigation-check': 'completed', 'commit': 'pending' }))).toBe('running');
+  });
+
+  it('is failed when any sub-step failed', () => {
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'completed', 'mitigation-check': 'failed', 'commit': 'pending' }))).toBe('failed');
+  });
+
+  it('is completed only when every sub-step completed (skipped counts as done)', () => {
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'completed', 'mitigation-check': 'completed', 'commit': 'completed' }))).toBe('completed');
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'skipped', 'mitigation-check': 'skipped', 'commit': 'completed' }))).toBe('completed');
+  });
+
+  it('is skipped when every sub-step was skipped', () => {
+    expect(aggregateFindingsStatus(sub({ 'triage-report': 'skipped', 'mitigation-check': 'skipped', 'commit': 'skipped' }))).toBe('skipped');
   });
 });
 

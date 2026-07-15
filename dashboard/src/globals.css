@@ -2635,6 +2635,11 @@ body {
 .beast-pipeline-flow .react-flow,
 .beast-pipeline-flow .react-flow__renderer,
 .beast-pipeline-flow .react-flow__pane { overflow: visible !important; }
+/* React Flow sets pointer-events:none on nodes when drag/select/connect are
+   all disabled — that also killed our step-click detail panels. Re-enable
+   pointer events AND lift nodes above the pane (pane has z-index:1, nodes
+   default to 0, so the pane was winning every hit-test). */
+.beast-pipeline-flow .react-flow__node { pointer-events: all !important; z-index: 3 !important; }
 .react-flow__node .beast-step-dot { position: relative; z-index: 2; }
 .react-flow__node .beast-step-dot::before { z-index: 1; }
 .react-flow__node .beast-step-sublabel { white-space: nowrap; }

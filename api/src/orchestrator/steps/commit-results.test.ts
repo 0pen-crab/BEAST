@@ -1170,3 +1170,163 @@ describe('applyAssessmentEnhancements', () => {
     }
   });
 });
+
+// ── Mitigation decisions (auto-close verified-fixed findings) ──────
+// The mitigation-check step verified in the CODE that old open findings no
+// longer reproduce; commit applies those verdicts — status 'fixed' + an
+// auto-mitigation note. Only 'fixed' verdicts touch rows; still_present /
+// unverifiable findings stay open.
+
+describe('runCommitStep mitigation decisions', () => {
+  const mitigationPrev = (decisions: unknown[], overrides: Record<string, unknown> = {}) =>
+    basePrev({
+      preparedTests: [],
+      preparedFindings: [],
+      mitigationDecisions: decisions,
+      ...overrides,
+    });
+
+  it('marks open mitigation targets as fixed with an auto-mitigation note', async () => {
+    const tx = makeTxMock({
+      selects: new Map([[findings, [{ id: 501, status: 'open' }]]]),
+    });
+    installTx(tx);
+
+    const { runCommitStep } = await import('./commit-results.ts');
+    const result = await runCommitStep({
+      ctx: makeCtx(),
+      prev: mitigationPrev([
+        { finding_id: 501, verdict: 'fixed', reason: 'Secret removed from config' },
+      ]),
+    });
+
+    const findingUpdates = tx.ops.filter(o => o.op === 'update' && o.table === findings);
+    expect(findingUpdates).toHaveLength(1);
+    expect(findingUpdates[0].set).toEqual(expect.objectContaining({ status: 'fixed' }));
+
+    const noteInserts = tx.ops.filter(o => o.op === 'insert' && o.table === findingNotes);
+    expect(noteInserts).toHaveLength(1);
+    expect(noteInserts[0].values).toEqual(expect.objectContaining({
+      findingId: 501,
+      author: 'beast-mitigation',
+      noteType: 'mitigation',
+      content: expect.stringContaining('Secret removed from config'),
+    }));
+
+    expect(result.findingsFixed).toBe(1);
+  });
+
+  it('ignores still_present and unverifiable verdicts (rows stay open)', async () => {
+    const tx = makeTxMock({
+      selects: new Map([[findings, [{ id: 501, status: 'open' }, { id: 502, status: 'open' }]]]),
+    });
+    installTx(tx);
+
+    const { runCommitStep } = await import('./commit-results.ts');
+    const result = await runCommitStep({
+      ctx: makeCtx(),
+      prev: mitigationPrev([
+        { finding_id: 501, verdict: 'still_present', reason: 'Vuln still in code' },
+        { finding_id: 502, verdict: 'unverifiable', reason: 'No verdict from agent' },
+      ]),
+    });
+
+    expect(tx.ops.filter(o => o.op === 'update' && o.table === findings)).toHaveLength(0);
+    expect(tx.ops.filter(o => o.op === 'insert' && o.table === findingNotes)).toHaveLength(0);
+    expect(result.findingsFixed).toBe(0);
+  });
+
+  it('is idempotent on re-commit: an already-fixed target is counted without a duplicate note', async () => {
+    const tx = makeTxMock({
+      selects: new Map([[findings, [{ id: 501, status: 'fixed' }]]]),
+    });
+    installTx(tx);
+
+    const { runCommitStep } = await import('./commit-results.ts');
+    const result = await runCommitStep({
+      ctx: makeCtx(),
+      prev: mitigationPrev([
+        { finding_id: 501, verdict: 'fixed', reason: 'Secret removed' },
+      ]),
+    });
+
+    expect(tx.ops.filter(o => o.op === 'update' && o.table === findings)).toHaveLength(0);
+    expect(tx.ops.filter(o => o.op === 'insert' && o.table === findingNotes)).toHaveLength(0);
+    expect(result.findingsFixed).toBe(1);
+  });
+
+  it('warns and skips when the target is no longer open (manual disposition raced the scan)', async () => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const tx = makeTxMock({
+        selects: new Map([[findings, [{ id: 501, status: 'risk_accepted' }]]]),
+      });
+      installTx(tx);
+
+      const { runCommitStep } = await import('./commit-results.ts');
+      const result = await runCommitStep({
+        ctx: makeCtx(),
+        prev: mitigationPrev([
+          { finding_id: 501, verdict: 'fixed', reason: 'Secret removed' },
+        ]),
+      });
+
+      expect(tx.ops.filter(o => o.op === 'update' && o.table === findings)).toHaveLength(0);
+      expect(result.findingsFixed).toBe(0);
+
+      // A warning scan event screams about the skipped target
+      const warningEvents = mockDb.values.mock.calls
+        .filter((c: any[]) => c[0]?.level === 'warning')
+        .map((c: any[]) => String(c[0]?.message ?? ''));
+      expect(warningEvents.join('\n')).toContain('501');
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it('warns and skips when the target row vanished', async () => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const tx = makeTxMock({ selects: new Map([[findings, []]]) });
+      installTx(tx);
+
+      const { runCommitStep } = await import('./commit-results.ts');
+      const result = await runCommitStep({
+        ctx: makeCtx(),
+        prev: mitigationPrev([
+          { finding_id: 501, verdict: 'fixed', reason: 'Secret removed' },
+        ]),
+      });
+
+      expect(result.findingsFixed).toBe(0);
+      const warningEvents = mockDb.values.mock.calls
+        .filter((c: any[]) => c[0]?.level === 'warning')
+        .map((c: any[]) => String(c[0]?.message ?? ''));
+      expect(warningEvents.join('\n')).toContain('501');
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it('includes findingsFixed in the commit summary event', async () => {
+    const tx = makeTxMock({
+      selects: new Map([[findings, [{ id: 501, status: 'open' }]]]),
+    });
+    installTx(tx);
+    const values = mockDb.values;
+
+    const { runCommitStep } = await import('./commit-results.ts');
+    await runCommitStep({
+      ctx: makeCtx(),
+      prev: mitigationPrev([
+        { finding_id: 501, verdict: 'fixed', reason: 'Removed' },
+      ]),
+    });
+
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'info',
+      message: expect.stringContaining('auto-fixed'),
+      details: expect.objectContaining({ findingsFixed: 1 }),
+    }));
+  });
+});

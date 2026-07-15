@@ -29,7 +29,7 @@ import { ingestContributorStats } from './import-results.ts';
 import { buildVerifiedStatsBlock, insertVerifiedStats, type CommittedFindingStat } from './verified-stats.ts';
 import type {
   PipelineContext, StepInput, CommitOutput,
-  PreparedTest, PreparedFinding, TriageDecisionPlan, ResultFile,
+  PreparedTest, PreparedFinding, TriageDecisionPlan, MitigationDecisionPlan, ResultFile,
 } from '../pipeline-types.ts';
 
 const DISPOSE_LABELS: Record<string, string> = {
@@ -172,6 +172,7 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
   const preparedTests = (prev.preparedTests ?? []) as PreparedTest[];
   const preparedFindings = (prev.preparedFindings ?? []) as PreparedFinding[];
   const decisions = (prev.decisions ?? []) as TriageDecisionPlan[];
+  const mitigationDecisions = (prev.mitigationDecisions ?? []) as MitigationDecisionPlan[];
   const devAssessments = (prev.devAssessments ?? []) as unknown[];
   const analyzerAssessments = (prev.analyzerAssessments ?? []) as unknown[];
   const resultFiles = (prev.resultFiles ?? []) as ResultFile[];
@@ -183,6 +184,7 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
   let findingsUpdated = 0;
   let dismissed = 0;
   let semanticMatches = 0;
+  let findingsFixed = 0;
   let wiped = 0;
   const tempToDbId = new Map<number, number>();
   // Per-severity truth for the Verified Statistics block prepended to the
@@ -208,6 +210,9 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
   const suppressedDecisionTempIds = new Set<number>();
   // Semantic-match problems, logged as warning scan events after the tx.
   const semanticWarnings: { message: string; details: Record<string, unknown> }[] = [];
+  // Mitigation targets that could not be closed (row vanished / no longer
+  // open) — logged as warning scan events after the tx.
+  const mitigationWarnings: { message: string; details: Record<string, unknown> }[] = [];
 
   // ONE transaction for all scan-scoped repo data — a failure anywhere rolls
   // the whole commit back, so a failed scan leaves nothing behind.
@@ -460,7 +465,44 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
       });
     }
 
-    // 5. Contributor attribution from triage decisions. findOrCreateContributor
+    // 5. Mitigation verdicts: the mitigation-check agent verified in the CODE
+    //    that these old findings no longer reproduce — close them as 'fixed'
+    //    with an auto-mitigation note. Rows are re-checked inside the tx: a
+    //    manual disposition that raced the scan wins (skip + warning), and an
+    //    already-'fixed' row (re-commit after a crash) is idempotently counted
+    //    without a duplicate note.
+    const fixedDecisions = mitigationDecisions.filter(d => d.verdict === 'fixed');
+    if (fixedDecisions.length > 0) {
+      const targetRows = await tx.select({ id: findings.id, status: findings.status })
+        .from(findings)
+        .where(inArray(findings.id, fixedDecisions.map(d => d.finding_id)));
+      const statusById = new Map(targetRows.map(r => [r.id, r.status]));
+
+      for (const d of fixedDecisions) {
+        const status = statusById.get(d.finding_id);
+        if (status === 'open') {
+          await tx.update(findings)
+            .set({ status: 'fixed', updatedAt: new Date() })
+            .where(eq(findings.id, d.finding_id));
+          await tx.insert(findingNotes).values({
+            findingId: d.finding_id,
+            author: 'beast-mitigation',
+            noteType: 'mitigation',
+            content: `[Auto-Mitigation] Verified fixed in scan ${ctx.scanId}: ${d.reason}`,
+          });
+          findingsFixed++;
+        } else if (status === 'fixed') {
+          findingsFixed++; // previous commit attempt already applied it
+        } else {
+          mitigationWarnings.push({
+            message: `Mitigation target #${d.finding_id} is ${status ?? 'missing'} (expected open) — not marking as fixed`,
+            details: { findingId: d.finding_id, status: status ?? null },
+          });
+        }
+      }
+    }
+
+    // 6. Contributor attribution from triage decisions. findOrCreateContributor
     //    creates IDENTITY rows via the global db (contributors are cross-scan
     //    entities, never rolled back); the findings update joins the tx.
     for (const d of decisions) {
@@ -484,6 +526,12 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
     await logCommitScanEvent(ctx, 'warning', w.message, w.details);
   }
 
+  // Skipped mitigation targets are visible in Events — a warning per target.
+  for (const w of mitigationWarnings) {
+    console.warn(`[commit] ${w.message}`);
+    await logCommitScanEvent(ctx, 'warning', w.message, w.details);
+  }
+
   if (wiped > 0) {
     // A previous commit attempt left rows behind (crash mid-commit) — the
     // re-run wiped and re-committed them. Scream so it's visible in Events.
@@ -492,7 +540,7 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
       { rowsWiped: wiped });
   }
 
-  // 6. Contributor stats + analyzer assessments — moved here from import.
+  // 7. Contributor stats + analyzer assessments — moved here from import.
   //    Shared upsert path (also used by the HTTP ingest route): screams to
   //    scan/workspace events on failure, never throws. The returned ids feed
   //    the pipeline's feedback queueing after ALL steps succeeded.
@@ -500,13 +548,13 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
     ctx, ctx.scanId, repositoryId, resultFiles, analyzerAssessments, workspaceId,
   );
 
-  // 7. Triage assessment enhancements (appends "### Security Findings") —
+  // 8. Triage assessment enhancements (appends "### Security Findings") —
   //    must run AFTER ingest so the analyzer assessments exist to append to.
   if (devAssessments.length > 0) {
     await applyAssessmentEnhancements(ctx, devAssessments);
   }
 
-  // 8. Verified statistics: prepend a DETERMINISTIC, database-derived stats
+  // 9. Verified statistics: prepend a DETERMINISTIC, database-derived stats
   //    block to the AI-written Security Audit report (scan_file
   //    'final-report.md', fileType 'audit'). The triage prompt forbids the
   //    model from writing its own totals — QA caught its arithmetic being
@@ -553,17 +601,19 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
     findingsUpdated,
     dismissed,
     semanticMatches,
+    findingsFixed,
     assessedContributorIds,
   };
 
   await logCommitScanEvent(ctx, 'info',
-    `Committed scan results: ${output.testsCreated} tests, ${findingsNew} new findings, ${findingsUpdated} updated findings, ${semanticMatches} semantically deduplicated, ${dismissed} auto-dismissed`,
+    `Committed scan results: ${output.testsCreated} tests, ${findingsNew} new findings, ${findingsUpdated} updated findings, ${semanticMatches} semantically deduplicated, ${dismissed} auto-dismissed, ${findingsFixed} auto-fixed (verified)`,
     {
       testsCreated: output.testsCreated,
       findingsNew,
       findingsUpdated,
       dismissed,
       semanticMatches,
+      findingsFixed,
       assessedContributors: assessedContributorIds.length,
     });
 

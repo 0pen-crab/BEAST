@@ -15,9 +15,10 @@ import type { ScanDetail, ScanStep, ScanStepError } from '@/api/types';
 /** Translate function shape (react-i18next `t`) — kept loose so helpers stay simple. */
 type TFn = (key: string, options?: Record<string, unknown>) => string;
 
-// Keep in sync with the orchestrator's STEPS (api/src/orchestrator/pipeline.ts).
-// Exported for tests. 'commit' is the final step that writes scan results to
-// the DB — everything before it only prepares data.
+// DISPLAY stages — what the user sees. The orchestrator's findings work
+// (triage-report → mitigation-check → commit, see api/src/orchestrator/
+// pipeline.ts) is presented as ONE 'findings' stage; the other stages map
+// 1:1 to backend steps. Exported for tests.
 // Labels live in the locale files under `scans.stages.*`.
 export const PIPELINE_STAGES: { key: string; labelKey: string }[] = [
   { key: 'clone', labelKey: 'scans.stages.clone' },
@@ -25,37 +26,79 @@ export const PIPELINE_STAGES: { key: string; labelKey: string }[] = [
   { key: 'security-tools', labelKey: 'scans.stages.security-tools' },
   { key: 'ai-research', labelKey: 'scans.stages.ai-research' },
   { key: 'import', labelKey: 'scans.stages.import' },
-  { key: 'triage-report', labelKey: 'scans.stages.triage-report' },
-  { key: 'commit', labelKey: 'scans.stages.commit' },
+  { key: 'findings', labelKey: 'scans.stages.findings' },
 ];
 
-/** Localized label for a pipeline step key; falls back to the raw step name. */
+/** Backend steps folded into the 'findings' display stage, in pipeline order. */
+export const FINDINGS_SUB_STEPS = ['triage-report', 'mitigation-check', 'commit'] as const;
+
+/** Sub-step labels — shown inside the findings stage detail and on log buttons. */
+const SUB_STAGE_LABEL_KEYS: Record<string, string> = {
+  'triage-report': 'scans.stages.triage-report',
+  'mitigation-check': 'scans.stages.mitigation-check',
+  'commit': 'scans.stages.commit',
+};
+
+type DisplayStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+/**
+ * Status of the 'findings' display stage from its three backend sub-steps.
+ * The group reads as one unit: done only when EVERY sub-step is done, running
+ * while it's anywhere in between, failed as soon as anything failed.
+ */
+export function aggregateFindingsStatus(scanSteps: ScanStep[]): DisplayStatus {
+  const statuses = FINDINGS_SUB_STEPS.map(
+    name => scanSteps.find(s => s.stepName === name)?.status ?? 'pending',
+  );
+  const done = (s: string) => s === 'completed' || s === 'skipped';
+  if (statuses.includes('failed')) return 'failed';
+  if (statuses.includes('running')) return 'running';
+  if (statuses.every(s => s === 'skipped')) return 'skipped';
+  if (statuses.every(done)) return 'completed';
+  if (statuses.some(done)) return 'running'; // between sub-steps
+  return 'pending';
+}
+
+/** Status of a display stage — aggregated for 'findings', direct otherwise. */
+function displayStageStatus(stageKey: string, scanSteps: ScanStep[]): DisplayStatus {
+  if (stageKey === 'findings') return aggregateFindingsStatus(scanSteps);
+  const status = scanSteps.find(s => s.stepName === stageKey)?.status ?? 'pending';
+  return status === 'running' || status === 'completed' || status === 'failed' || status === 'skipped'
+    ? status
+    : 'pending';
+}
+
+/** Localized label for a pipeline step key; falls back to the raw step name.
+ *  Findings sub-steps resolve to the merged stage label — the user-facing
+ *  pipeline has one findings stage. */
 function stageLabel(stepKey: string | null | undefined, t: TFn): string {
   if (!stepKey) return '';
   const stage = PIPELINE_STAGES.find(s => s.key === stepKey);
-  return stage ? t(stage.labelKey) : stepKey;
+  if (stage) return t(stage.labelKey);
+  if ((FINDINGS_SUB_STEPS as readonly string[]).includes(stepKey)) return t('scans.stages.findings');
+  return stepKey;
 }
 
-/** Map scan steps to PipelineProgress steps */
+/** Map scan steps to PipelineProgress display steps */
 function toPipelineSteps(scanSteps: ScanStep[], t: TFn, showDurations?: boolean): PipelineStep[] {
   return PIPELINE_STAGES.map((stage) => {
-    const step = scanSteps.find(s => s.stepName === stage.key);
-    const status = step?.status ?? 'pending';
+    const status = displayStageStatus(stage.key, scanSteps);
 
     let sublabel: string | undefined;
-    if (showDurations && step?.startedAt && step?.completedAt) {
-      const dur = Math.round((new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime()) / 1000);
-      sublabel = formatDuration(dur);
+    if (showDurations) {
+      const subSteps = stage.key === 'findings'
+        ? scanSteps.filter(s => (FINDINGS_SUB_STEPS as readonly string[]).includes(s.stepName))
+        : scanSteps.filter(s => s.stepName === stage.key);
+      const totalMs = subSteps.reduce((sum, s) => (s.startedAt && s.completedAt)
+        ? sum + (new Date(s.completedAt).getTime() - new Date(s.startedAt).getTime())
+        : sum, 0);
+      if (totalMs > 0) sublabel = formatDuration(Math.round(totalMs / 1000));
     }
 
     return {
       key: stage.key,
       label: t(stage.labelKey),
-      status: status === 'running' ? 'running'
-        : status === 'completed' ? 'completed'
-        : status === 'failed' ? 'failed'
-        : status === 'skipped' ? 'skipped'
-        : 'pending',
+      status,
       sublabel,
     };
   });
@@ -269,7 +312,11 @@ function RunningScanCard({ scan, canEdit, highlighted, onCancel }: { scan: ScanD
 
   const elapsed = useLiveElapsed(live.startedAt);
   const currentStep = steps.find(s => s.status === 'running');
-  const completedSteps = steps.filter(s => s.status === 'completed').length;
+  // Display-stage progress: the three findings sub-steps count as ONE stage.
+  const completedSteps = PIPELINE_STAGES.filter((stage) => {
+    const st = displayStageStatus(stage.key, steps);
+    return st === 'completed' || st === 'skipped';
+  }).length;
   const isPaused = live.status === 'paused';
 
   return (
@@ -641,8 +688,7 @@ function MiniStepDots({ steps }: { steps: ScanStep[] }) {
   return (
     <div className="beast-flex beast-flex-gap-xs">
       {PIPELINE_STAGES.map((stage) => {
-        const step = steps.find(s => s.stepName === stage.key);
-        const st = step?.status ?? 'pending';
+        const st = displayStageStatus(stage.key, steps);
         return (
           <div
             key={stage.key}
@@ -668,7 +714,93 @@ const AI_LOG_STEPS: Record<string, string> = {
   'analysis': 'analysis',
   'ai-research': 'ai-research',
   'triage-report': 'triage',
+  'mitigation-check': 'mitigation',
 };
+
+// ── Step detail card (status, error, AI usage, input/output) ───
+
+function StepDetailCard({ step, title }: { step: ScanStep; title: string }) {
+  const { t } = useTranslation();
+  const aiUsage = (step.output as Record<string, unknown> | null)?.aiUsage as Record<string, number> | undefined;
+  const totalInput = aiUsage
+    ? (aiUsage.inputTokens ?? 0) + (aiUsage.cacheReadInputTokens ?? 0) + (aiUsage.cacheCreationInputTokens ?? 0)
+    : 0;
+
+  return (
+    <div className="beast-card beast-stack-sm">
+      <div className="beast-flex-between">
+        <h3 className="beast-card-title beast-card-title-flush">{title}</h3>
+        <span className={cn(
+          'status-pill',
+          step.status === 'completed' && 'status-completed',
+          step.status === 'failed' && 'status-failed',
+          step.status === 'running' && 'status-running',
+          step.status === 'skipped' && 'status-queued',
+          step.status === 'pending' && 'status-queued',
+        )}>
+          {t(`status.${step.status}`)}
+        </span>
+      </div>
+
+      {step.error && (
+        <div className="beast-error">
+          <p className="beast-code-inline">{step.error}</p>
+        </div>
+      )}
+
+      {aiUsage && (
+        <div className="beast-stat-row">
+          <div className="beast-stat">
+            <span className="beast-stat-value">${aiUsage.costUSD?.toFixed(3)}</span>
+            <span className="beast-stat-label">{t('scans.aiUsage.cost')}</span>
+          </div>
+          <div className="beast-stat">
+            <span className="beast-stat-value">{totalInput.toLocaleString()}</span>
+            <span className="beast-stat-label">{t('scans.aiUsage.inputTokens')}</span>
+          </div>
+          <div className="beast-stat">
+            <span className="beast-stat-value">{(aiUsage.outputTokens ?? 0).toLocaleString()}</span>
+            <span className="beast-stat-label">{t('scans.aiUsage.outputTokens')}</span>
+          </div>
+          <div className="beast-stat">
+            <span className="beast-stat-value">{(aiUsage.cacheReadInputTokens ?? 0).toLocaleString()}</span>
+            <span className="beast-stat-label">{t('scans.aiUsage.cacheRead')}</span>
+          </div>
+          <div className="beast-stat">
+            <span className="beast-stat-value">{aiUsage.model}</span>
+            <span className="beast-stat-label">{t('scans.aiUsage.model')}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="beast-grid-2">
+        {step.input && (
+          <div>
+            <p className="beast-label">{t('scans.input')}</p>
+            <pre className="beast-code-block">
+              {JSON.stringify(step.input, null, 2)}
+            </pre>
+          </div>
+        )}
+        {step.output && (
+          <div>
+            <p className="beast-label">{t('scans.output')}</p>
+            <pre className="beast-code-block">
+              {JSON.stringify(step.output, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      {step.startedAt && (
+        <p className="beast-text-hint tabular-nums">
+          {t('scans.started')}: {formatDateTime(step.startedAt)}
+          {step.completedAt && <> &middot; {t('scans.ended')}: {formatDateTime(step.completedAt)}</>}
+        </p>
+      )}
+    </div>
+  );
+}
 
 // ── Step Timeline Detail (expanded view with input/output) ─────
 
@@ -676,6 +808,13 @@ function StepTimelineDetail({ scanId, steps, error, stepErrors }: { scanId: stri
   const { t } = useTranslation();
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
   const [viewingLog, setViewingLog] = useState<string | null>(null);
+  // The 'findings' display stage folds three backend steps — selecting it
+  // shows one detail card per sub-step that has data.
+  const selectedSubSteps = selectedStep === 'findings'
+    ? FINDINGS_SUB_STEPS
+      .map(name => steps.find(s => s.stepName === name))
+      .filter((s): s is ScanStep => s != null)
+    : [];
   const selected = steps.find(s => s.stepName === selectedStep);
   const { data: logs } = useScanLogs(scanId);
 
@@ -704,7 +843,8 @@ function StepTimelineDetail({ scanId, steps, error, stepErrors }: { scanId: stri
         <div className="beast-flex beast-flex-gap">
           {Object.entries(AI_LOG_STEPS).map(([stepKey, logKey]) => {
             if (!availableLogs.has(logKey)) return null;
-            const stage = PIPELINE_STAGES.find(s => s.key === stepKey);
+            const labelKey = PIPELINE_STAGES.find(s => s.key === stepKey)?.labelKey
+              ?? SUB_STAGE_LABEL_KEYS[stepKey];
             return (
               <button
                 key={logKey}
@@ -714,7 +854,7 @@ function StepTimelineDetail({ scanId, steps, error, stepErrors }: { scanId: stri
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                   <path d="M3 2h10v12H3z" /><path d="M5 5h6M5 8h6M5 11h4" />
                 </svg>
-                {t('scans.stepLog', { step: stage ? t(stage.labelKey) : stepKey })}
+                {t('scans.stepLog', { step: labelKey ? t(labelKey) : stepKey })}
               </button>
             );
           })}
@@ -724,85 +864,14 @@ function StepTimelineDetail({ scanId, steps, error, stepErrors }: { scanId: stri
       {/* Log viewer */}
       {viewingLog && <LogViewer scanId={scanId} step={viewingLog} />}
 
-      {/* Selected step detail panel */}
-      {selected && !viewingLog && (
-        <div className="beast-card beast-stack-sm">
-          <div className="beast-flex-between">
-            <h3 className="beast-card-title beast-card-title-flush">{stageLabel(selected.stepName, t)}</h3>
-            <span className={cn(
-              'status-pill',
-              selected.status === 'completed' && 'status-completed',
-              selected.status === 'failed' && 'status-failed',
-              selected.status === 'running' && 'status-running',
-              selected.status === 'skipped' && 'status-queued',
-              selected.status === 'pending' && 'status-queued',
-            )}>
-              {t(`status.${selected.status}`)}
-            </span>
-          </div>
-
-          {selected.error && (
-            <div className="beast-error">
-              <p className="beast-code-inline">{selected.error}</p>
-            </div>
-          )}
-
-          {(() => {
-            const aiUsage = (selected.output as Record<string, unknown> | null)?.aiUsage as Record<string, number> | undefined;
-            if (!aiUsage) return null;
-            const totalInput = (aiUsage.inputTokens ?? 0) + (aiUsage.cacheReadInputTokens ?? 0) + (aiUsage.cacheCreationInputTokens ?? 0);
-            return (
-              <div className="beast-stat-row">
-                <div className="beast-stat">
-                  <span className="beast-stat-value">${aiUsage.costUSD?.toFixed(3)}</span>
-                  <span className="beast-stat-label">{t('scans.aiUsage.cost')}</span>
-                </div>
-                <div className="beast-stat">
-                  <span className="beast-stat-value">{totalInput.toLocaleString()}</span>
-                  <span className="beast-stat-label">{t('scans.aiUsage.inputTokens')}</span>
-                </div>
-                <div className="beast-stat">
-                  <span className="beast-stat-value">{(aiUsage.outputTokens ?? 0).toLocaleString()}</span>
-                  <span className="beast-stat-label">{t('scans.aiUsage.outputTokens')}</span>
-                </div>
-                <div className="beast-stat">
-                  <span className="beast-stat-value">{(aiUsage.cacheReadInputTokens ?? 0).toLocaleString()}</span>
-                  <span className="beast-stat-label">{t('scans.aiUsage.cacheRead')}</span>
-                </div>
-                <div className="beast-stat">
-                  <span className="beast-stat-value">{aiUsage.model}</span>
-                  <span className="beast-stat-label">{t('scans.aiUsage.model')}</span>
-                </div>
-              </div>
-            );
-          })()}
-
-          <div className="beast-grid-2">
-            {selected.input && (
-              <div>
-                <p className="beast-label">{t('scans.input')}</p>
-                <pre className="beast-code-block">
-                  {JSON.stringify(selected.input, null, 2)}
-                </pre>
-              </div>
-            )}
-            {selected.output && (
-              <div>
-                <p className="beast-label">{t('scans.output')}</p>
-                <pre className="beast-code-block">
-                  {JSON.stringify(selected.output, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-
-          {selected.startedAt && (
-            <p className="beast-text-hint tabular-nums">
-              {t('scans.started')}: {formatDateTime(selected.startedAt)}
-              {selected.completedAt && <> &middot; {t('scans.ended')}: {formatDateTime(selected.completedAt)}</>}
-            </p>
-          )}
-        </div>
+      {/* Selected step detail panel. The 'findings' stage folds three backend
+          sub-steps — show one card per sub-step so their individual progress
+          stays visible inside the merged stage. */}
+      {selectedStep === 'findings' && !viewingLog && selectedSubSteps.map(step => (
+        <StepDetailCard key={step.stepName} step={step} title={t(SUB_STAGE_LABEL_KEYS[step.stepName] ?? step.stepName)} />
+      ))}
+      {selectedStep !== 'findings' && selected && !viewingLog && (
+        <StepDetailCard step={selected} title={stageLabel(selected.stepName, t)} />
       )}
 
       {/* Pipeline-level error */}

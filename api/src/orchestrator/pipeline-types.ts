@@ -86,6 +86,9 @@ export interface PipelineContext {
   cloneUrl: string;
   /** Language code for reports (e.g. 'en', 'uk'). Read from workspace.default_language */
   reportLanguage: string;
+  /** 'full' or 'pr' — from scans.scan_type. PR scans cover a branch subset, so
+   *  steps that reason about the WHOLE repo state (mitigation-check) skip them. */
+  scanType: string;
   /** Workspace AI feature toggles — read from workspaces table */
   aiAnalysisEnabled: boolean;
   aiScanningEnabled: boolean;
@@ -277,12 +280,45 @@ export interface TriageDecisionPlan {
   contributor_name?: string;
 }
 
+// ── Mitigation check (verified auto-closing of fixed findings) ──
+// On repeat scans, old open findings that were NOT re-detected are verified in
+// the CODE by an AI agent; confirmed-gone findings are closed at commit.
+
+/** Agent verdict for one previously-open finding the current scan did not re-detect. */
+export interface MitigationDecisionPlan {
+  /** DATABASE id of the existing finding (unlike triage decisions, these rows already exist). */
+  finding_id: number;
+  /** 'fixed' → close at commit; 'still_present' → scanner missed a live vuln
+   *  (screams as an error event, stays open); 'unverifiable' → stays open. */
+  verdict: 'fixed' | 'still_present' | 'unverifiable';
+  reason: string;
+}
+
+export interface MitigationCheckOutput {
+  /** True when the step did not run — mirrors TriageReportOutput.skipped. */
+  skipped?: boolean;
+  /** Shares the triage capability toggle, hence 'ai-triage-disabled'. */
+  skipReason?: 'ai-triage-disabled' | 'analysis-failed' | 'pr-scan';
+  /** Old open findings offered to the agent for verification. */
+  candidates: number;
+  confirmedFixed: number;
+  stillPresent: number;
+  unverifiable: number;
+  durationMs: number;
+  aiUsage?: AiUsage;
+  /** Verified verdicts — applied to the DB by the commit step. */
+  mitigationDecisions: MitigationDecisionPlan[];
+}
+
 export interface CommitOutput {
   testsCreated: number;
   findingsNew: number;
   findingsUpdated: number;
   /** Findings committed with a dismissed status (triage dispositions applied). */
   dismissed: number;
+  /** Old findings closed as 'fixed' after the mitigation-check agent verified
+   *  in the code that they no longer reproduce. */
+  findingsFixed: number;
   /** AI ('beast') findings that semantically matched an existing AI finding
    *  from a previous scan (triage `same_as`) and UPDATED that row instead of
    *  inserting a duplicate. Subset of findingsUpdated. */

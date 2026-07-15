@@ -375,7 +375,9 @@ describe('runSecurityTools', () => {
 
     const options = mockSshExec.mock.calls[0][2];
     expect(options).toMatchObject({
-      inactivityTimeoutMs: 10 * 60_000,
+      // Inactivity 60 min: trivy re-downloads its ~99 MiB vuln DB through the
+      // throttled proxy with no stdout — 10 min killed the step mid-fetch.
+      inactivityTimeoutMs: 60 * 60_000,
       maxTimeoutMs: 120 * 60_000,
     });
   });

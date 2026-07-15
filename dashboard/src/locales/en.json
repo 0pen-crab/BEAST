@@ -372,7 +372,9 @@
       "ai-research": "AI Research",
       "import": "Import Findings",
       "triage-report": "Triage & Report",
-      "commit": "Commit Results"
+      "mitigation-check": "Fix Verification",
+      "commit": "Commit Results",
+      "findings": "Findings Processing"
     },
     "stepsProgress": "{{completed}}/{{total}} steps",
     "unknown": "Unknown",
@@ -538,6 +540,7 @@
         "analyzer": "Profile Analyzer",
         "scanner": "Code Scanner",
         "triageReport": "Triage & Report",
+        "mitigationCheck": "Fix Verification",
         "scout": "Scout · batch {{batch}}",
         "sniper": "Sniper · {{name}}"
       }

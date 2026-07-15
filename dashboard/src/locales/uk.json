@@ -376,7 +376,9 @@
       "ai-research": "AI-дослідження",
       "import": "Імпорт знахідок",
       "triage-report": "Тріаж і звіт",
-      "commit": "Запис результатів"
+      "mitigation-check": "Перевірка виправлень",
+      "commit": "Запис результатів",
+      "findings": "Обробка знахідок"
     },
     "stepsProgress": "{{completed}}/{{total}} кроків",
     "unknown": "Невідомо",
@@ -548,6 +550,7 @@
         "analyzer": "Аналіз профілю",
         "scanner": "Сканер коду",
         "triageReport": "Тріаж і звіт",
+        "mitigationCheck": "Перевірка виправлень",
         "scout": "Скаут · пачка {{batch}}",
         "sniper": "Снайпер · {{name}}"
       }

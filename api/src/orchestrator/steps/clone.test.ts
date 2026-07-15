@@ -121,7 +121,8 @@ describe('cloneRepo', () => {
     expect(mockExecFile).toHaveBeenCalledWith(
       'git',
       ['clone', 'https://github.com/org/repo.git', '/workspace/repo/repo'],
-      expect.objectContaining({ timeout: 300_000 }),
+      // 20 min per git command — corporate proxy throttles egress (~700 KiB/s)
+      expect.objectContaining({ timeout: 1_200_000 }),
       expect.any(Function),
     );
   });

@@ -54,6 +54,15 @@ const mockRunTriageStep = vi.fn().mockResolvedValue({
   devAssessments: [],
 });
 
+const mockRunMitigationCheckStep = vi.fn().mockResolvedValue({
+  candidates: 0,
+  confirmedFixed: 0,
+  stillPresent: 0,
+  unverifiable: 0,
+  durationMs: 0,
+  mitigationDecisions: [],
+});
+
 const mockRunCommitStep = vi.fn().mockResolvedValue({
   testsCreated: 2,
   findingsNew: 4,
@@ -84,6 +93,10 @@ vi.mock('./steps/import-results.ts', () => ({
 
 vi.mock('./steps/triage-report.ts', () => ({
   runTriageStep: (...args: unknown[]) => mockRunTriageStep(...args),
+}));
+
+vi.mock('./steps/mitigation-check.ts', () => ({
+  runMitigationCheckStep: (...args: unknown[]) => mockRunMitigationCheckStep(...args),
 }));
 
 vi.mock('./steps/commit-results.ts', () => ({
@@ -188,10 +201,10 @@ describe('runPipeline', () => {
 
     await runPipeline(makeScan());
 
-    // 7 step rows created (clone, analysis, security-tools, ai-research, import, triage-report, commit)
+    // 8 step rows created (clone, analysis, security-tools, ai-research, import, triage-report, mitigation-check, commit)
     expect(mockDb.insert).toHaveBeenCalled();
-    // returning() called 7 times for step rows + values() calls for events
-    expect(insertCallCount).toBeGreaterThanOrEqual(7);
+    // returning() called 8 times for step rows + values() calls for events
+    expect(insertCallCount).toBeGreaterThanOrEqual(8);
   });
 
   it('calls all step functions in order', async () => {
@@ -222,6 +235,10 @@ describe('runPipeline', () => {
       callOrder.push('triage');
       return { triaged: 0, dismissed: 0, kept: 0, reportsGenerated: false, assessmentsEnhanced: 0, durationMs: 0, decisions: [], devAssessments: [] };
     });
+    mockRunMitigationCheckStep.mockImplementation(async () => {
+      callOrder.push('mitigation');
+      return { candidates: 0, confirmedFixed: 0, stillPresent: 0, unverifiable: 0, durationMs: 0, mitigationDecisions: [] };
+    });
     mockRunCommitStep.mockImplementation(async () => {
       callOrder.push('commit');
       return { testsCreated: 0, findingsNew: 0, findingsUpdated: 0, dismissed: 0, assessedContributorIds: [] };
@@ -230,11 +247,13 @@ describe('runPipeline', () => {
     await runPipeline(makeScan());
 
     // clone and analysis are sequential, then security-tools + ai-research parallel,
-    // then import, then triage, then commit LAST (repo data lands only there)
+    // then import, then triage, then mitigation-check, then commit LAST (repo
+    // data lands only there)
     expect(callOrder.indexOf('clone')).toBeLessThan(callOrder.indexOf('analysis'));
     expect(callOrder.indexOf('analysis')).toBeLessThan(callOrder.indexOf('import'));
     expect(callOrder.indexOf('import')).toBeLessThan(callOrder.indexOf('triage'));
-    expect(callOrder.indexOf('triage')).toBeLessThan(callOrder.indexOf('commit'));
+    expect(callOrder.indexOf('triage')).toBeLessThan(callOrder.indexOf('mitigation'));
+    expect(callOrder.indexOf('mitigation')).toBeLessThan(callOrder.indexOf('commit'));
     expect(callOrder[callOrder.length - 1]).toBe('commit');
     // security-tools and ai-research both come after analysis
     expect(callOrder.indexOf('analysis')).toBeLessThan(callOrder.indexOf('security-tools'));
@@ -280,6 +299,14 @@ describe('runPipeline', () => {
     await runPipeline(makeScan());
 
     expect(mockRunTriageStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls mitigation-check step', async () => {
+    const { runPipeline } = await import('./pipeline.ts');
+
+    await runPipeline(makeScan());
+
+    expect(mockRunMitigationCheckStep).toHaveBeenCalledTimes(1);
   });
 
   it('calls commit step', async () => {
@@ -354,6 +381,18 @@ describe('runPipeline', () => {
     mockRunTriageStep.mockRejectedValueOnce(new Error('triage failed'));
 
     await expect(runPipeline(makeScan())).rejects.toThrow('triage failed');
+  });
+
+  it('fails the scan when the mitigation-check step throws and AI triage is enabled (default)', async () => {
+    // mitigation-check shares the triage capability toggle — when triage is
+    // supposed to run, verified auto-closing is too; a silent skip would leave
+    // fixed findings stuck open with no signal.
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockRunMitigationCheckStep.mockRejectedValueOnce(new Error('mitigation agent failed'));
+
+    await expect(runPipeline(makeScan())).rejects.toThrow('mitigation agent failed');
+    expect(mockRunCommitStep).not.toHaveBeenCalled();
   });
 
   // Developer profiles update only as a result of a FULLY successful scan —
@@ -561,6 +600,17 @@ describe('runPipeline', () => {
 
     await expect(runPipeline(makeScan({ workspaceId: 5 }))).resolves.toEqual({ completedWithErrors: false, stepErrors: [] });
     expect(mockRunImportStep).toHaveBeenCalled();
+  });
+
+  it('continues the scan when mitigation-check throws but AI triage is disabled for the workspace', async () => {
+    // mitigation-check is gated by the SAME workspace toggle as triage
+    const { runPipeline } = await import('./pipeline.ts');
+
+    mockWorkspaceToggles({ aiTriageEnabled: false });
+    mockRunMitigationCheckStep.mockRejectedValueOnce(new Error('mitigation agent failed'));
+
+    await expect(runPipeline(makeScan({ workspaceId: 5 }))).resolves.toEqual({ completedWithErrors: false, stepErrors: [] });
+    expect(mockRunCommitStep).toHaveBeenCalled();
   });
 
   // ── Resume / pause behavior ──────────────────────────────────
@@ -876,6 +926,18 @@ describe('buildContext', () => {
     expect(ctx.aiModelAnalyzer).toBe('sonnet');
     expect(ctx.aiModelScanner).toBe('opus');
     expect(ctx.aiModelTriage).toBe('opus');
+  });
+
+  it('carries the scan type into the context (mitigation-check skips PR scans)', async () => {
+    const { buildContext } = await import('./pipeline.ts');
+
+    const full = await buildContext(makeScan());
+    const pr = await buildContext(makeScan({ scanType: 'pr' }));
+    const legacy = await buildContext(makeScan({ scanType: null }));
+
+    expect(full.scanType).toBe('full');
+    expect(pr.scanType).toBe('pr');
+    expect(legacy.scanType).toBe('full');
   });
 
   it('defaults AI flags to true when no workspace', async () => {

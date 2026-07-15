@@ -158,6 +158,7 @@ describe('waveLabel', () => {
     expect(waveLabel('analyzer')).toEqual({ key: 'repo.aiTrace.wave.analyzer' });
     expect(waveLabel('scanner')).toEqual({ key: 'repo.aiTrace.wave.scanner' });
     expect(waveLabel('triage-report')).toEqual({ key: 'repo.aiTrace.wave.triageReport' });
+    expect(waveLabel('mitigation-check')).toEqual({ key: 'repo.aiTrace.wave.mitigationCheck' });
   });
 
   it('maps parameterised wave keys with interpolation params', () => {
