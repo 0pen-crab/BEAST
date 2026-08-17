@@ -48,6 +48,14 @@ vi.mock('../entities.ts', async (importOriginal) => {
   };
 });
 
+// ── Mock events (shared scan/workspace event helpers) ─────────────
+const mockLogScanEvent = vi.fn().mockResolvedValue(undefined);
+const mockTryCreateWorkspaceEvent = vi.fn().mockResolvedValue(undefined);
+vi.mock('../events.ts', () => ({
+  logScanEvent: (...args: unknown[]) => mockLogScanEvent(...args),
+  tryCreateWorkspaceEvent: (...args: unknown[]) => mockTryCreateWorkspaceEvent(...args),
+}));
+
 // ── Mock parsers ─────────────────────────────────────────────────
 const mockParseSarif = vi.fn().mockReturnValue([]);
 const mockParseGitleaks = vi.fn().mockReturnValue([]);
@@ -136,6 +144,8 @@ beforeEach(() => {
   mockEnsureTeam.mockReset();
   mockEnsureRepository.mockReset();
   mockCreateWorkspaceEvent.mockReset();
+  mockLogScanEvent.mockReset().mockResolvedValue(undefined);
+  mockTryCreateWorkspaceEvent.mockReset().mockResolvedValue(undefined);
   mockParseSarif.mockReset().mockReturnValue([]);
   mockParseGitleaks.mockReset().mockReturnValue([]);
   mockParseTrufflehog.mockReset().mockReturnValue([]);
@@ -779,16 +789,13 @@ describe('ingestContributorStats', () => {
     await ingestContributorStats(ctx, 'scan-1', 10, resultFiles as any, [], 1);
 
     expect(mockIngestContributors).not.toHaveBeenCalled();
-    // scan_events insert
-    expect(mockDb.insert).toHaveBeenCalled();
-    expect(mockDb.values).toHaveBeenCalledWith(expect.objectContaining({
-      scanId: 'scan-1',
-      level: 'error',
-      source: 'contributor-ingest',
-      message: expect.stringContaining('git-stats'),
-    }));
+    // scan event
+    expect(mockLogScanEvent).toHaveBeenCalledWith(
+      'scan-1', 'commit', 'error', expect.stringContaining('git-stats'),
+      expect.anything(), 'repo', 1,
+    );
     // workspace event for the Events feed
-    expect(mockCreateWorkspaceEvent).toHaveBeenCalledWith(1, 'contributor_ingest_failed', expect.objectContaining({
+    expect(mockTryCreateWorkspaceEvent).toHaveBeenCalledWith(1, 'contributor_ingest_failed', expect.objectContaining({
       scan_id: 'scan-1',
       repo_name: 'repo',
       error: expect.stringContaining('git-stats'),
@@ -1112,10 +1119,6 @@ describe('runImportStep', () => {
     mockExecSync.mockReturnValueOnce('');
     mockReadFileSync.mockImplementation(() => { throw new Error('not found'); });
 
-    // scanEvents insert mock
-    const insertMock = vi.fn().mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
-    mockDb.insert = insertMock;
-
     const { runImportStep } = await import('./import-results.ts');
     const ctx = makeCtx({ workspaceId: 10 });
     const prev = {
@@ -1125,8 +1128,10 @@ describe('runImportStep', () => {
     };
     await runImportStep({ ctx, prev });
 
-    // Should have called db.insert for the scan event warning
-    expect(insertMock).toHaveBeenCalled();
+    expect(mockLogScanEvent).toHaveBeenCalledWith(
+      'scan-1', 'security-tools', 'warning', 'Semgrep not installed',
+      expect.anything(), 'repo', 10,
+    );
   });
 
   it('counts prepared (deduplicated) findings in findingsPrepared', async () => {
@@ -1239,10 +1244,10 @@ describe('corrupt tool output handling', () => {
     const { runImportStep } = await import('./import-results.ts');
     await runImportStep({ ctx: makeCtx({ workspaceId: 10 }), prev: {} });
 
-    expect(mockDb.values).toHaveBeenCalledWith(expect.objectContaining({
-      level: 'error',
-      message: expect.stringContaining('Import failed for gitleaks'),
-    }));
+    expect(mockLogScanEvent).toHaveBeenCalledWith(
+      'scan-1', 'import', 'error', expect.stringContaining('Import failed for gitleaks'),
+      expect.anything(), 'repo', 10,
+    );
   });
 });
 
@@ -1259,7 +1264,7 @@ describe('contributor-assessments.json handling', () => {
     const { runImportStep } = await import('./import-results.ts');
     await runImportStep({ ctx: makeCtx({ workspaceId: 10 }), prev: {} });
 
-    const eventMessages = mockDb.values.mock.calls.map((c: any[]) => String(c[0]?.message ?? ''));
+    const eventMessages = mockLogScanEvent.mock.calls.map((c: any[]) => String(c[3] ?? ''));
     expect(eventMessages.join('\n')).not.toContain('contributor-assessments');
   });
 
@@ -1276,10 +1281,10 @@ describe('contributor-assessments.json handling', () => {
     const { runImportStep } = await import('./import-results.ts');
     await runImportStep({ ctx: makeCtx({ workspaceId: 10 }), prev: {} });
 
-    expect(mockDb.values).toHaveBeenCalledWith(expect.objectContaining({
-      level: 'error',
-      message: expect.stringContaining('contributor-assessments.json'),
-    }));
+    expect(mockLogScanEvent).toHaveBeenCalledWith(
+      'scan-1', 'import', 'error', expect.stringContaining('contributor-assessments.json'),
+      expect.anything(), 'repo', 10,
+    );
   });
 });
 

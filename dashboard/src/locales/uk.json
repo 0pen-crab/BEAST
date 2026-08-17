@@ -487,7 +487,8 @@
     "bulkDeleteConfirm_other": "Видалити {{count}} репозиторія з усіма даними? Цю дію неможливо скасувати.",
     "bulkDeleteFailed": "Не вдалося видалити {{failed}} з {{total}}",
     "exportFailed": "Помилка експорту",
-    "aiExportFailed": "Не вдалося згенерувати AI-звіт"
+    "aiExportFailed": "Не вдалося згенерувати AI-звіт",
+    "scanStartFailed": "Не вдалося запустити скан для {{repo}}"
   },
   "repo": {
     "scanResultsByTool": "Результати сканування за інструментом",
@@ -752,7 +753,11 @@
     "reposFound_other": "{{count}} репозиторіїв знайдено",
     "autoImported": "Імпортовано",
     "noSourcesYet": "Додайте принаймні одне джерело для продовження",
-    "invalidGitServerUrl": "Вкажіть повний URL вашої організації, напр. https://gitlab.com/my-group"
+    "invalidGitServerUrl": "Вкажіть повний URL вашої організації, напр. https://gitlab.com/my-group",
+    "updateToken": "Оновити токен",
+    "newTokenPlaceholder": "Вставте новий токен...",
+    "updateTokenBtn": "Оновити",
+    "tokenUpdated": "Токен оновлено"
   },
   "repoPicker": {
     "searchPlaceholder": "Пошук репозиторіїв...",

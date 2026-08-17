@@ -21,6 +21,8 @@ import { useCurrentWorkspaceRole, canWrite } from '@/lib/permissions';
 import { ChipFilter, type FilterColumn, type ActiveFilter } from '@/components/filters/chip-filter';
 import { Pagination } from '@/components/pagination';
 import { parseListParam, parseNumberListParam, parsePageParam, parseEnumParam, setOrDeleteParam } from '@/lib/url-state';
+import { loadStoredColumns } from '@/lib/stored-columns';
+import { toast } from '@/lib/toast';
 
 const PAGE_SIZE = 25;
 
@@ -83,13 +85,7 @@ export const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ['status', 'size', 'riskScor
 const COL_KEY = 'beast_repo_columns';
 
 function loadVisibleColumns(): Set<ColumnKey> {
-  try {
-    const stored = localStorage.getItem(COL_KEY);
-    if (stored) return new Set(JSON.parse(stored) as ColumnKey[]);
-  } catch (err) {
-    console.error('[repos] Failed to parse stored column settings, using defaults:', err);
-  }
-  return new Set(DEFAULT_VISIBLE_COLUMNS);
+  return loadStoredColumns(COL_KEY, DEFAULT_VISIBLE_COLUMNS);
 }
 
 function ColumnSettingsDropdown({
@@ -1039,7 +1035,11 @@ function RepoRow({
     try {
       await onScan();
     } catch (err) {
-      console.error('[scan] Failed:', err instanceof Error ? err.message : err);
+      toast.show({
+        kind: 'error',
+        title: t('repos.scanStartFailed', { repo: repo.name }),
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   };
 

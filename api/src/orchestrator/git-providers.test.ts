@@ -421,10 +421,74 @@ describe('git-providers', () => {
     });
   });
 
+  describe('isBitbucketAccessToken', () => {
+    it('returns true for workspace/repository access tokens (ATCTT3x prefix)', async () => {
+      const { isBitbucketAccessToken } = await import('./git-providers.ts');
+      expect(isBitbucketAccessToken('ATCTT3xFfGN0Qp-OmgElhuCu34BkJGuKA0Du')).toBe(true);
+    });
+
+    it('returns false for user API tokens (ATATT3x prefix)', async () => {
+      const { isBitbucketAccessToken } = await import('./git-providers.ts');
+      expect(isBitbucketAccessToken('ATATT3xFfGF0dEa0zpxvkCGqBf45fSElyT7')).toBe(false);
+    });
+
+    it('returns false for random tokens', async () => {
+      const { isBitbucketAccessToken } = await import('./git-providers.ts');
+      expect(isBitbucketAccessToken('some-random-token')).toBe(false);
+    });
+
+    it('returns false for empty string', async () => {
+      const { isBitbucketAccessToken } = await import('./git-providers.ts');
+      expect(isBitbucketAccessToken('')).toBe(false);
+    });
+  });
+
   describe('BitBucketClient', () => {
     beforeEach(() => {
       vi.restoreAllMocks();
       vi.unstubAllGlobals();
+    });
+
+    it('uses Bearer auth for workspace access tokens even when email is provided', async () => {
+      const { BitBucketClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ values: [] }),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const wsToken = 'ATCTT3xFfGN0Qp-OmgElhuCu34BkJGuKA0Du';
+      const client = new BitBucketClient('https://api.bitbucket.org/2.0', wsToken, 'user@example.com');
+      await client.validateToken('myworkspace');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: `Bearer ${wsToken}` }),
+        }),
+      );
+    });
+
+    it('uses Basic auth for user API tokens when email is provided', async () => {
+      const { BitBucketClient } = await import('./git-providers.ts');
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ values: [] }),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const appPass = 'ATATT3xFfGF0dEa0zpxvkCGqBf45fSElyT7';
+      const email = 'user@example.com';
+      const client = new BitBucketClient('https://api.bitbucket.org/2.0', appPass, email);
+      await client.validateToken('myworkspace');
+
+      const expectedAuth = `Basic ${Buffer.from(`${email}:${appPass}`).toString('base64')}`;
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: expectedAuth }),
+        }),
+      );
     });
 
     it('getRepo should fetch a single repo', async () => {
@@ -635,6 +699,23 @@ describe('git-providers', () => {
 
   });
 
+  describe('normalizeBaseUrl', () => {
+    it('strips single trailing slash', async () => {
+      const { normalizeBaseUrl } = await import('./git-providers.ts');
+      expect(normalizeBaseUrl('https://example.jfrog.io/')).toBe('https://example.jfrog.io');
+    });
+
+    it('strips multiple trailing slashes', async () => {
+      const { normalizeBaseUrl } = await import('./git-providers.ts');
+      expect(normalizeBaseUrl('https://api.github.com///')).toBe('https://api.github.com');
+    });
+
+    it('leaves clean URLs unchanged', async () => {
+      const { normalizeBaseUrl } = await import('./git-providers.ts');
+      expect(normalizeBaseUrl('https://api.bitbucket.org/2.0')).toBe('https://api.bitbucket.org/2.0');
+    });
+  });
+
   describe('createClient factory', () => {
     beforeEach(() => {
       vi.restoreAllMocks();
@@ -722,17 +803,24 @@ describe('git-providers', () => {
   });
 
   describe('buildAuthCloneUrl', () => {
-    it('uses x-bitbucket-api-token-auth for Bitbucket even when email is provided', async () => {
+    it('uses x-token-auth for Bitbucket workspace access tokens', async () => {
       const { buildAuthCloneUrl } = await import('./git-providers.ts');
-      const result = buildAuthCloneUrl('bitbucket', 'https://bitbucket.org/org/repo.git', 'my-token', 'dev@co.com');
-      // Bitbucket API tokens always use x-bitbucket-api-token-auth for git clone, email is only for REST API
-      expect(result).toBe('https://x-bitbucket-api-token-auth:my-token@bitbucket.org/org/repo.git');
+      const wsToken = 'ATCTT3xFfGN0Qp-OmgElhuCu34BkJGuKA0Du';
+      const result = buildAuthCloneUrl('bitbucket', 'https://bitbucket.org/org/repo.git', wsToken);
+      expect(result).toContain('x-token-auth');
+      expect(result).not.toContain('x-bitbucket-api-token-auth');
     });
 
-    it('uses x-bitbucket-api-token-auth for Bitbucket when no email', async () => {
+    it('uses x-bitbucket-api-token-auth for Bitbucket user API tokens', async () => {
       const { buildAuthCloneUrl } = await import('./git-providers.ts');
-      const result = buildAuthCloneUrl('bitbucket', 'https://bitbucket.org/org/repo.git', 'my-token');
-      expect(result).toBe('https://x-bitbucket-api-token-auth:my-token@bitbucket.org/org/repo.git');
+      const result = buildAuthCloneUrl('bitbucket', 'https://bitbucket.org/org/repo.git', 'ATATT3xFfGF0my-user-token', 'dev@co.com');
+      expect(result).toBe('https://x-bitbucket-api-token-auth:ATATT3xFfGF0my-user-token@bitbucket.org/org/repo.git');
+    });
+
+    it('uses x-bitbucket-api-token-auth for Bitbucket user API tokens when no email', async () => {
+      const { buildAuthCloneUrl } = await import('./git-providers.ts');
+      const result = buildAuthCloneUrl('bitbucket', 'https://bitbucket.org/org/repo.git', 'ATATT3xFfGF0my-user-token');
+      expect(result).toBe('https://x-bitbucket-api-token-auth:ATATT3xFfGF0my-user-token@bitbucket.org/org/repo.git');
     });
 
     it('injects x-access-token for GitHub', async () => {

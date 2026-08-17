@@ -148,12 +148,21 @@ echo "[security-tools] Results directory: $RESULTS_DIR"
 # -- Gitleaks (secrets detection) ------------------------------------------
 # Note: --exit-code=0 means exit 0 even when leaks found
 if is_enabled "gitleaks"; then
+  # Git mode additionally scans the full commit history — but on a repo
+  # WITHOUT .git (uploaded archives) `detect` logs "ERR not a git repository",
+  # scans NOTHING, and still exits 0 with an empty [] report. Pick the mode by
+  # what the path actually is, so plain directories get a real filesystem scan.
+  GITLEAKS_ARGS=(detect
+    --source="$REPO_PATH"
+    --report-format=json
+    --report-path="$RESULTS_DIR/gitleaks-results.json"
+    --exit-code=0)
+  if [ ! -d "$REPO_PATH/.git" ]; then
+    echo "[security-tools] gitleaks: no .git in repo — scanning as plain directory (--no-git)"
+    GITLEAKS_ARGS+=(--no-git)
+  fi
   run_tool "gitleaks" "$RESULTS_DIR/gitleaks-results.json" \
-    gitleaks detect \
-      --source="$REPO_PATH" \
-      --report-format=json \
-      --report-path="$RESULTS_DIR/gitleaks-results.json" \
-      --exit-code=0
+    gitleaks "${GITLEAKS_ARGS[@]}"
 else
   TOOL_STATUS["gitleaks"]="skipped"
   TOOL_EXIT["gitleaks"]=""
@@ -297,8 +306,22 @@ fi
 
 # -- OSV-Scanner (SCA) --------------------------------------------------------
 if is_enabled "osv-scanner"; then
-  run_tool "osv-scanner" "$RESULTS_DIR/osv-scanner-results.sarif" \
-    osv-scanner scan --format sarif --output "$RESULTS_DIR/osv-scanner-results.sarif" -r "$REPO_PATH"
+  OSV_OUT="$RESULTS_DIR/osv-scanner-results.sarif"
+  run_tool_osv() {
+    local ec=0 out
+    out=$(osv-scanner scan --format sarif --output "$OSV_OUT" -r "$REPO_PATH" 2>&1) || ec=$?
+    # "No package sources found" (exit 128) = the repo has no dependency
+    # manifests/lockfiles — nothing for SCA to scan. That is an empty result,
+    # not a tool failure; without this the whole scan flips completed_with_errors.
+    if [ "$ec" -ne 0 ] && echo "$out" | grep -q "No package sources found"; then
+      echo "[security-tools] osv-scanner: no package sources in repo — empty result"
+      rm -f "$OSV_OUT" # osv leaves a 0-byte file; run_tool then records success/no-findings
+      return 0
+    fi
+    printf '%s\n' "$out"
+    return "$ec"
+  }
+  run_tool "osv-scanner" "$OSV_OUT" run_tool_osv
 else
   TOOL_STATUS["osv-scanner"]="skipped"; TOOL_EXIT["osv-scanner"]=""; TOOL_FILE["osv-scanner"]="null"; TOOL_DURATION["osv-scanner"]=0
 fi

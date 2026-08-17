@@ -33,18 +33,30 @@ export async function apiFetch(input: string | URL | Request, init?: RequestInit
 }
 
 /**
+ * Extract a human-readable error message from a non-2xx response body.
+ * API errors are JSON ({ message } or { error }); anything else (nginx 502
+ * pages, plain text) falls back to the raw body text.
+ */
+export async function readErrorMessage(res: Response): Promise<string> {
+  const text = await res.text().catch((err) => {
+    console.error('[api] Failed to read error response body:', err);
+    return `HTTP ${res.status}`;
+  });
+  try {
+    const parsed = JSON.parse(text);
+    return parsed.message ?? parsed.error ?? text;
+  } catch {
+    return text; // response is not JSON — the raw body IS the message
+  }
+}
+
+/**
  * Typed GET helper — fetches JSON with auth.
  */
 export async function fetchApi<T>(url: string): Promise<T> {
   const res = await apiFetch(url);
   if (!res.ok) {
-    const text = await res.text().catch((err) => {
-      console.error('[api] Failed to read error response body:', err);
-      return `HTTP ${res.status}`;
-    });
-    let message = text;
-    try { const parsed = JSON.parse(text); message = parsed.message ?? parsed.error ?? text; } catch { /* response is not JSON */ }
-    throw new Error(message);
+    throw new Error(await readErrorMessage(res));
   }
   return res.json();
 }
@@ -57,13 +69,7 @@ export async function fetchApi<T>(url: string): Promise<T> {
 export async function fetchApiRaw(url: string, init?: RequestInit): Promise<Response> {
   const res = await apiFetch(url, init);
   if (!res.ok) {
-    const text = await res.text().catch((err) => {
-      console.error('[api] Failed to read error response body:', err);
-      return `HTTP ${res.status}`;
-    });
-    let message = text;
-    try { const parsed = JSON.parse(text); message = parsed.message ?? parsed.error ?? text; } catch { /* response is not JSON */ }
-    throw new Error(message);
+    throw new Error(await readErrorMessage(res));
   }
   return res;
 }
@@ -80,13 +86,7 @@ export async function mutateApi<T>(url: string, options: RequestInit): Promise<T
 
   const res = await apiFetch(url, { ...options, headers });
   if (!res.ok) {
-    const text = await res.text().catch((err) => {
-      console.error('[api] Failed to read error response body:', err);
-      return `HTTP ${res.status}`;
-    });
-    let message = text;
-    try { const parsed = JSON.parse(text); message = parsed.message ?? parsed.error ?? text; } catch { /* response is not JSON */ }
-    throw new Error(message);
+    throw new Error(await readErrorMessage(res));
   }
   if (res.status === 204) return undefined as T;
   return res.json();

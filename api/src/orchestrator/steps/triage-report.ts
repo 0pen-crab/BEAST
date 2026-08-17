@@ -12,7 +12,8 @@ import { resolveModelFlag } from '../ai-models.ts';
 import { addScanFile } from '../entities.ts';
 import { storeReports } from './import-results.ts';
 import { db } from '../../db/index.ts';
-import { scanEvents, findings } from '../../db/schema.ts';
+import { findings } from '../../db/schema.ts';
+import { logScanEvent } from '../events.ts';
 
 // Decisions are keyed by PreparedFinding.tempId — DB finding ids don't exist
 // yet (the commit step writes findings only after every step succeeded).
@@ -36,27 +37,14 @@ async function readFileOrNull(path: string): Promise<string | null> {
   }
 }
 
-// Local scan-event helper (mirrors import-results; avoids circular dep with pipeline.ts)
+// Thin wrapper: fills the step's identity fields from ctx.
 async function logTriageScanEvent(
   ctx: PipelineContext,
   level: 'info' | 'warning' | 'error',
   message: string,
   details?: Record<string, unknown>,
 ): Promise<void> {
-  try {
-    await db.insert(scanEvents).values({
-      scanId: ctx.scanId,
-      stepName: 'triage-report',
-      level,
-      source: 'triage-report',
-      message,
-      details: details ?? {},
-      repoName: ctx.repoName ?? null,
-      workspaceId: ctx.workspaceId ?? null,
-    });
-  } catch (err) {
-    console.error(`[triage] Failed to log scan event for ${ctx.scanId}:`, err instanceof Error ? err.message : err);
-  }
+  await logScanEvent(ctx.scanId, 'triage-report', level, message, details, ctx.repoName, ctx.workspaceId);
 }
 
 export async function fetchBaselineAssessments(repoName: string) {
@@ -169,7 +157,11 @@ export async function prepareTriageInput(
           }
         }
       } catch (err) {
-        console.error(`[triage] Failed to parse SARIF confidence from ${rf.key}:`, err instanceof Error ? err.message : err);
+        // Triage proceeds without confidence hints for this tool — degraded
+        // input quality must be visible in the Events feed, not just the log.
+        await logTriageScanEvent(ctx, 'warning',
+          `Failed to parse SARIF confidence from ${rf.key} — triage runs without confidence hints for this tool`,
+          { tool: rf.key, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -187,7 +179,9 @@ export async function prepareTriageInput(
           }
         }
       } catch (err) {
-        console.error(`[triage] Failed to parse trufflehog metadata:`, err instanceof Error ? err.message : err);
+        await logTriageScanEvent(ctx, 'warning',
+          'Failed to parse trufflehog metadata — triage runs without verified-secret hints',
+          { error: err instanceof Error ? err.message : String(err) });
       }
     }
   }

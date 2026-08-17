@@ -3,12 +3,28 @@
 # Multi-stage build with BuildKit parallelism and cache mounts.
 # Stages 1-3 build in parallel; runtime only COPYs results.
 
+# ── Stage: hardened Ubuntu base (shared by all Ubuntu stages) ─────
+# On arm64 apt fetches from ports.ubuntu.com over plain HTTP. Corporate
+# firewalls / DPI can throttle port 80 to that host, causing partial index
+# downloads that look like "unmet dependencies". Fix: HTTPS sources,
+# retries, and Error-Mode "any" so a failed index fetch kills the build
+# immediately instead of producing a corrupt package graph.
+FROM ubuntu:24.04 AS ubuntu-base
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources && \
+    printf 'Acquire::Retries "3";\nAPT::Update::Error-Mode "any";\n' \
+      > /etc/apt/apt.conf.d/99beast && \
+    apt-get -o Acquire::https::Verify-Peer=false update && \
+    apt-get -o Acquire::https::Verify-Peer=false install -y \
+      --no-install-recommends ca-certificates
+
 # ── Stage: binary tool downloads ───────────────────────────────────
-FROM ubuntu:24.04 AS downloader
+FROM ubuntu-base AS downloader
 ARG TARGETARCH
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+    apt-get update && apt-get install -y --no-install-recommends curl
 
 ARG GITLEAKS_VERSION=8.21.2
 ARG TRUFFLEHOG_VERSION=3.88.0
@@ -33,7 +49,7 @@ RUN set -e && \
 
 
 # ── Stage: Python security tools in venvs ─────────────────────────
-FROM ubuntu:24.04 AS python-builder
+FROM ubuntu-base AS python-builder
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -71,13 +87,13 @@ RUN git clone --depth 1 https://github.com/apiiro/malicious-code-ruleset.git /ru
 
 
 # ── Runtime ───────────────────────────────────────────────────────
-FROM ubuntu:24.04
+FROM ubuntu-base
 
 # 1. System packages — heaviest layer, rarely changes
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-      openssh-server git bash jq ca-certificates \
+      openssh-server git bash jq \
       nodejs npm \
       maven gradle default-jdk-headless \
       python3 python3-venv pipenv \

@@ -24,7 +24,7 @@ const {
   mockCheckRemoteFileExists: vi.fn().mockResolvedValue(true),
 }));
 
-vi.mock('../pipeline.ts', () => ({
+vi.mock('../events.ts', () => ({
   logScanEvent: mockLogScanEvent,
 }));
 

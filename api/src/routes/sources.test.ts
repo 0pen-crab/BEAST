@@ -44,6 +44,8 @@ vi.mock('../lib/vault.ts', () => ({
 vi.mock('../orchestrator/git-providers.ts', () => ({
   parseGitUrl: vi.fn(),
   createClient: vi.fn(),
+  isBitbucketAccessToken: (token: string) => token.startsWith('ATCTT3x'),
+  normalizeBaseUrl: (url: string) => url.replace(/\/+$/, ''),
   GitHubClient: vi.fn(),
   GitLabClient: vi.fn(),
   BitBucketClient: vi.fn(),

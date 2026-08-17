@@ -13,7 +13,23 @@ function ensureScanDir(dir: string): void {
     fs.rmSync(dir, { recursive: true, force: true });
   }
   fs.mkdirSync(dir, { recursive: true });
-  try { fs.chownSync(dir, SCANNER_UID, SCANNER_GID); } catch { /* non-fatal in dev */ }
+  chownToScanner(dir);
+}
+
+/**
+ * The worker runs as root, but AI agents on claude-runner run as `scanner`
+ * over the shared /workspace volume — every dir an agent writes into must be
+ * scanner-owned. A failed chown must fail the scan HERE: swallowed, it
+ * resurfaces minutes later as "Analyzer did not write scan context" with no
+ * hint of the real cause (scan 7d895f66).
+ */
+function chownToScanner(dir: string): void {
+  try {
+    fs.chownSync(dir, SCANNER_UID, SCANNER_GID);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to chown ${dir} to scanner (${SCANNER_UID}:${SCANNER_GID}): ${msg} — remote agents would not be able to write scan results`);
+  }
 }
 
 export async function runCloneStep({ ctx }: StepInput): Promise<Record<string, unknown>> {
@@ -28,13 +44,16 @@ export async function runCloneStep({ ctx }: StepInput): Promise<Record<string, u
   await cloneRepo(ctx);
 
   // The analyzer runs on claude-runner as the `scanner` user and writes
-  // repo-profile.md into the repo base dir (/workspace/src-<sourceId>/<repo>).
-  // That dir is created here by root (Node), so chown it to scanner — otherwise
-  // the profile write silently fails and the Repository Profile button stays disabled.
-  try { fs.chownSync(ctx.repoBaseDir, SCANNER_UID, SCANNER_GID); } catch { /* non-fatal in dev */ }
+  // scan-context.md / repo-profile.md into the repo base dir
+  // (/workspace/src-<sourceId>/<repo>). In local-path mode cloneRepo creates
+  // no directories at all, so the base dir must be created here before
+  // ownership can be handed to scanner.
+  fs.mkdirSync(ctx.repoBaseDir, { recursive: true });
+  chownToScanner(ctx.repoBaseDir);
 
   ensureScanDir(ctx.toolsDir);
   ensureScanDir(ctx.agentDir);
+  chownToScanner(ctx.workDir);
 
   return {
     repoPath: ctx.repoPath,

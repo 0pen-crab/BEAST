@@ -100,6 +100,7 @@ export const sources = pgTable('sources', {
   orgType: varchar('org_type', { length: 32 }),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   syncIntervalMinutes: integer('sync_interval_minutes').default(1440),
+  syncFailCount: integer('sync_fail_count').default(0).notNull(),
   detectedScopes: text('detected_scopes').array().default(sql`'{}'`),
   credentialType: varchar('credential_type', { length: 32 }),
   credentialUsername: varchar('credential_username', { length: 256 }),

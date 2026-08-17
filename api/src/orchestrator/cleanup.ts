@@ -45,7 +45,8 @@
 
 import { eq, and, inArray } from 'drizzle-orm';
 import { db } from '../db/index.ts';
-import { tests, findings, contributorAssessments, scanEvents, scanSteps } from '../db/schema.ts';
+import { tests, findings, contributorAssessments, scanSteps } from '../db/schema.ts';
+import { logScanEvent } from './events.ts';
 
 export interface CleanupFailedScanResult {
   findingsDeleted: number;
@@ -148,19 +149,8 @@ export async function cleanupFailedScanData(
       } else {
         console.error(`[cleanup] ${message} (scan ${scanId})`);
       }
-      try {
-        await db.insert(scanEvents).values({
-          scanId,
-          level,
-          source: 'cleanup',
-          message,
-          details: { ...result, commitStarted },
-          repoName: meta?.repoName ?? null,
-          workspaceId: meta?.workspaceId ?? null,
-        });
-      } catch (eventErr) {
-        console.error(`[cleanup] Failed to log cleanup event for ${scanId}:`, eventErr instanceof Error ? eventErr.message : eventErr);
-      }
+      await logScanEvent(scanId, 'cleanup', level, message,
+        { ...result, commitStarted }, meta?.repoName ?? undefined, meta?.workspaceId ?? null);
     } else {
       console.log(`[cleanup] No partial results to remove for failed scan ${scanId}`);
     }
@@ -168,19 +158,8 @@ export async function cleanupFailedScanData(
     // Cleanup failure must not mask the original scan error — scream and return.
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[cleanup] Failed to remove partial data of failed scan ${scanId}:`, message);
-    try {
-      await db.insert(scanEvents).values({
-        scanId,
-        level: 'error',
-        source: 'cleanup',
-        message: `Cleanup of failed scan data crashed: ${message}`,
-        details: { ...result, stack: err instanceof Error ? err.stack : null },
-        repoName: meta?.repoName ?? null,
-        workspaceId: meta?.workspaceId ?? null,
-      });
-    } catch (eventErr) {
-      console.error(`[cleanup] Failed to log cleanup failure event for ${scanId}:`, eventErr instanceof Error ? eventErr.message : eventErr);
-    }
+    await logScanEvent(scanId, 'cleanup', 'error', `Cleanup of failed scan data crashed: ${message}`,
+      { ...result, stack: err instanceof Error ? err.stack : null }, meta?.repoName ?? undefined, meta?.workspaceId ?? null);
   }
 
   return result;

@@ -19,6 +19,7 @@ import { formatDate } from '@/lib/format';
 import { SEVERITIES, STATUSES } from '@/api/types';
 import type { Finding } from '@/api/types';
 import { parseListParam, parsePageParam, parseEnumParam, setOrDeleteParam } from '@/lib/url-state';
+import { loadStoredColumns } from '@/lib/stored-columns';
 
 const PAGE_SIZE = 50;
 
@@ -119,13 +120,7 @@ const DEFAULT_VISIBLE: ColumnKey[] = ['severity', 'tool', 'location', 'repositor
 const COL_KEY = 'beast_finding_columns';
 
 function loadVisibleColumns(): Set<ColumnKey> {
-  try {
-    const stored = localStorage.getItem(COL_KEY);
-    if (stored) return new Set(JSON.parse(stored) as ColumnKey[]);
-  } catch (err) {
-    console.error('[findings] Failed to parse stored column settings:', err);
-  }
-  return new Set(DEFAULT_VISIBLE);
+  return loadStoredColumns(COL_KEY, DEFAULT_VISIBLE);
 }
 
 function ColumnSettingsDropdown({

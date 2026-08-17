@@ -2,6 +2,7 @@ import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { sanitizeScanError } from '../lib/sanitize.ts';
 import { scans, repositories, scanEvents, type Scan } from '../db/schema.ts';
+import { logScanEvent } from './events.ts';
 import { runPipeline } from './pipeline.ts';
 import { ScanPausedError } from './rate-limit.ts';
 import { cleanupFailedScanData } from './cleanup.ts';
@@ -143,19 +144,8 @@ export async function pollForWork(): Promise<void> {
             .where(eq(repositories.id, scan.repositoryId));
         }
 
-        try {
-          await db.insert(scanEvents).values({
-            scanId,
-            level: 'warning',
-            source: 'pipeline',
-            message: `Scan paused: ${message}`,
-            details: { resumesAt: err.resumesAt, reason: err.reason },
-            repoName: scan.repoName,
-            workspaceId: scan.workspaceId,
-          });
-        } catch (eventErr) {
-          console.error(`[worker] Failed to log paused event for ${scanId}:`, eventErr instanceof Error ? eventErr.message : eventErr);
-        }
+        await logScanEvent(scanId, null, 'warning', `Scan paused: ${message}`,
+          { resumesAt: err.resumesAt, reason: err.reason }, scan.repoName, scan.workspaceId);
 
         console.log(`[worker] Scan ${scanId} paused${resumesAt ? ` until ${resumesAt.toISOString()}` : ''}: ${message}`);
         return;
@@ -197,19 +187,8 @@ export async function pollForWork(): Promise<void> {
           .where(eq(repositories.id, scan.repositoryId));
       }
 
-      try {
-        await db.insert(scanEvents).values({
-          scanId,
-          level: 'error',
-          source: 'pipeline',
-          message: `Pipeline failed: ${message}`,
-          details: { stack: err instanceof Error ? err.stack : null },
-          repoName: scan.repoName,
-          workspaceId: scan.workspaceId,
-        });
-      } catch (eventErr) {
-        console.error(`[worker] Failed to log scan event for ${scanId}:`, eventErr instanceof Error ? eventErr.message : eventErr);
-      }
+      await logScanEvent(scanId, null, 'error', `Pipeline failed: ${message}`,
+        { stack: err instanceof Error ? err.stack : null }, scan.repoName, scan.workspaceId);
 
       // Maintainer policy: the DB only retains data from scans that completed
       // successfully — remove partial findings/tests/assessments this scan
@@ -284,7 +263,9 @@ export async function startScanWorker(): Promise<void> {
         console.log(`[worker] Claude status: ${data.status} — staying paused`);
       }
     } catch (err) {
-      console.log('[worker] Claude status check failed — staying paused:', err instanceof Error ? err.message : err);
+      // Transient probe failure (network/API) — staying paused IS the handling;
+      // the next interval retries. Nothing else to surface while paused.
+      console.error('[worker] Claude status check failed — staying paused:', err instanceof Error ? err.message : err);
     }
   }, RATE_LIMIT_CHECK_INTERVAL);
 }
@@ -307,6 +288,8 @@ async function clearPausedScansResumesAt(): Promise<void> {
       console.log(`[worker] Cleared resumes_at on ${updated.length} paused scan(s) — will retry immediately`);
     }
   } catch (err) {
+    // DB write failed — scans stay paused until their original resumes_at,
+    // which is safe (just slower). Next probe interval retries the clear.
     console.error('[worker] Failed to clear paused scan resumes_at:', err instanceof Error ? err.message : err);
   }
 }

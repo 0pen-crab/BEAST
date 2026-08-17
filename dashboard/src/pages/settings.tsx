@@ -11,6 +11,7 @@ import {
   useSourceRepos,
   useSyncSource,
   useDeleteSource,
+  useUpdateSource,
   useToolRegistry,
   useWorkspaceTools,
   useUpdateWorkspaceTools,
@@ -655,6 +656,7 @@ function SourceCard({
 }) {
   const { t } = useTranslation();
   const { data: repos = [] } = useSourceRepos(source.id);
+  const [editingToken, setEditingToken] = useState(false);
 
   const display = PROVIDER_DISPLAY[source.provider] ?? { label: source.provider, color: 'text-th-text-secondary' };
   const repoCount = repos.length;
@@ -693,6 +695,18 @@ function SourceCard({
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink" onClick={(e) => e.stopPropagation()}>
+          {source.provider !== 'local' && (
+            <button
+              onClick={() => setEditingToken(!editingToken)}
+              className="beast-source-edit-btn"
+              title={t('sources.updateToken')}
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 010 .255c-.007.378.138.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.248a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={onSync}
             disabled={syncing}
@@ -723,6 +737,13 @@ function SourceCard({
         </svg>
       </div>
 
+      {/* Inline token editor */}
+      {editingToken && (
+        <div className="beast-source-expand">
+          <TokenUpdateForm source={source} onDone={() => setEditingToken(false)} />
+        </div>
+      )}
+
       {/* Expanded: RepoPicker */}
       {expanded && (
         <div className="beast-source-expand">
@@ -734,6 +755,71 @@ function SourceCard({
         </div>
       )}
     </div>
+  );
+}
+
+function isBitbucketAccessToken(token: string): boolean {
+  return token.startsWith('ATCTT3x');
+}
+
+function TokenUpdateForm({ source, onDone }: { source: Source; onDone: () => void }) {
+  const { t } = useTranslation();
+  const updateSource = useUpdateSource();
+  const [newToken, setNewToken] = useState('');
+  const [username, setUsername] = useState('');
+
+  const needsUsername = source.provider === 'bitbucket' && newToken.length > 0 && !isBitbucketAccessToken(newToken);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!newToken.trim()) return;
+    await updateSource.mutateAsync({
+      id: source.id,
+      accessToken: newToken.trim(),
+      ...(needsUsername ? { username: username.trim() } : {}),
+    });
+    setNewToken('');
+    setUsername('');
+    onDone();
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="beast-token-update-row">
+      <input
+        type="text"
+        autoComplete="off"
+        className="beast-input beast-input-sm"
+        style={{ WebkitTextSecurity: 'disc' } as any}
+        placeholder={t('sources.newTokenPlaceholder')}
+        value={newToken}
+        onChange={(e) => setNewToken(e.target.value)}
+        autoFocus
+      />
+      {needsUsername && (
+        <input
+          type="text"
+          autoComplete="off"
+          className="beast-input beast-input-sm"
+          placeholder="your-email@company.com"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+      )}
+      <button
+        type="submit"
+        disabled={!newToken.trim() || updateSource.isPending}
+        className="beast-btn beast-btn-primary beast-btn-sm"
+      >
+        {updateSource.isPending ? t('common.saving') : t('sources.updateTokenBtn')}
+      </button>
+      <button
+        type="button"
+        onClick={onDone}
+        className="beast-btn beast-btn-ghost beast-btn-sm"
+      >
+        {t('common.cancel')}
+      </button>
+    </form>
   );
 }
 

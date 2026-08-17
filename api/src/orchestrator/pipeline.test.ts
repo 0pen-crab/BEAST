@@ -182,11 +182,6 @@ describe('pipeline module exports', () => {
     expect(typeof mod.runPipeline).toBe('function');
   });
 
-  it('exports logScanEvent helper', async () => {
-    const mod = await import('./pipeline.ts');
-    expect(typeof mod.logScanEvent).toBe('function');
-  });
-
   it('exports buildContext helper', async () => {
     const mod = await import('./pipeline.ts');
     expect(typeof mod.buildContext).toBe('function');
@@ -773,47 +768,6 @@ describe('runPipeline', () => {
     // import + triage must NOT run because pipeline aborts on paused error
     expect(mockRunImportStep).not.toHaveBeenCalled();
     expect(mockRunTriageStep).not.toHaveBeenCalled();
-  });
-});
-
-// ── logScanEvent ────────────────────────────────────────────────
-
-describe('logScanEvent', () => {
-  it('inserts event into scanEvents table', async () => {
-    const { logScanEvent } = await import('./pipeline.ts');
-
-    await logScanEvent('scan-1', 'clone', 'info', 'test message', {}, 'repo', 1);
-
-    expect(mockDb.insert).toHaveBeenCalled();
-    expect(mockDb.values).toHaveBeenCalled();
-  });
-
-  it('does not throw on insert failure', async () => {
-    const { logScanEvent } = await import('./pipeline.ts');
-
-    mockDb.values.mockRejectedValueOnce(new Error('DB down'));
-
-    // Should not throw
-    await logScanEvent('scan-1', null, 'error', 'test', {});
-  });
-
-  it('caps the persisted message at 4000 chars (legacy 10MB messages froze the dashboard)', async () => {
-    const { logScanEvent } = await import('./pipeline.ts');
-
-    await logScanEvent('scan-1', 'import', 'error', 'm'.repeat(100_000), {}, 'repo', 1);
-
-    const inserted = mockDb.values.mock.calls.at(-1)![0];
-    expect(inserted.message.length).toBeLessThan(4_100);
-    expect(inserted.message).toContain('… (truncated, 100000 chars total)');
-  });
-
-  it('leaves short messages untouched and NUL-stripped', async () => {
-    const { logScanEvent } = await import('./pipeline.ts');
-
-    await logScanEvent('scan-1', 'clone', 'info', 'clone\u0000 done', {}, 'repo', 1);
-
-    const inserted = mockDb.values.mock.calls.at(-1)![0];
-    expect(inserted.message).toBe('clone done');
   });
 });
 

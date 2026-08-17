@@ -27,7 +27,8 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import { and, inArray, like, lt, or } from 'drizzle-orm';
 import { db } from '../db/index.ts';
-import { scans, scanFiles, scanEvents } from '../db/schema.ts';
+import { scans, scanFiles } from '../db/schema.ts';
+import { logScanEvent } from './events.ts';
 
 export const RETENTION_DAYS = 90;
 export const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
@@ -296,23 +297,15 @@ export async function runRetentionSweep(): Promise<SweepStats> {
 
   // Routine housekeeping stays out of the Events tab — but FAILURES scream.
   if (stats.errors.length > 0) {
-    try {
-      await db.insert(scanEvents).values({
-        scanId: null,
-        level: 'error',
-        source: 'retention',
-        message: `Retention sweep hit ${stats.errors.length} failure(s) — some artifacts were not deleted`,
-        details: {
-          errors: stats.errors.slice(0, 20),
-          workDirsDeleted: stats.workDirsDeleted,
-          orphanDirsDeleted: stats.orphanDirsDeleted,
-          legacyDirsDeleted: stats.legacyDirsDeleted,
-          scanFileRowsDeleted: stats.scanFileRowsDeleted,
-        },
+    await logScanEvent(null, 'retention', 'error',
+      `Retention sweep hit ${stats.errors.length} failure(s) — some artifacts were not deleted`,
+      {
+        errors: stats.errors.slice(0, 20),
+        workDirsDeleted: stats.workDirsDeleted,
+        orphanDirsDeleted: stats.orphanDirsDeleted,
+        legacyDirsDeleted: stats.legacyDirsDeleted,
+        scanFileRowsDeleted: stats.scanFileRowsDeleted,
       });
-    } catch (eventErr) {
-      console.error('[retention] Failed to log sweep failures to scan_events:', errMsg(eventErr));
-    }
   }
 
   return stats;

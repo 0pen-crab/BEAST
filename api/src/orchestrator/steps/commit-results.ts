@@ -22,7 +22,8 @@
 
 import { eq, and, desc, inArray } from 'drizzle-orm';
 import { db } from '../../db/index.ts';
-import { tests, findings, findingNotes, contributorAssessments, scanEvents, scanFiles } from '../../db/schema.ts';
+import { tests, findings, findingNotes, contributorAssessments, scanFiles } from '../../db/schema.ts';
+import { logScanEvent } from '../events.ts';
 import { findOrCreateContributor } from '../../routes/contributors.ts';
 import { addScanFile } from '../entities.ts';
 import { ingestContributorStats } from './import-results.ts';
@@ -44,27 +45,14 @@ const DISPOSE_STATUS: Record<string, string> = {
   duplicate: 'duplicate',
 };
 
-// Local scan-event helper (mirrors import-results; avoids circular dep with pipeline.ts)
+// Thin wrapper: fills the step's identity fields from ctx.
 async function logCommitScanEvent(
   ctx: PipelineContext,
   level: 'info' | 'warning' | 'error',
   message: string,
   details?: Record<string, unknown>,
 ): Promise<void> {
-  try {
-    await db.insert(scanEvents).values({
-      scanId: ctx.scanId,
-      stepName: 'commit',
-      level,
-      source: 'commit',
-      message,
-      details: details ?? {},
-      repoName: ctx.repoName ?? null,
-      workspaceId: ctx.workspaceId ?? null,
-    });
-  } catch (err) {
-    console.error(`[commit] Failed to log scan event for ${ctx.scanId}:`, err instanceof Error ? err.message : err);
-  }
+  await logScanEvent(ctx.scanId, 'commit', level, message, details, ctx.repoName, ctx.workspaceId);
 }
 
 // Drizzle transaction handle — same query-builder surface as `db` for our usage.
@@ -159,7 +147,12 @@ export async function applyAssessmentEnhancements(
         });
       }
     } catch (err) {
-      console.error(`[commit] Failed to append security findings for ${email}:`, err instanceof Error ? err.message : err);
+      // Per-contributor isolation: one bad assessment must not kill the rest,
+      // but a skipped one means the contributor's profile silently misses its
+      // security section — surface it in the Events feed.
+      await logCommitScanEvent(ctx, 'error',
+        `Failed to append security findings to assessment for ${email}`,
+        { error: err instanceof Error ? err.message : String(err) });
     }
   }
 }
@@ -515,7 +508,11 @@ export async function runCommitStep({ ctx, prev }: StepInput): Promise<CommitOut
         const contribId = await findOrCreateContributor(d.contributor_email, name, ctx.workspaceId);
         await tx.update(findings).set({ contributorId: contribId }).where(eq(findings.id, dbId));
       } catch (err) {
-        console.error(`[commit] Failed to attribute finding ${d.finding_id}:`, err instanceof Error ? err.message : err);
+        // The finding stays committed but unattributed — visible in Events so
+        // a broken contributor lookup doesn't silently strip attribution.
+        await logCommitScanEvent(ctx, 'error',
+          `Failed to attribute finding #${d.finding_id} to ${d.contributor_email}`,
+          { findingId: d.finding_id, error: err instanceof Error ? err.message : String(err) });
       }
     }
   });

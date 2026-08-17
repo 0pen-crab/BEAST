@@ -5,13 +5,23 @@ export async function login(page: Page, username = 'admin', password = 'admin1')
   await page.getByRole('textbox').first().fill(username);
   await page.locator('input[type="password"]').fill(password);
   await page.getByRole('button', { name: /sign in|log in/i }).click();
-  await page.waitForURL('/');
+  await page.waitForURL((url) => url.pathname === '/' || url.pathname === '/onboarding');
+
+  if (page.url().includes('/onboarding')) {
+    await completeOnboarding(page);
+  }
+}
+
+async function completeOnboarding(page: Page) {
+  const nameInput = page.getByPlaceholder('e.g. My Company');
+  await nameInput.fill('E2E Test');
+  await page.getByRole('button', { name: /create workspace/i }).click();
+  await page.waitForURL((url) => !url.pathname.includes('/onboarding'), { timeout: 15000 });
 }
 
 export async function ensureLoggedIn(page: Page) {
   await login(page);
-  // Wait for sidebar to confirm app loaded
-  await expect(page.locator('aside')).toBeVisible();
+  await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
 }
 
 /** Get the auth token from localStorage after login */

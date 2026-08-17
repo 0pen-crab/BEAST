@@ -1,10 +1,12 @@
-import { or, isNull, sql } from 'drizzle-orm';
+import { or, isNull, sql, lt } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { sources } from '../db/schema.ts';
 import { syncSource } from './git-sync.ts';
-import { createWorkspaceEvent, getSource, updateSource } from './entities.ts';
+import { getSource, updateSource } from './entities.ts';
+import { tryCreateWorkspaceEvent } from './events.ts';
 
 const POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const SYNC_FAIL_THRESHOLD = 3;
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 
@@ -16,10 +18,9 @@ async function checkSyncs() {
     const rows = await db.select({ id: sources.id })
       .from(sources)
       .where(
-        or(
-          isNull(sources.lastSyncedAt),
-          sql`${sources.lastSyncedAt} + (${sources.syncIntervalMinutes} || ' minutes')::interval < NOW()`,
-        ),
+        sql`${sources.syncFailCount} < ${SYNC_FAIL_THRESHOLD}
+            AND (${sources.lastSyncedAt} IS NULL
+                 OR ${sources.lastSyncedAt} + (${sources.syncIntervalMinutes} || ' minutes')::interval < NOW())`,
       );
 
     for (const row of rows) {
@@ -27,16 +28,30 @@ async function checkSyncs() {
         console.log(`[sync] Syncing source ${row.id}`);
         const syncResult = await syncSource(row.id);
         console.log(`[sync] Source ${row.id}: +${syncResult.added} repos, ~${syncResult.updated} updated`);
+        await updateSource(row.id, { syncFailCount: 0 });
       } catch (err: any) {
         console.error(`[sync] Source ${row.id} failed:`, err.message);
         try {
-          // Update lastSyncedAt even on failure so the source backs off
-          // for its full sync_interval instead of retrying every poll cycle
-          await updateSource(row.id, { lastSyncedAt: new Date().toISOString() });
-
           const source = await getSource(row.id);
-          if (source) {
-            await createWorkspaceEvent(source.workspaceId, 'sync_failed', {
+          if (!source) continue;
+
+          const newFailCount = (source.syncFailCount ?? 0) + 1;
+          await updateSource(row.id, {
+            lastSyncedAt: new Date().toISOString(),
+            syncFailCount: newFailCount,
+          });
+
+          if (newFailCount >= SYNC_FAIL_THRESHOLD) {
+            console.warn(`[sync] Source ${row.id} paused after ${newFailCount} consecutive failures`);
+            await tryCreateWorkspaceEvent(source.workspaceId, 'sync_paused', {
+              source_id: row.id,
+              provider: source.provider,
+              org_name: source.orgName,
+              error: err.message,
+              fail_count: newFailCount,
+            });
+          } else {
+            await tryCreateWorkspaceEvent(source.workspaceId, 'sync_failed', {
               source_id: row.id,
               provider: source.provider,
               org_name: source.orgName,
@@ -44,7 +59,7 @@ async function checkSyncs() {
             });
           }
         } catch (eventErr) {
-          console.error(`[sync] Failed to create workspace event for source ${row.id}:`, eventErr instanceof Error ? eventErr.message : eventErr);
+          console.error(`[sync] Failed to record sync failure for source ${row.id}:`, eventErr instanceof Error ? eventErr.message : eventErr);
         }
       }
     }

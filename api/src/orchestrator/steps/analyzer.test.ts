@@ -89,7 +89,7 @@ const { mockLogScanEvent } = vi.hoisted(() => ({
   mockLogScanEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../pipeline.ts', () => ({
+vi.mock('../events.ts', () => ({
   logScanEvent: mockLogScanEvent,
 }));
 

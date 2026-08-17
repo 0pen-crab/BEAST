@@ -5,7 +5,7 @@ import { SCANNER_UID, SCANNER_GID } from '../pipeline-types.ts';
 import { getSecret } from '../../lib/vault.ts';
 import { getWorkspaceTools } from '../entities.ts';
 import { getToolByKey } from '../../lib/tool-registry.ts';
-import { logScanEvent } from '../pipeline.ts';
+import { logScanEvent } from '../events.ts';
 
 export interface ToolWarning {
   tool: string;
@@ -69,9 +69,10 @@ async function runScanPass(
     try {
       chownSync(envFilePath, SCANNER_UID, SCANNER_GID);
     } catch (err) {
-      // Non-fatal outside docker (dev on host); in docker the worker is root
-      // and this must succeed — scream so a silent failure is visible.
-      console.error(`[security-tools] Failed to chown ${envFilePath} to scanner: ${err instanceof Error ? err.message : String(err)}`);
+      // run-scans.sh sources this file as `scanner` — an unreadable env file
+      // means every credentialed tool silently runs unauthenticated. Fail the
+      // step here with the real cause instead.
+      throw new Error(`Failed to chown ${envFilePath} to scanner (${SCANNER_UID}:${SCANNER_GID}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -101,7 +102,12 @@ async function runScanPass(
       try {
         await sshExec(sshConfig, `rm -f "${envFilePath}"`);
       } catch (cleanupErr) {
-        console.error(`[security-tools] Failed to clean up env file ${envFilePath}:`, cleanupErr instanceof Error ? cleanupErr.message : cleanupErr);
+        // Plaintext credentials are still sitting on the shared volume —
+        // that must be visible in the Events feed, not just the worker log.
+        await logScanEvent(ctx.scanId, 'security-tools', 'error',
+          `Failed to clean up credentials env file ${envFilePath} — plaintext secrets remain on the shared scan volume`,
+          { error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) },
+          ctx.repoName, ctx.workspaceId);
       }
     }
   }

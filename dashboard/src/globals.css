@@ -2380,6 +2380,26 @@ body {
   padding: 12px 16px;
 }
 
+.beast-source-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  color: var(--th-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  transition: color 0.15s;
+}
+.beast-source-edit-btn:hover { color: var(--beast-red); }
+.beast-token-update-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.beast-token-update-row .beast-input { flex: 1; }
+
 .beast-source-form-wrap {
   border: 1px solid var(--th-border);
   background: var(--th-card);

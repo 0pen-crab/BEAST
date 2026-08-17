@@ -29,7 +29,7 @@ import { highlightsRoutes } from './routes/highlights.ts';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { db } from './db/index.ts';
 import { scans } from './db/schema.ts';
-import { createWorkspaceEvent } from './orchestrator/entities.ts';
+import { tryCreateWorkspaceEvent } from './orchestrator/events.ts';
 import { authHook, registerSafetyNet } from './middleware/auth.ts';
 import { ForbiddenError } from './lib/authorize.ts';
 import { PROVIDER_SECRETS } from './lib/provider-secrets.ts';
@@ -119,17 +119,13 @@ export async function apiErrorHandler(
 
   // Log to workspace events if we have a workspace context
   if (workspaceId) {
-    try {
-      await createWorkspaceEvent(workspaceId, 'api_error', {
-        method: request.method,
-        url: request.url,
-        statusCode,
-        message: error.message,
-        stack: error.stack ?? null,
-      });
-    } catch (eventErr) {
-      console.error('[app] Failed to log API error to workspace events:', eventErr instanceof Error ? eventErr.message : eventErr);
-    }
+    await tryCreateWorkspaceEvent(workspaceId, 'api_error', {
+      method: request.method,
+      url: request.url,
+      statusCode,
+      message: error.message,
+      stack: error.stack ?? null,
+    });
   }
 
   return reply.status(statusCode).send({

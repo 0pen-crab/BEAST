@@ -1,12 +1,13 @@
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import {
-  scans, scanSteps, scanEvents, workspaces, repositories,
+  scans, scanSteps, workspaces, repositories,
   type Scan, type ScanStep,
 } from '../db/schema.ts';
 import type { PipelineContext, StepDef, ScanStepError } from './pipeline-types.ts';
 import { ScanPausedError } from './rate-limit.ts';
-import { sanitizeForDb, truncateEventMessage } from '../lib/sanitize.ts';
+import { sanitizeForDb } from '../lib/sanitize.ts';
+import { logScanEvent } from './events.ts';
 import { clearTraces } from './ai-trace.ts';
 import { queueFeedbackCompilation } from './feedback-worker.ts';
 import { runCloneStep } from './steps/clone.ts';
@@ -83,33 +84,6 @@ function flatSteps(): { name: string; order: number }[] {
 }
 
 // ── Helpers ──────────────────────────────────────────────────
-
-export async function logScanEvent(
-  scanId: string,
-  stepName: string | null,
-  level: 'info' | 'warning' | 'error',
-  message: string,
-  details?: Record<string, unknown>,
-  repoName?: string,
-  workspaceId?: number | null,
-): Promise<void> {
-  try {
-    await db.insert(scanEvents).values({
-      scanId,
-      stepName,
-      level,
-      source: stepName ?? 'pipeline',
-      // NUL-stripped AND capped at 4KB — a legacy step error once landed a
-      // ~10MB message here, and event lists serialize messages inline.
-      message: truncateEventMessage(message),
-      details: sanitizeForDb(details ?? {}),
-      repoName: repoName ?? null,
-      workspaceId: workspaceId ?? null,
-    });
-  } catch (err) {
-    console.error(`[pipeline] Failed to log scan event for ${scanId}:`, err instanceof Error ? err.message : err);
-  }
-}
 
 async function updateStepStatus(
   stepId: number,
@@ -297,6 +271,8 @@ export async function runPipeline(scan: Scan): Promise<PipelineRunResult> {
         console.log(`[pipeline] Scan ${scanId} cancellation detected — aborting in-flight operations`);
       }
     } catch (err) {
+      // Transient DB read failure — the poller retries in 10s, and a down DB
+      // is surfaced by /api/health. Console is the only channel available here.
       console.error(`[pipeline] cancel-poller error:`, err instanceof Error ? err.message : err);
     }
   }, 10_000);
@@ -356,6 +332,13 @@ async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string
     const [row] = await db.select({ output: scanSteps.output }).from(scanSteps).where(eq(scanSteps.id, id));
     return (row?.output as Record<string, unknown>) ?? {};
   }
+  async function shouldRerun(stepName: string): Promise<boolean> {
+    if (!isResume) return false;
+    if (!isCompleted(stepName)) return false;
+    const output = await loadOutput(stepName);
+    const errors = output.toolErrors as unknown[] | undefined;
+    return Array.isArray(errors) && errors.length > 0;
+  }
 
   // Accumulated state — each step's output merges into this. On resume, hydrate
   // from previously-completed steps so subsequent steps see prior outputs.
@@ -373,9 +356,10 @@ async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string
 
     if (Array.isArray(entry)) {
       // Parallel group — run all steps concurrently. Already-completed steps skipped.
+      const rerunFlags = await Promise.all(entry.map(s => shouldRerun(s.name)));
       const results = await Promise.allSettled(
-        entry.map(step => {
-          if (isCompleted(step.name)) {
+        entry.map((step, i) => {
+          if (isCompleted(step.name) && !rerunFlags[i]) {
             return loadOutput(step.name);
           }
           return executeStep(step, ctx, accumulated, stepRows.map(r => ({ id: r.id, name: r.name })))
@@ -402,7 +386,7 @@ async function runPipelineInner(scan: Scan, ctx: PipelineContext, scanId: string
       }
     } else {
       // Sequential step
-      if (isCompleted(entry.name)) {
+      if (isCompleted(entry.name) && !(await shouldRerun(entry.name))) {
         accumulated = { ...accumulated, ...(await loadOutput(entry.name)) };
         continue;
       }

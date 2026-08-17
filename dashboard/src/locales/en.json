@@ -477,7 +477,8 @@
     "bulkDeleteConfirm_other": "Delete {{count}} repositories and all their data? This cannot be undone.",
     "bulkDeleteFailed": "{{failed}} of {{total}} deletions failed",
     "exportFailed": "Export failed",
-    "aiExportFailed": "Failed to generate AI brief"
+    "aiExportFailed": "Failed to generate AI brief",
+    "scanStartFailed": "Failed to start scan for {{repo}}"
   },
   "repo": {
     "scanResultsByTool": "Scan Results by Tool",
@@ -736,7 +737,11 @@
     "reposFound_other": "{{count}} repos found",
     "autoImported": "Imported",
     "noSourcesYet": "Add at least one source to continue",
-    "invalidGitServerUrl": "Enter a full URL to your organization, e.g. https://gitlab.com/my-group"
+    "invalidGitServerUrl": "Enter a full URL to your organization, e.g. https://gitlab.com/my-group",
+    "updateToken": "Update Token",
+    "newTokenPlaceholder": "Paste new token...",
+    "updateTokenBtn": "Update",
+    "tokenUpdated": "Token updated"
   },
   "repoPicker": {
     "searchPlaceholder": "Search repositories...",

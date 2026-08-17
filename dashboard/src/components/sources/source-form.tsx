@@ -9,8 +9,8 @@ type Tab = 'single' | 'git-server' | 'local';
 type Deployment = 'cloud' | 'self-hosted';
 
 function normalizeUrl(input: string): string {
-  if (/^https?:\/\//i.test(input)) return input;
-  return `https://${input}`;
+  const url = /^https?:\/\//i.test(input) ? input : `https://${input}`;
+  return url.replace(/\/+$/, '');
 }
 
 const PROVIDERS = ['GitHub', 'GitLab', 'Bitbucket'] as const;
@@ -29,8 +29,12 @@ function ProviderHint() {
   );
 }
 
+function isBitbucketAccessToken(token: string): boolean {
+  return token.startsWith('ATCTT3x');
+}
+
 const TOKEN_PLACEHOLDERS: Record<string, string> = {
-  bitbucket: 'ATBBxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  bitbucket: 'ATCTT3x... (workspace token) or ATATT3x... (user token)',
   github: 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   gitlab: 'glpat-xxxxxxxxxxxxxxxxxxxx',
 };
@@ -193,7 +197,7 @@ export function SourceForm({ workspaceId, onConnected, onCancel }: SourceFormPro
         base_url: parsedBaseUrl,
         org_name: parsedOrgName || undefined,
         access_token: accessToken.trim() || undefined,
-        username: provider === 'bitbucket' ? username.trim() || undefined : undefined,
+        username: provider === 'bitbucket' && !isBitbucketAccessToken(accessToken) ? username.trim() || undefined : undefined,
       } as any);
       await qc.invalidateQueries({ queryKey: ['sources'] });
       onConnected();
@@ -384,14 +388,14 @@ export function SourceForm({ workspaceId, onConnected, onCancel }: SourceFormPro
                 onChange={(e) => setAccessToken(e.target.value)}
               />
             </div>
-            {provider === 'bitbucket' && (
+            {provider === 'bitbucket' && !isBitbucketAccessToken(accessToken) && (
               <div>
                 <label htmlFor="bb-username" className="beast-label">{t('settings.bbUsername')}</label>
                 <input
                   id="bb-username"
                   type="text"
                   className="beast-input"
-                  placeholder="username (for API token auth)"
+                  placeholder="your-email@company.com"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                 />

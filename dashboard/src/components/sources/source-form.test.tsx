@@ -132,6 +132,35 @@ describe('SourceForm', () => {
       }));
     });
 
+    it('shows username field for bitbucket when no token or user API token entered', () => {
+      renderWithProviders(<SourceForm workspaceId={1} onConnected={vi.fn()} />);
+      openGitServer();
+      fireEvent.change(screen.getByLabelText('settings.provider'), { target: { value: 'bitbucket' } });
+      expect(screen.getByLabelText('settings.bbUsername')).toBeInTheDocument();
+
+      // Enter an app password (ATBB prefix) — username still shown
+      fireEvent.change(screen.getByLabelText('settings.accessToken'), { target: { value: 'ATATT3xFfGF0xxx' } });
+      expect(screen.getByLabelText('settings.bbUsername')).toBeInTheDocument();
+    });
+
+    it('hides username field for bitbucket when workspace access token entered', () => {
+      renderWithProviders(<SourceForm workspaceId={1} onConnected={vi.fn()} />);
+      openGitServer();
+      fireEvent.change(screen.getByLabelText('settings.provider'), { target: { value: 'bitbucket' } });
+      expect(screen.getByLabelText('settings.bbUsername')).toBeInTheDocument();
+
+      // Enter a workspace access token (ATCTT3x prefix) — username hidden
+      fireEvent.change(screen.getByLabelText('settings.accessToken'), { target: { value: 'ATCTT3xFfGN0Qp-OmgElhuCu34BkJGuKA0Du' } });
+      expect(screen.queryByLabelText('settings.bbUsername')).not.toBeInTheDocument();
+    });
+
+    it('does not show username field for non-bitbucket providers', () => {
+      renderWithProviders(<SourceForm workspaceId={1} onConnected={vi.fn()} />);
+      openGitServer();
+      fireEvent.change(screen.getByLabelText('settings.provider'), { target: { value: 'github' } });
+      expect(screen.queryByLabelText('settings.bbUsername')).not.toBeInTheDocument();
+    });
+
     it('bitbucket cloud: base_url=api.bitbucket.org/2.0', async () => {
       connectMutateAsync.mockClear();
       renderWithProviders(<SourceForm workspaceId={1} onConnected={vi.fn()} />);

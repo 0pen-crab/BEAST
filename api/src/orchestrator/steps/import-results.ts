@@ -2,11 +2,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { eq, and, ne, inArray } from 'drizzle-orm';
-import { addScanFile, createWorkspaceEvent, computeFingerprint, normalizeSeverity } from '../entities.ts';
+import { addScanFile, computeFingerprint, normalizeSeverity } from '../entities.ts';
 import { ensureWorkspace, ensureTeam, ensureRepository } from '../entities.ts';
+import { logScanEvent, tryCreateWorkspaceEvent } from '../events.ts';
 import { parseSarif, parseGitleaks, parseTrufflehog, parseTrivy, type ParsedFinding } from './parsers.ts';
 import { db } from '../../db/index.ts';
-import { scans, scanEvents, repositories, findings } from '../../db/schema.ts';
+import { scans, repositories, findings } from '../../db/schema.ts';
 import { ingestContributors, findOrCreateContributor, type IngestContributor, type IngestAssessment } from '../../routes/contributors.ts';
 import type {
   PipelineContext, StepInput, ImportOutput, ResultFile,
@@ -182,26 +183,14 @@ export async function ingestContributorStats(
     // otherwise contributor ingest is silently skipped for the whole scan.
     const message = `Corrupt git-stats JSON — contributor ingest skipped: ${err instanceof Error ? err.message : String(err)}`;
     console.error(`[import] ${message} (scan ${scanId})`);
-    await db.insert(scanEvents).values({
-      scanId,
-      stepName: 'commit',
-      level: 'error',
-      source: 'contributor-ingest',
-      message,
-      details: { file: 'git-contributor-stats.json' },
-      repoName: ctx.repoName,
-      workspaceId: workspaceId ?? null,
-    });
+    await logScanEvent(scanId, 'commit', 'error', message,
+      { file: 'git-contributor-stats.json' }, ctx.repoName, workspaceId ?? null);
     if (workspaceId) {
-      try {
-        await createWorkspaceEvent(workspaceId, 'contributor_ingest_failed', {
-          scan_id: scanId,
-          repo_name: ctx.repoName,
-          error: message,
-        });
-      } catch (eventErr) {
-        console.error(`[import] Failed to create workspace event for corrupt git-stats:`, eventErr instanceof Error ? eventErr.message : eventErr);
-      }
+      await tryCreateWorkspaceEvent(workspaceId, 'contributor_ingest_failed', {
+        scan_id: scanId,
+        repo_name: ctx.repoName,
+        error: message,
+      });
     }
     return [];
   }
@@ -226,26 +215,14 @@ export async function ingestContributorStats(
     return [];
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await db.insert(scanEvents).values({
-      scanId,
-      stepName: 'commit',
-      level: 'warning',
-      source: 'contributor-ingest',
-      message: 'Contributor stats ingest failed',
-      details: { error: message },
-      repoName: ctx.repoName,
-      workspaceId: workspaceId ?? null,
-    });
+    await logScanEvent(scanId, 'commit', 'warning', 'Contributor stats ingest failed',
+      { error: message }, ctx.repoName, workspaceId ?? null);
     if (workspaceId) {
-      try {
-        await createWorkspaceEvent(workspaceId, 'contributor_ingest_failed', {
-          scan_id: scanId,
-          repo_name: ctx.repoName,
-          error: message,
-        });
-      } catch (eventErr) {
-        console.error(`[import] Failed to create workspace event for ingest failure:`, eventErr instanceof Error ? eventErr.message : eventErr);
-      }
+      await tryCreateWorkspaceEvent(workspaceId, 'contributor_ingest_failed', {
+        scan_id: scanId,
+        repo_name: ctx.repoName,
+        error: message,
+      });
     }
   }
   return [];
@@ -707,32 +684,6 @@ export async function prepareImportPlan(
   return { resultFiles, preparedTests, preparedFindings, imports };
 }
 
-// ── logScanEvent (local helper to avoid circular dep with pipeline.ts) ──
-
-async function logScanEvent(
-  scanId: string,
-  stepName: string | null,
-  level: 'info' | 'warning' | 'error',
-  message: string,
-  details?: Record<string, unknown>,
-  repoName?: string,
-  workspaceId?: number | null,
-): Promise<void> {
-  try {
-    await db.insert(scanEvents).values({
-      scanId,
-      stepName,
-      level,
-      source: stepName ?? 'import',
-      message,
-      details: details ?? {},
-      repoName: repoName ?? null,
-      workspaceId: workspaceId ?? null,
-    });
-  } catch (err) {
-    console.error(`[import] Failed to log scan event for ${scanId}:`, err instanceof Error ? err.message : err);
-  }
-}
 
 // ── ToolWarning interface (matches security-tools output) ────────
 

@@ -27,7 +27,7 @@ import type {
 // All API requests go through apiFetch which auto-injects auth headers.
 // NEVER use raw fetch() for /api/* calls.
 
-import { apiFetch, fetchApi, fetchApiRaw, mutateApi } from './client';
+import { apiFetch, fetchApi, fetchApiRaw, mutateApi, readErrorMessage } from './client';
 import type {
   Contributor,
   ContributorRepoStats,
@@ -623,11 +623,13 @@ export function useUpdateSource() {
   return useMutation({
     // The API expects snake_case payload keys (sync_interval_minutes) — sending
     // camelCase silently no-oped because zod stripped the unknown key.
-    mutationFn: ({ id, syncIntervalMinutes }: { id: number; syncIntervalMinutes?: number }) =>
+    mutationFn: ({ id, syncIntervalMinutes, accessToken, username }: { id: number; syncIntervalMinutes?: number; accessToken?: string; username?: string }) =>
       mutateApi<Source>(`/api/sources/${id}`, {
         method: 'PUT',
         body: JSON.stringify({
           ...(syncIntervalMinutes !== undefined ? { sync_interval_minutes: syncIntervalMinutes } : {}),
+          ...(accessToken !== undefined ? { access_token: accessToken } : {}),
+          ...(username !== undefined ? { username } : {}),
         }),
       }),
     onSuccess: () => {
@@ -661,13 +663,7 @@ export function useUploadRepoZip() {
         body: formData,
       });
       if (!res.ok) {
-        const text = await res.text().catch((err) => {
-          console.error('[hooks] Failed to read upload error response:', err);
-          return `HTTP ${res.status}`;
-        });
-        let message = text;
-        try { const parsed = JSON.parse(text); message = parsed.error ?? parsed.message ?? text; } catch { /* response is not JSON */ }
-        throw new Error(message);
+        throw new Error(await readErrorMessage(res));
       }
       return res.json();
     },

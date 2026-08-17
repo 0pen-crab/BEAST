@@ -4,7 +4,7 @@ import { contributors, contributorAssessments, workspaces } from '../db/schema.t
 import { sshExec, sshWriteFile, getClaudeRunnerConfig, parseStreamJsonResult } from './ssh.ts';
 import { getLanguageInstruction } from './prompt-languages.ts';
 import { HARDCODED_MODELS } from './ai-models.ts';
-import { createWorkspaceEvent } from './entities.ts';
+import { tryCreateWorkspaceEvent } from './events.ts';
 
 const POLL_INTERVAL = 5_000; // 5 seconds
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -62,6 +62,9 @@ async function processNext() {
     await compileFeedback(contributorId);
     console.log(`[feedback] Feedback compiled for contributor ${contributorId}`);
   } catch (err) {
+    // compileFeedback surfaces Claude failures to workspace events itself —
+    // reaching here means the DB reads before that failed, so events are
+    // unavailable too. The queue drops the item; a later assessment re-queues it.
     console.error(`[feedback] Failed to compile feedback for contributor ${contributorId}:`, err instanceof Error ? err.message : err);
   } finally {
     processing = false;
@@ -165,15 +168,11 @@ export async function compileFeedback(contributorId: number): Promise<void> {
     // Surface the failure in the workspace Events feed — otherwise the
     // contributor profile silently never updates.
     if (contrib?.workspaceId) {
-      try {
-        await createWorkspaceEvent(contrib.workspaceId, 'feedback_compilation_failed', {
-          contributor_id: contributorId,
-          contributor_name: contrib.displayName ?? null,
-          error: message,
-        });
-      } catch (eventErr) {
-        console.error(`[feedback] Failed to create workspace event for contributor ${contributorId}:`, eventErr instanceof Error ? eventErr.message : eventErr);
-      }
+      await tryCreateWorkspaceEvent(contrib.workspaceId, 'feedback_compilation_failed', {
+        contributor_id: contributorId,
+        contributor_name: contrib.displayName ?? null,
+        error: message,
+      });
     }
   }
 }

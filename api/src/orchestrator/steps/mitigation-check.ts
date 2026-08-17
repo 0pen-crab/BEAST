@@ -23,7 +23,8 @@
 import fs from 'node:fs/promises';
 import { and, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { db } from '../../db/index.ts';
-import { findings, scanEvents } from '../../db/schema.ts';
+import { findings } from '../../db/schema.ts';
+import { logScanEvent } from '../events.ts';
 import { sshWriteFile, getClaudeRunnerConfig, extractAiUsage, SSHTimeoutError } from '../ssh.ts';
 import { runClaudeWithTrace } from '../ai-trace.ts';
 import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS } from '../pipeline-types.ts';
@@ -53,27 +54,14 @@ export interface MitigationCandidate {
   description: string | null;
 }
 
-// Local scan-event helper (mirrors triage-report; avoids circular dep with pipeline.ts)
+// Thin wrapper: fills the step's identity fields from ctx.
 async function logMitigationScanEvent(
   ctx: PipelineContext,
   level: 'info' | 'warning' | 'error',
   message: string,
   details?: Record<string, unknown>,
 ): Promise<void> {
-  try {
-    await db.insert(scanEvents).values({
-      scanId: ctx.scanId,
-      stepName: 'mitigation-check',
-      level,
-      source: 'mitigation-check',
-      message,
-      details: details ?? {},
-      repoName: ctx.repoName ?? null,
-      workspaceId: ctx.workspaceId ?? null,
-    });
-  } catch (err) {
-    console.error(`[mitigation] Failed to log scan event for ${ctx.scanId}:`, err instanceof Error ? err.message : err);
-  }
+  await logScanEvent(ctx.scanId, 'mitigation-check', level, message, details, ctx.repoName, ctx.workspaceId);
 }
 
 /**

@@ -13,7 +13,7 @@ import { runClaudeWithTrace } from '../ai-trace.ts';
 import { db } from '../../db/index.ts';
 import { contributorAssessments } from '../../db/schema.ts';
 import { findOrCreateContributor } from '../../routes/contributors.ts';
-import { logScanEvent } from '../pipeline.ts';
+import { logScanEvent } from '../events.ts';
 
 // ── Existing functions (preserved for backward compat) ────────────────────────
 

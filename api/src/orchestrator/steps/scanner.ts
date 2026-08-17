@@ -7,7 +7,7 @@ import { AI_INACTIVITY_TIMEOUT_MS, AI_MAX_TIMEOUT_MS } from '../pipeline-types.t
 import { getLanguageInstruction } from '../prompt-languages.ts';
 import { resolveModelFlag } from '../ai-models.ts';
 import { addScanFile } from '../entities.ts';
-import { logScanEvent } from '../pipeline.ts';
+import { logScanEvent } from '../events.ts';
 import { checkRemoteFileExists } from './analyzer.ts';
 import {
   ensureScanModule,

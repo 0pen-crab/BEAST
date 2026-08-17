@@ -540,4 +540,66 @@ describe('runCloneStep', () => {
     expect(mockRmSync).toHaveBeenCalledWith(ctx.agentDir, { recursive: true, force: true });
     expect(mockMkdirSync).toHaveBeenCalledWith(ctx.agentDir, { recursive: true });
   });
+
+  // Regression: scan 7d895f66 (uploaded repo). In local-path mode cloneRepo
+  // creates no directories, so the old "chown before ensureScanDir" order
+  // chowned a non-existent repoBaseDir (ENOENT, silently swallowed) and the
+  // dir was later created root-owned — the analyzer (scanner user on
+  // claude-runner) could not write scan-context.md and the scan failed.
+  describe('directory ownership for the scanner user', () => {
+    it('creates repoBaseDir in local-path mode before chowning it', async () => {
+      mockExistsSync.mockReturnValue(true); // local path exists
+
+      const ctx = makeCtx({
+        cloneUrl: '',
+        localPath: '/workspace/uploads/u1/extracted/report-stats-repo',
+        repoBaseDir: '/workspace/src-6/report-stats-repo',
+      });
+      await runCloneStep({ ctx, prev: {} });
+
+      expect(mockMkdirSync).toHaveBeenCalledWith('/workspace/src-6/report-stats-repo', { recursive: true });
+      expect(mockChownSync).toHaveBeenCalledWith('/workspace/src-6/report-stats-repo', expect.any(Number), expect.any(Number));
+
+      const mkdirOrder = mockMkdirSync.mock.invocationCallOrder[
+        mockMkdirSync.mock.calls.findIndex((c) => c[0] === '/workspace/src-6/report-stats-repo')
+      ];
+      const chownOrder = mockChownSync.mock.invocationCallOrder[
+        mockChownSync.mock.calls.findIndex((c) => c[0] === '/workspace/src-6/report-stats-repo')
+      ];
+      expect(mkdirOrder).toBeLessThan(chownOrder);
+    });
+
+    it('chowns workDir so the whole scan tree is writable by remote agents', async () => {
+      mockExistsSync.mockReturnValue(false);
+
+      const ctx = makeCtx();
+      await runCloneStep({ ctx, prev: {} });
+
+      expect(mockChownSync).toHaveBeenCalledWith(ctx.workDir, expect.any(Number), expect.any(Number));
+    });
+
+    it('throws a loud error when chown of repoBaseDir fails instead of swallowing it', async () => {
+      mockExistsSync.mockReturnValue(false);
+      mockChownSync.mockImplementation((p: string) => {
+        if (p === '/workspace/src-1/repo') {
+          throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+        }
+      });
+
+      await expect(runCloneStep({ ctx: makeCtx(), prev: {} }))
+        .rejects.toThrow(/chown.*\/workspace\/src-1\/repo.*EPERM/);
+    });
+
+    it('throws a loud error when chown of toolsDir fails', async () => {
+      mockExistsSync.mockReturnValue(false);
+      const ctx = makeCtx();
+      mockChownSync.mockImplementation((p: string) => {
+        if (p === ctx.toolsDir) {
+          throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+        }
+      });
+
+      await expect(runCloneStep({ ctx, prev: {} })).rejects.toThrow(/chown/);
+    });
+  });
 });

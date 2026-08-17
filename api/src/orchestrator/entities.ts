@@ -743,6 +743,7 @@ export async function updateSource(id: number, data: {
   credentialType?: string;
   credentialUsername?: string | null;
   tokenExpiresAt?: string | null;
+  syncFailCount?: number;
 }): Promise<Source | null> {
   const setObj: Record<string, unknown> = {};
   if (data.syncIntervalMinutes !== undefined) setObj.syncIntervalMinutes = data.syncIntervalMinutes;
@@ -751,6 +752,7 @@ export async function updateSource(id: number, data: {
   if (data.credentialType !== undefined) setObj.credentialType = data.credentialType;
   if (data.credentialUsername !== undefined) setObj.credentialUsername = data.credentialUsername;
   if (data.tokenExpiresAt !== undefined) setObj.tokenExpiresAt = data.tokenExpiresAt ? new Date(data.tokenExpiresAt) : null;
+  if (data.syncFailCount !== undefined) setObj.syncFailCount = data.syncFailCount;
 
   if (Object.keys(setObj).length === 0) return getSource(id);
 

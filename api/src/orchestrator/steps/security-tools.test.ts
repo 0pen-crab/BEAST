@@ -38,7 +38,7 @@ vi.mock('../entities.ts', () => ({
 
 // ── Pipeline mock (logScanEvent) ────────────────────────────────────
 const mockLogScanEvent = vi.fn().mockResolvedValue(undefined);
-vi.mock('../pipeline.ts', () => ({
+vi.mock('../events.ts', () => ({
   logScanEvent: (...args: unknown[]) => mockLogScanEvent(...args),
 }));
 

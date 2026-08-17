@@ -93,7 +93,7 @@ export function buildAuthCloneUrl(
 
     switch (provider) {
       case 'bitbucket':
-        parsed.username = 'x-bitbucket-api-token-auth';
+        parsed.username = isBitbucketAccessToken(token) ? 'x-token-auth' : 'x-bitbucket-api-token-auth';
         parsed.password = token;
         break;
       case 'github':
@@ -427,6 +427,10 @@ export class GitLabClient {
 
 // ── BitBucket ─────────────────────────────────────────────────
 
+export function isBitbucketAccessToken(token: string): boolean {
+  return token.startsWith('ATCTT3x');
+}
+
 export class BitBucketClient {
   constructor(
     private baseUrl: string,
@@ -437,8 +441,9 @@ export class BitBucketClient {
   private headers(): Record<string, string> {
     const h: Record<string, string> = {};
     if (this.token) {
-      if (this.email) {
-        // Bitbucket API tokens use HTTP Basic Auth with email:token
+      if (isBitbucketAccessToken(this.token)) {
+        h['Authorization'] = `Bearer ${this.token}`;
+      } else if (this.email) {
         h['Authorization'] = `Basic ${Buffer.from(`${this.email}:${this.token}`).toString('base64')}`;
       } else {
         h['Authorization'] = `Bearer ${this.token}`;
@@ -582,11 +587,16 @@ export class LocalDirectoryClient {
 
 // ── Factory ──────────────────────────────────────────────────
 
+export function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
 export function createClient(provider: string, baseUrl: string, token?: string, email?: string) {
+  const url = normalizeBaseUrl(baseUrl);
   switch (provider) {
-    case 'github': return new GitHubClient(baseUrl, token);
-    case 'gitlab': return new GitLabClient(baseUrl, token);
-    case 'bitbucket': return new BitBucketClient(baseUrl, token, email);
+    case 'github': return new GitHubClient(url, token);
+    case 'gitlab': return new GitLabClient(url, token);
+    case 'bitbucket': return new BitBucketClient(url, token, email);
     case 'local': return new LocalDirectoryClient();
     default: throw new Error(`Unknown provider: ${provider}`);
   }

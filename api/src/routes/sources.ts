@@ -16,6 +16,8 @@ import { setSecret, getSecret } from '../lib/vault.ts';
 import {
   parseGitUrl,
   createClient,
+  normalizeBaseUrl,
+  isBitbucketAccessToken,
   BitBucketClient,
   GitHubClient,
   GitLabClient,
@@ -82,6 +84,8 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         return reply.status(400).send({ error: 'Provide either url (public) or provider + (org_name or base_url) (private)' });
       }
 
+      baseUrl = normalizeBaseUrl(baseUrl);
+
       // Resolve effective token: explicit > user-level PAT
       let effectiveToken = body.access_token ?? null;
       if (!effectiveToken && request.user) {
@@ -106,8 +110,8 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       let detectedScopes: string[] = [];
       let bbClient: BitBucketClient | undefined;
       if (provider === 'bitbucket' && body.access_token) {
-        if (!body.username) {
-          return reply.status(400).send({ error: 'Bitbucket API tokens require your Atlassian account email (username field)' });
+        if (!isBitbucketAccessToken(body.access_token) && !body.username) {
+          return reply.status(400).send({ error: 'Bitbucket user API tokens (ATATT3x) require your Atlassian account email (username field)' });
         }
         bbClient = new BitBucketClient(baseUrl, body.access_token, body.username);
         const validation = await bbClient.validateToken(orgName);
@@ -488,6 +492,7 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({
           sync_interval_minutes: z.number().optional(),
           access_token: z.string().optional(),
+          username: z.string().optional(),
         }),
       },
     },
@@ -512,6 +517,8 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
           ownerId: id,
           label: 'access_token',
         });
+        const newUsername = isBitbucketAccessToken(body.access_token) ? null : (body.username || source.credentialUsername);
+        await updateSource(id, { credentialUsername: newUsername });
       }
 
       const updated = await getSource(id);
@@ -614,7 +621,7 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
 
     const { randomUUID } = await import('crypto');
     const { mkdirSync, createWriteStream, readdirSync, statSync, existsSync, rmSync } = await import('fs');
-    const { join, relative, basename } = await import('path');
+    const { join, relative, basename, sep } = await import('path');
     const { execFileSync } = await import('child_process');
     const { pipeline } = await import('stream/promises');
 
@@ -648,6 +655,11 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
       execFileSync('tar', ['-xf', archivePath, '-C', extractDir]);
     }
 
+    // Windows archives carry directories without the execute bit for group/others.
+    // Without x on a directory the scanner user cannot traverse into it, silently
+    // skipping entire subtrees. Capital X sets x only on dirs and already-executable files.
+    execFileSync('chmod', ['-R', 'u+rwX,go+rX', extractDir]);
+
     // macOS Finder injects __MACOSX/ alongside the real tree when zipping. Remove
     // it before walking — otherwise the scanner picks AppleDouble metadata as a
     // "repo" and produces 0 findings on the actual code.
@@ -675,30 +687,30 @@ export const sourceRoutes: FastifyPluginAsyncZod = async (app) => {
 
     const gitRepoPaths = findGitRepos(extractDir);
 
-    // If no .git dirs found, treat each top-level folder as a repo; if only one entry, treat the whole thing as one repo
-    let repoPaths: { name: string; path: string }[];
-    if (gitRepoPaths.length > 0) {
-      repoPaths = gitRepoPaths.map((p) => {
-        const rel = relative(extractDir, p);
-        const name = basename(p).replace(/-(main|master|develop|dev)$/, '');
-        return { name, path: p };
-      });
-    } else {
-      const topEntries = readdirSync(extractDir).filter(
-        (e) => statSync(join(extractDir, e)).isDirectory(),
-      );
-      if (topEntries.length > 1) {
-        repoPaths = topEntries.map((e) => ({
-          name: e.replace(/-(main|master|develop|dev)$/, ''),
-          path: join(extractDir, e),
-        }));
-      } else {
-        const name = topEntries.length === 1
-          ? topEntries[0].replace(/-(main|master|develop|dev)$/, '')
-          : safeFilename.replace(/\.zip$/i, '').replace(/-(main|master|develop|dev)$/, '');
-        const path = topEntries.length === 1 ? join(extractDir, topEntries[0]) : extractDir;
-        repoPaths = [{ name, path }];
-      }
+    const stripBranch = (n: string) => n.replace(/-(main|master|develop|dev)$/, '');
+    const archiveName = safeFilename.replace(/\.(zip|tar|tar\.gz|tgz)$/i, '');
+
+    const gitRepos = gitRepoPaths.map((p) => ({
+      name: p === extractDir ? stripBranch(archiveName) : stripBranch(basename(p)),
+      path: p,
+    }));
+
+    const topDirs = readdirSync(extractDir)
+      .filter((e) => statSync(join(extractDir, e)).isDirectory())
+      .map((e) => join(extractDir, e));
+
+    const plainDirs = topDirs.filter((p) =>
+      !gitRepoPaths.some((g) =>
+        g === p || g.startsWith(p + sep) || p.startsWith(g + sep)),
+    ).map((p) => ({
+      name: stripBranch(basename(p)),
+      path: p,
+    }));
+
+    let repoPaths = [...gitRepos, ...plainDirs];
+
+    if (repoPaths.length === 0) {
+      repoPaths = [{ name: stripBranch(archiveName), path: extractDir }];
     }
 
     const folderName = safeFilename.replace(/\.zip$/i, '');
