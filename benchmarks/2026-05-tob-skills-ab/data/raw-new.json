@@ -1,0 +1,501 @@
+{
+  "generatedAt": "2026-05-13T15:47:59.504Z",
+  "scans": [
+    {
+      "scanId": "5524663e-eb57-444d-8f4d-08cd5bb6b9d7",
+      "repoName": "cosmetic_bot",
+      "repoId": 151,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-12T19:16:18.561Z",
+      "scanCompletedAt": "2026-05-12T19:26:29.308Z",
+      "scanDurationMs": 610745,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 673,
+          "outputTokens": 765,
+          "cacheReadInputTokens": 73273,
+          "cacheCreationInputTokens": 8205,
+          "totalContextTokens": 9600,
+          "costUSD": 0.0648,
+          "durationMs": 16200,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:root",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 658,
+          "outputTokens": 2632,
+          "cacheReadInputTokens": 54555,
+          "cacheCreationInputTokens": 10367,
+          "totalContextTokens": 13700,
+          "costUSD": 0.1582,
+          "durationMs": 46200,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 771,
+          "outputTokens": 14957,
+          "cacheReadInputTokens": 607833,
+          "cacheCreationInputTokens": 30931,
+          "totalContextTokens": 46659,
+          "costUSD": 0.5233671499999999,
+          "durationMs": 344232,
+          "numTurns": 29,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 824,
+          "outputTokens": 8844,
+          "cacheReadInputTokens": 240320,
+          "cacheCreationInputTokens": 38978,
+          "totalContextTokens": 48646,
+          "costUSD": 0.5854085,
+          "durationMs": 196147,
+          "numTurns": 23,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 2926,
+        "outputTokens": 27198,
+        "cacheReadInputTokens": 975981,
+        "cacheCreationInputTokens": 88481,
+        "contextTokens": 118605,
+        "costUSD": 1.33177565,
+        "durationMs": 602779,
+        "numTurns": 52,
+        "agentInvocations": 4,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "a0d0bb7b-cd55-40cc-8e9b-2f4651d48134",
+      "repoName": "samokatbot",
+      "repoId": 152,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-12T19:26:34.299Z",
+      "scanCompletedAt": "2026-05-12T19:43:33.449Z",
+      "scanDurationMs": 1018942,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 676,
+          "outputTokens": 2004,
+          "cacheReadInputTokens": 75633,
+          "cacheCreationInputTokens": 10858,
+          "totalContextTokens": 13500,
+          "costUSD": 0.094,
+          "durationMs": 34600,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:root",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 922,
+          "outputTokens": 10219,
+          "cacheReadInputTokens": 129149,
+          "cacheCreationInputTokens": 34242,
+          "totalContextTokens": 45400,
+          "costUSD": 0.5346,
+          "durationMs": 185400,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 776,
+          "outputTokens": 18329,
+          "cacheReadInputTokens": 836398,
+          "cacheCreationInputTokens": 47609,
+          "totalContextTokens": 66714,
+          "costUSD": 0.7050581499999999,
+          "durationMs": 408444,
+          "numTurns": 43,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 832,
+          "outputTokens": 21585,
+          "cacheReadInputTokens": 541014,
+          "cacheCreationInputTokens": 65666,
+          "totalContextTokens": 88083,
+          "costUSD": 1.2211005000000001,
+          "durationMs": 382418,
+          "numTurns": 29,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 3206,
+        "outputTokens": 52137,
+        "cacheReadInputTokens": 1582194,
+        "cacheCreationInputTokens": 158375,
+        "contextTokens": 213697,
+        "costUSD": 2.55475865,
+        "durationMs": 1010862,
+        "numTurns": 72,
+        "agentInvocations": 4,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "c32da9a8-61f5-4a4a-8fbb-c5b76722cbba",
+      "repoName": "rltrader",
+      "repoId": 153,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-12T19:43:36.422Z",
+      "scanCompletedAt": "2026-05-12T20:11:57.023Z",
+      "scanDurationMs": 1700598,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 679,
+          "outputTokens": 3648,
+          "cacheReadInputTokens": 78482,
+          "cacheCreationInputTokens": 13341,
+          "totalContextTokens": 17700,
+          "costUSD": 0.1288,
+          "durationMs": 218300,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:root",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1321,
+          "outputTokens": 10081,
+          "cacheReadInputTokens": 758941,
+          "cacheCreationInputTokens": 114771,
+          "totalContextTokens": 126200,
+          "costUSD": 1.3498,
+          "durationMs": 174200,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:myenv_include_site_python3_10_greenlet",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 941,
+          "outputTokens": 6555,
+          "cacheReadInputTokens": 163503,
+          "cacheCreationInputTokens": 65606,
+          "totalContextTokens": 73100,
+          "costUSD": 0.6563,
+          "durationMs": 112000,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 788,
+          "outputTokens": 18035,
+          "cacheReadInputTokens": 1922183,
+          "cacheCreationInputTokens": 76836,
+          "totalContextTokens": 95659,
+          "costUSD": 1.1360248999999998,
+          "durationMs": 407749,
+          "numTurns": 46,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 3343,
+          "outputTokens": 40210,
+          "cacheReadInputTokens": 1351456,
+          "cacheCreationInputTokens": 103812,
+          "totalContextTokens": 147365,
+          "costUSD": 2.342894,
+          "durationMs": 774739,
+          "numTurns": 45,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 7072,
+        "outputTokens": 78529,
+        "cacheReadInputTokens": 4274565,
+        "cacheCreationInputTokens": 374366,
+        "contextTokens": 460024,
+        "costUSD": 5.6138189,
+        "durationMs": 1686988,
+        "numTurns": 91,
+        "agentInvocations": 5,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "09d44587-ef3b-415c-bddf-f14703744784",
+      "repoName": "sigap-planner",
+      "repoId": 154,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-12T20:11:58.575Z",
+      "scanCompletedAt": "2026-05-12T20:47:57.085Z",
+      "scanDurationMs": 2158508,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 662,
+          "outputTokens": 9313,
+          "cacheReadInputTokens": 112320,
+          "cacheCreationInputTokens": 23000,
+          "totalContextTokens": 33000,
+          "costUSD": 0.2602,
+          "durationMs": 121000,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:root",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 733,
+          "outputTokens": 5738,
+          "cacheReadInputTokens": 59213,
+          "cacheCreationInputTokens": 30529,
+          "totalContextTokens": 37000,
+          "costUSD": 0.3642,
+          "durationMs": 111500,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:backend_migration",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1745,
+          "outputTokens": 10607,
+          "cacheReadInputTokens": 314130,
+          "cacheCreationInputTokens": 40517,
+          "totalContextTokens": 52900,
+          "costUSD": 0.677,
+          "durationMs": 199700,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:backend_scripts",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2880,
+          "outputTokens": 12686,
+          "cacheReadInputTokens": 1032197,
+          "cacheCreationInputTokens": 149189,
+          "totalContextTokens": 164800,
+          "costUSD": 1.7681,
+          "durationMs": 224700,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:mobile_test",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 3889,
+          "outputTokens": 11296,
+          "cacheReadInputTokens": 643975,
+          "cacheCreationInputTokens": 445701,
+          "totalContextTokens": 460900,
+          "costUSD": 3.4025,
+          "durationMs": 197900,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 768,
+          "outputTokens": 22023,
+          "cacheReadInputTokens": 1640491,
+          "cacheCreationInputTokens": 83430,
+          "totalContextTokens": 106221,
+          "costUSD": 1.1360168,
+          "durationMs": 446980,
+          "numTurns": 44,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 8024,
+          "outputTokens": 54940,
+          "cacheReadInputTokens": 3679336,
+          "cacheCreationInputTokens": 208585,
+          "totalContextTokens": 271549,
+          "costUSD": 3.1427678499999994,
+          "durationMs": 834785,
+          "numTurns": 45,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 18701,
+        "outputTokens": 126603,
+        "cacheReadInputTokens": 7481662,
+        "cacheCreationInputTokens": 980951,
+        "contextTokens": 1126370,
+        "costUSD": 10.75078465,
+        "durationMs": 2136565,
+        "numTurns": 89,
+        "agentInvocations": 7,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "c8ab5d3b-5ac6-4eb7-bddf-ee64c1b235fc",
+      "repoName": "deimos",
+      "repoId": 156,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "paused",
+      "scanStartedAt": "2026-05-13T14:41:19.812Z",
+      "scanCompletedAt": null,
+      "scanDurationMs": null,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 823,
+          "outputTokens": 39309,
+          "cacheReadInputTokens": 3858040,
+          "cacheCreationInputTokens": 108986,
+          "totalContextTokens": 149118,
+          "costUSD": 2.1565175,
+          "durationMs": 754259,
+          "numTurns": 88,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 823,
+        "outputTokens": 39309,
+        "cacheReadInputTokens": 3858040,
+        "cacheCreationInputTokens": 108986,
+        "contextTokens": 149118,
+        "costUSD": 2.1565175,
+        "durationMs": 754259,
+        "numTurns": 88,
+        "agentInvocations": 1,
+        "errors": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+-- Persist each repository's default branch.
+--
+-- Provider clients already report it (Bitbucket mainbranch.name, GitHub/GitLab
+-- default_branch) but it was dropped on the floor, so scans had nothing to go
+-- on and fell back to the clone's local origin/HEAD. Git never refreshes that
+-- ref after the initial clone, so a repo whose default moved from main to
+-- develop kept getting scanned on the stale branch — quietly reporting zero
+-- findings against a branch with no code on it.
+--
+-- NULL means "not known yet"; the next source sync fills it in.
+ALTER TABLE repositories ADD COLUMN IF NOT EXISTS default_branch VARCHAR(256);

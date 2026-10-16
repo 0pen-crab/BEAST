@@ -1,0 +1,668 @@
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router';
+import { useTranslation } from 'react-i18next';
+import { useRepository, useRepositoryTests, useFindingCounts, useFindingCountsByTool, useFindings, useDeleteRepository, useRepoReports, useScanArtifacts, useTriggerScan, useSource, useLatestRepoScan } from '@/api/hooks';
+import { ProviderIcon } from '@/lib/provider-icons';
+import { sourceDisplayLabel } from '@/lib/provider-display';
+import { SeverityBadge } from '@/components/severity-badge';
+import { StatusBadge } from '@/components/status-badge';
+import { CardSkeleton, Skeleton, TableSkeleton } from '@/components/skeleton';
+import { BranchPicker } from '@/components/repo/branch-picker';
+import { ErrorBoundary } from '@/components/error-boundary';
+import { MarkdownContent } from '@/components/markdown-content';
+import { TOOL_CATEGORIES, resolveToolFromTest, getToolsByCategory, type ToolInfo } from '@/lib/tool-mapping';
+import { getToolIcon } from '@/lib/tool-icons';
+import { BreadcrumbNav } from '@/components/breadcrumb-nav';
+import { ExportButton } from '@/components/export-button';
+import { AiTraceViewer } from '@/components/ai-trace-viewer';
+import { cn } from '@/lib/utils';
+import { apiFetch } from '@/api/client';
+import { formatDate } from '@/lib/format';
+import type { Test, Severity } from '@/api/types';
+
+async function downloadArtifact(repoId: number, toolKey: string, fileName: string) {
+  const res = await apiFetch(`/api/scan-artifacts/${repoId}/${toolKey}/download`);
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+const STATUS_CLASS: Record<string, string> = {
+  pending: 'status-queued',
+  queued: 'status-queued',
+  analyzing: 'status-running',
+  completed: 'status-completed',
+  failed: 'status-failed',
+  ignored: 'status-queued',
+};
+
+function RepoStatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
+  const label = t(`repos.status${status.charAt(0).toUpperCase() + status.slice(1)}`);
+  return (
+    <span className={cn(
+      'status-pill beast-badge-sm',
+      STATUS_CLASS[status] ?? 'status-queued',
+      status === 'analyzing' && 'beast-animate-pulse',
+    )}>
+      {label}
+    </span>
+  );
+}
+
+export function RepoPage() {
+  const { t } = useTranslation();
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const productId = Number(id);
+  const { data: repo } = useRepository(productId);
+  const { data: allTests, isLoading } = useRepositoryTests(productId);
+  const { data: counts } = useFindingCounts({ repositoryId: productId });
+  const { data: toolCounts } = useFindingCountsByTool([productId]);
+  const { data: artifactsData } = useScanArtifacts(productId);
+
+  // Live count of OPEN findings per tool (excludes risk_accepted / false_positive /
+  // duplicate). The per-tool number on this page reflects open findings only, and
+  // updates as triage changes statuses — unlike the static tests.findings_count.
+  const openByTool = new Map<string, number>();
+  toolCounts?.forEach((tc) => openByTool.set(tc.tool, tc.active));
+  const { data: source } = useSource(repo?.sourceId ?? 0);
+  // Latest scan for this repo — drives the "last scan completed with errors" notice.
+  const { data: latestScan } = useLatestRepoScan(productId);
+
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  // Active tab lives in the URL (?tab=ai-trace) so refresh / shared links
+  // restore it; the default (Overview) keeps the URL clean.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab: 'overview' | 'ai-trace' = searchParams.get('tab') === 'ai-trace' ? 'ai-trace' : 'overview';
+  const setActiveTab = (tab: 'overview' | 'ai-trace') => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'overview') next.delete('tab');
+      else next.set('tab', tab);
+      return next;
+    }, { replace: true });
+  };
+  const deleteRepository = useDeleteRepository();
+  const triggerScan = useTriggerScan();
+
+  // Close the delete confirmation on Escape (same pattern as ReportReader).
+  useEffect(() => {
+    if (!showDeleteDialog) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowDeleteDialog(false); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [showDeleteDialog]);
+
+  // Group tests by tool
+  const toolTests = new Map<string, Test[]>();
+  allTests?.forEach((test) => {
+    const tool = resolveToolFromTest(test.tool);
+    if (tool) {
+      const existing = toolTests.get(tool.key) ?? [];
+      existing.push(test);
+      toolTests.set(tool.key, existing);
+    }
+  });
+
+  const handleDelete = () => {
+    deleteRepository.mutate(productId, {
+      onSuccess: () => navigate('/repos'),
+    });
+  };
+
+  return (
+    <ErrorBoundary>
+      <div className="beast-stack">
+        <BreadcrumbNav items={[{ label: t('nav.repos'), to: '/repos' }, { label: repo?.name ?? '...' }]} />
+        {/* Header */}
+        <div className="beast-page-header">
+          <div>
+            <div className="beast-flex beast-flex-gap-sm">
+              <h1 className="beast-page-title">{repo?.name}</h1>
+              {repo?.status && <RepoStatusBadge status={repo.status} />}
+            </div>
+            <div className="beast-flex beast-flex-gap-sm beast-page-subtitle">
+              {source && (
+                <>
+                  <ProviderIcon provider={source.provider} className="beast-icon-sm" />
+                  <span>{sourceDisplayLabel(source)}</span>
+                </>
+              )}
+              {repo && <BranchPicker repositoryId={productId} value={repo.defaultBranch} />}
+            </div>
+            {repo?.description && <p className="beast-page-subtitle">{repo.description}</p>}
+            {repo?.tags && repo.tags.length > 0 && (
+              <div className="beast-tag-row">
+                {repo.tags.map((t) => (
+                  <span key={t} className="beast-badge beast-badge-gray">{t}</span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="beast-repo-header-actions">
+            <div className="beast-flex beast-flex-gap-sm">
+              {repo && (
+                <ExportButton
+                  scope={{ type: 'repo', repositoryId: productId, repositoryName: repo.name }}
+                />
+              )}
+              <button
+                onClick={() => triggerScan.mutate({ repositoryId: productId })}
+                disabled={triggerScan.isPending || repo?.status === 'queued' || repo?.status === 'analyzing'}
+                className="beast-btn beast-btn-primary beast-btn-sm"
+              >
+                {triggerScan.isPending ? '...' : t('repos.scan')}
+              </button>
+              <button
+                onClick={() => setShowDeleteDialog(true)}
+                className="beast-btn beast-btn-danger beast-btn-sm"
+              >
+                {t('common.delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Last-scan-completed-with-errors notice (amber, links to the scan detail) */}
+        {latestScan?.status === 'completed' && latestScan.completedWithErrors && (
+          <div
+            className="beast-card beast-flex beast-flex-gap-sm beast-stat-accent beast-stat-accent-amber"
+            data-testid="repo-scan-errors-notice"
+          >
+            <span className="status-pill beast-flex-center beast-status-icon-sm status-paused">⚠</span>
+            <span>{t('repo.lastScanCompletedWithErrors')}</span>
+            <Link to={`/scans?scan=${latestScan.id}`} className="beast-link">
+              {t('repo.openScan')}
+            </Link>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="beast-tab-bar beast-tab-bar-spaced">
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={cn('beast-tab', activeTab === 'overview' && 'beast-tab-active')}
+          >
+            {t('repo.overview')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('ai-trace')}
+            className={cn('beast-tab', activeTab === 'ai-trace' && 'beast-tab-active')}
+          >
+            {t('repo.aiTraceTab')}
+          </button>
+        </div>
+
+        {/* Delete confirmation */}
+        {showDeleteDialog && (
+          <div className="beast-overlay" onClick={() => setShowDeleteDialog(false)}>
+            <div className="beast-modal beast-modal-sm" onClick={(e) => e.stopPropagation()}>
+              <h3 className="beast-modal-title">{t('repo.deleteRepo')}</h3>
+              <p className="beast-modal-body">
+                {t('repo.deleteRepoConfirm')} <strong>{repo?.name}</strong>{t('repo.deleteRepoWarning')}
+              </p>
+              <div className="beast-modal-actions">
+                <button
+                  onClick={() => setShowDeleteDialog(false)}
+                  className="beast-btn beast-btn-outline beast-btn-sm"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteRepository.isPending}
+                  className="beast-btn beast-btn-danger beast-btn-sm"
+                >
+                  {deleteRepository.isPending ? t('settings.deleting') : t('common.delete')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'overview' && (
+          <>
+            {/* Summary stats */}
+            {counts && (
+              <div className="beast-grid-6">
+                {(['Critical', 'High', 'Medium', 'Low', 'Info'] as Severity[]).map((sev) => (
+                  <div key={sev} className={`beast-metric beast-metric-${sev.toLowerCase()}`}>
+                    <p className="beast-metric-label">{t(`severity.${sev}`)}</p>
+                    <p className="beast-metric-value beast-metric-value-sm">{counts[sev]}</p>
+                  </div>
+                ))}
+                <div className="beast-metric beast-metric-accepted">
+                  <p className="beast-metric-label">{t('repo.triagedByAi')}</p>
+                  <p className="beast-metric-value beast-metric-value-sm beast-score-good-text">{counts.riskAccepted}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Reports (Profile + Audit) */}
+            <RepoReports repositoryId={productId} repoName={repo?.name} />
+
+            {/* Tool cards by category */}
+            <div className="beast-stack-md">
+              <h2 className="beast-card-title">{t('repo.scanResultsByTool')}</h2>
+              {isLoading ? (
+                <div className="beast-grid-2">
+                  {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
+                </div>
+              ) : (
+                <div className="beast-grid-2">
+                  {TOOL_CATEGORIES.map((cat) => {
+                    const catTools = getToolsByCategory(cat.key);
+                    return (
+                      <CategoryCard
+                        key={cat.key}
+                        category={cat}
+                        tools={catTools}
+                        toolTests={toolTests}
+                        openByTool={openByTool}
+                        productId={productId}
+                        artifactsData={artifactsData}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* All findings for this repo */}
+            <RepoFindings productId={productId} />
+          </>
+        )}
+
+        {activeTab === 'ai-trace' && (
+          <AiTraceViewer repositoryId={productId} />
+        )}
+      </div>
+    </ErrorBoundary>
+  );
+}
+
+function CategoryCard({
+  category,
+  tools,
+  toolTests,
+  openByTool,
+  productId,
+  artifactsData,
+}: {
+  category: import('@/lib/tool-mapping').CategoryInfo;
+  tools: ToolInfo[];
+  toolTests: Map<string, Test[]>;
+  openByTool: Map<string, number>;
+  productId: number;
+  artifactsData: { artifacts: { tool: string; fileName: string }[] } | undefined;
+}) {
+  const { t } = useTranslation();
+
+  const toolsWithData = tools.filter((tool) => (toolTests.get(tool.key) ?? []).length > 0);
+  const hasData = toolsWithData.length > 0;
+
+  // Per-tool number = OPEN findings (live), summed for the category total.
+  const totalFindings = toolsWithData.reduce((sum, tool) => sum + (openByTool.get(tool.key) ?? 0), 0);
+
+  return (
+    <div className={cn(
+      'beast-card beast-card-flush',
+      hasData ? `beast-cat-card-border-${category.key}` : 'beast-cat-card-empty',
+    )}>
+      <div className="beast-card-section">
+        <div className="beast-flex-between">
+          <div className="beast-flex beast-flex-gap">
+            <span className={cn('beast-tool-icon', `beast-tool-icon-${category.key}`)}>
+              {category.icon}
+            </span>
+            <div>
+              <p className={cn(
+                'beast-label',
+                hasData ? `beast-cat-text-${category.key}` : 'beast-text-muted',
+              )}>
+                {category.displayName}
+              </p>
+              <p className="beast-page-subtitle">{category.description}</p>
+            </div>
+          </div>
+          {hasData && (
+            <span className="beast-cat-total">{totalFindings}</span>
+          )}
+        </div>
+
+        {hasData ? (
+          <div className="beast-tool-list">
+            {toolsWithData.map((tool) => {
+              const tests = toolTests.get(tool.key) ?? [];
+              const latestTest = tests[0];
+              const artifact = artifactsData?.artifacts?.find(a => a.tool === tool.key);
+              const icon = getToolIcon(tool.key);
+              return (
+                <div key={tool.key} className="beast-tool-row">
+                  <div className="beast-tool-row-left">
+                    {icon
+                      ? <img src={icon} alt="" className="beast-tool-row-icon" />
+                      : <span className={cn('beast-severity-dot', tool.bgClass)} />
+                    }
+                    <Link to={`/findings?tool=${tool.key}&repository=${productId}&status=open`} className="beast-link-red beast-label">
+                      {tool.displayName}
+                    </Link>
+                  </div>
+                  <div className="beast-tool-row-right">
+                    <span className="beast-tool-row-count">{openByTool.get(tool.key) ?? 0}</span>
+                    <span className="beast-tool-row-date">{formatDate(latestTest.createdAt)}</span>
+                    {artifact ? (
+                      <button
+                        className="beast-tool-row-dl"
+                        title={artifact.fileName}
+                        onClick={() => downloadArtifact(productId, tool.key, artifact.fileName)}
+                      >
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2v9M4 8l4 4 4-4M2 14h12" /></svg>
+                      </button>
+                    ) : (
+                      <span className="beast-tool-row-dl-placeholder" />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="beast-page-subtitle beast-tool-list">{t('repo.noScanData')}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const TOP_FINDINGS_LIMIT = 10;
+
+function RepoFindings({ productId }: { productId: number }) {
+  const { t } = useTranslation();
+
+  const { data: findings, isLoading } = useFindings({
+    limit: TOP_FINDINGS_LIMIT,
+    offset: 0,
+    duplicate: false,
+    sort: 'severity',
+    dir: 'desc',
+    repository_id: productId,
+  });
+
+  const hasMore = findings && findings.count > TOP_FINDINGS_LIMIT;
+
+  return (
+    <>
+    <div className="beast-card beast-card-flush">
+      <div className="beast-card-header">
+        <h2 className="beast-card-title">{t('repo.topFindings')}</h2>
+        {hasMore && (
+          <Link to={`/findings?repository=${productId}`} className="beast-btn beast-btn-sm beast-btn-primary">{t('common.viewAll')}</Link>
+        )}
+      </div>
+      {isLoading ? (
+        <TableSkeleton rows={5} />
+      ) : !findings?.results.length ? (
+        <p className="beast-empty">{t('repo.noFindings')}</p>
+      ) : (
+        <>
+          <table className="beast-table">
+            <thead>
+              <tr>
+                <th>{t('common.name')}</th>
+                <th>{t('findings.severity')}</th>
+                <th>{t('findings.tool')}</th>
+                <th>{t('findings.contributor')}</th>
+                <th>{t('findings.status')}</th>
+                <th className="beast-th-right">{t('repo.date')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {findings.results.map((finding) => {
+                const toolMeta = resolveToolFromTest(finding.tool);
+                return (
+                <tr key={finding.id} className={cn(finding.status !== 'open' && 'beast-row-dimmed')}>
+                  <td>
+                    <Link to={`/findings/${finding.id}`} className="beast-td-primary beast-row-link">
+                      {finding.title}
+                    </Link>
+                  </td>
+                  <td><SeverityBadge severity={finding.severity} /></td>
+                  <td>{toolMeta?.displayName ?? finding.tool}</td>
+                  <td>
+                    {finding.contributorId ? (
+                      <Link to={`/contributors/${finding.contributorId}`} className="beast-link">
+                        {finding.contributorName}
+                      </Link>
+                    ) : finding.contributorName ?? '\u2014'}
+                  </td>
+                  <td><StatusBadge finding={finding} /></td>
+                  <td className="beast-td-date">{formatDate(finding.createdAt)}</td>
+                </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+    {hasMore && (
+      <div className="beast-flex-center">
+        <Link to={`/findings?repository=${productId}`} className="beast-btn beast-btn-primary">{t('common.viewAll')}</Link>
+      </div>
+    )}
+  </>
+  );
+}
+
+function estimateReadingTime(content: string): number {
+  const words = content.trim().split(/\s+/).length;
+  return Math.max(1, Math.ceil(words / 220));
+}
+
+function slugify(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildReportFileName(repoName: string | undefined, kind: 'profile' | 'audit'): string {
+  const base = repoName ? slugify(repoName) : 'repository';
+  const suffix = kind === 'profile' ? 'profile' : 'security-audit';
+  return `${base || 'repository'}-${suffix}.md`;
+}
+
+function downloadMarkdown(fileName: string, content: string): void {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function ReportReader({ title, icon, content, updatedAt, fileName, onClose }: {
+  title: string;
+  icon: React.ReactNode;
+  content: string;
+  updatedAt: string;
+  fileName: string;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', handler);
+      document.body.style.overflow = '';
+    };
+  }, [onClose]);
+
+  return (
+    <div className="beast-reader-backdrop" onClick={onClose}>
+      <div className="beast-reader-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="beast-reader-topbar">
+          <div className="beast-reader-topbar-left">
+            <div className="beast-reader-topbar-icon">{icon}</div>
+            <span className="beast-reader-topbar-title">{title}</span>
+            <span className="beast-reader-topbar-meta">
+              {t('repo.generated')} {formatDate(updatedAt)} &middot; {t('repo.minRead', { minutes: estimateReadingTime(content) })}
+            </span>
+          </div>
+          <div className="beast-reader-actions">
+            <button
+              className="beast-reader-action"
+              onClick={() => downloadMarkdown(fileName, content)}
+              title={fileName}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+              {t('repo.downloadMd', 'Download .md')}
+            </button>
+            <button className="beast-reader-close" onClick={onClose}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              ESC
+            </button>
+          </div>
+        </div>
+        <div className="beast-reader-body">
+          <div className="beast-reader-content">
+            <MarkdownContent content={content} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ProfileIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 12h6M9 16h6M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9l-7-7z" />
+    <path d="M13 2v7h7" />
+  </svg>
+);
+
+const AuditIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    <path d="M9 12l2 2 4-4" />
+  </svg>
+);
+
+const ArrowIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 12h14M12 5l7 7-7 7" />
+  </svg>
+);
+
+function RepoReports({ repositoryId, repoName }: { repositoryId: number; repoName?: string }) {
+  const { t } = useTranslation();
+  const { data: reports, isLoading } = useRepoReports(repositoryId);
+  const [reader, setReader] = useState<'profile' | 'audit' | null>(null);
+
+  const hasProfile = !!reports?.profile;
+  const hasAudit = !!reports?.audit;
+  const hasAny = hasProfile || hasAudit;
+
+  if (isLoading) return <Skeleton className="beast-skeleton-block" />;
+  if (!hasAny) return null;
+
+  const cards = [
+    {
+      key: 'profile' as const,
+      title: t('repo.repoProfile'),
+      desc: t('repo.repoProfileDesc', 'Architecture, tech stack, contributors, code quality analysis'),
+      icon: <ProfileIcon />,
+      available: hasProfile,
+    },
+    {
+      key: 'audit' as const,
+      title: t('repo.securityAudit'),
+      desc: t('repo.securityAuditDesc', 'Vulnerabilities, risk assessment, security boundaries, recommendations'),
+      icon: <AuditIcon />,
+      available: hasAudit,
+    },
+  ];
+
+  const readerData = reader && reports?.[reader];
+
+  return (
+    <>
+      <div className="beast-report-cards">
+        {cards.map((card) => {
+          const data = reports?.[card.key];
+          return (
+            <div
+              key={card.key}
+              role="button"
+              tabIndex={card.available ? 0 : -1}
+              aria-disabled={!card.available}
+              className={cn('beast-report-card', !card.available && 'beast-report-card-disabled')}
+              onClick={() => card.available && setReader(card.key)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (card.available) setReader(card.key);
+                }
+              }}
+            >
+              <div className="beast-report-card-top">
+                <div className="beast-report-card-icon">{card.icon}</div>
+                <div className="beast-report-card-text">
+                  <div className="beast-report-card-title">{card.title}</div>
+                  <div className="beast-report-card-desc">{card.desc}</div>
+                </div>
+              </div>
+              {data && (
+                <div className="beast-report-card-meta">
+                  <span className="beast-report-card-meta-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+                    {formatDate(data.updated_at)}
+                  </span>
+                  <span className="beast-report-card-meta-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+                    {t('repo.minRead', { minutes: estimateReadingTime(data.content) })}
+                  </span>
+                  <span className="beast-report-card-meta-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6" /></svg>
+                    {t('repo.wordCount', { words: Math.ceil(data.content.trim().split(/\s+/).length / 100) * 100 })}
+                  </span>
+                </div>
+              )}
+              <div className="beast-report-card-arrow"><ArrowIcon /></div>
+            </div>
+          );
+        })}
+      </div>
+      {readerData && reader && createPortal(
+        <ReportReader
+          title={cards.find(c => c.key === reader)!.title}
+          icon={cards.find(c => c.key === reader)!.icon}
+          content={readerData.content}
+          updatedAt={readerData.updated_at}
+          fileName={buildReportFileName(repoName, reader)}
+          onClose={() => setReader(null)}
+        />,
+        document.body,
+      )}
+    </>
+  );
+}

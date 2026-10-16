@@ -1,0 +1,8 @@
+repository_id,repo,scan_id,created_at,duration_min,status,findings_in_scan
+151,cosmetic_bot,c1059120-2e36-4f53-a740-d8fc8507b885,2026-05-06,7,completed,9
+156,deimos,0f420879-4a6a-4d85-bb3d-e07a60638322,2026-05-07,140,completed,1703
+156,deimos,39b3bd21-eb65-4478-80bd-c3cb9bf9ed38,2026-05-07,49,completed,625
+153,rltrader,0de34b92-4c93-4d5e-8c0d-8654430dfe4e,2026-05-06,31,completed,240
+152,samokatbot,19da0d39-7e3c-4d64-8cb7-65da7abb639c,2026-05-06,12,completed,35
+154,sigap-planner,c76f3713-a1bf-4287-927e-29e00358132c,2026-05-07,31,completed,552
+154,sigap-planner,85510200-7576-4eac-9aef-6374a748046d,2026-05-06,29,completed,49

@@ -1,0 +1,396 @@
+import { useState, useRef, useEffect, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+
+export type FilterOption = { value: string; label: string; icon?: ReactNode; group?: string };
+
+export type FilterColumn = {
+  key: string;
+  label: string;
+  type?: 'select' | 'range';
+  multi?: boolean;
+  /** Single-select only: show a search box and filter the options list as you type. */
+  searchable?: boolean;
+  options: FilterOption[];
+  minPlaceholder?: string;
+  maxPlaceholder?: string;
+};
+
+export type ActiveFilter = {
+  key: string;
+  value: string;
+  label: string;
+  columnLabel: string;
+};
+
+type ChipFilterProps = {
+  columns: FilterColumn[];
+  activeFilters: ActiveFilter[];
+  onAdd: (columnKey: string, value: string) => void;
+  onRemove: (columnKey: string) => void;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  searchPlaceholder?: string;
+};
+
+export function ChipFilter({
+  columns,
+  activeFilters,
+  onAdd,
+  onRemove,
+  searchValue,
+  onSearchChange,
+  searchPlaceholder,
+}: ChipFilterProps) {
+  const { t } = useTranslation();
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const [selectedColumn, setSelectedColumn] = useState<FilterColumn | null>(null);
+  const [rangeMin, setRangeMin] = useState('');
+  const [rangeMax, setRangeMax] = useState('');
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set());
+  const [valueSearch, setValueSearch] = useState('');
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const resetDropdown = () => {
+    setShowColumnPicker(false);
+    setSelectedColumn(null);
+    setRangeMin('');
+    setRangeMax('');
+    setMultiSelected(new Set());
+    setValueSearch('');
+  };
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        // If multi-select is open with selections, apply before closing
+        if (selectedColumn?.multi && multiSelected.size > 0) {
+          onAdd(selectedColumn.key, Array.from(multiSelected).join(','));
+        }
+        resetDropdown();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [selectedColumn, multiSelected, onAdd]);
+
+  // Escape cancels any open dropdown (outside-click already closes them).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') resetDropdown();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  const availableColumns = columns.filter(
+    (col) => !activeFilters.some((f) => f.key === col.key),
+  );
+
+  const handleAddClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Capture the open state BEFORE resetting — resetDropdown() sets it to
+    // false, so a functional toggle afterwards would always re-open it.
+    const wasOpen = showColumnPicker;
+    resetDropdown();
+    setShowColumnPicker(!wasOpen);
+  };
+
+  const handleColumnPick = (col: FilterColumn) => {
+    setShowColumnPicker(false);
+    setSelectedColumn(col);
+    setRangeMin('');
+    setRangeMax('');
+    setMultiSelected(new Set());
+    setValueSearch('');
+  };
+
+  // Single-select: pick and close
+  const handleValuePick = (value: string) => {
+    if (selectedColumn) {
+      onAdd(selectedColumn.key, value);
+    }
+    resetDropdown();
+  };
+
+  // Multi-select: toggle checkbox
+  const handleMultiToggle = (value: string) => {
+    setMultiSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return next;
+    });
+  };
+
+  // Multi-select: toggle a whole category at once. If every value in the group is
+  // already selected, clear them; otherwise add them all.
+  const handleGroupToggle = (values: string[]) => {
+    setMultiSelected((prev) => {
+      const next = new Set(prev);
+      const allSelected = values.every((v) => next.has(v));
+      for (const v of values) {
+        if (allSelected) next.delete(v); else next.add(v);
+      }
+      return next;
+    });
+  };
+
+  // Multi-select: apply selection
+  const handleMultiApply = () => {
+    if (!selectedColumn || multiSelected.size === 0) return;
+    onAdd(selectedColumn.key, Array.from(multiSelected).join(','));
+    resetDropdown();
+  };
+
+  const handleRangeApply = () => {
+    if (!selectedColumn || (!rangeMin && !rangeMax)) return;
+    onAdd(selectedColumn.key, `${rangeMin || ''}..${rangeMax || ''}`);
+    resetDropdown();
+  };
+
+  const isRange = selectedColumn?.type === 'range';
+  const isMulti = selectedColumn?.multi === true;
+
+  // Any list dropdown (single or multi) gets a search box once it grows past a
+  // handful of options, or when a column opts in explicitly via `searchable`.
+  const SEARCH_THRESHOLD = 8;
+  const q = valueSearch.trim().toLowerCase();
+  const matchesQuery = (o: FilterOption) => !q || o.label.toLowerCase().includes(q);
+  const showSearch = !!selectedColumn && !isRange &&
+    (selectedColumn.searchable === true || selectedColumn.options.length > SEARCH_THRESHOLD);
+
+  // Single-select options, narrowed by the search box.
+  const filteredOptions = (selectedColumn?.options ?? []).filter(matchesQuery);
+  // Flat multi-select options, narrowed by the search box.
+  const multiFlatOptions = (selectedColumn?.options ?? []).filter(matchesQuery);
+
+  // When options carry a `group`, render them grouped under category headers
+  // (each with a select-all checkbox). Order follows first appearance. Query
+  // filtering applies within groups; empty groups are dropped.
+  const multiGroups = (() => {
+    if (!isMulti || !selectedColumn?.options.some((o) => o.group)) return null;
+    const groups: { label: string; options: FilterOption[] }[] = [];
+    for (const opt of selectedColumn.options) {
+      if (!matchesQuery(opt)) continue;
+      const label = opt.group ?? '';
+      let g = groups.find((x) => x.label === label);
+      if (!g) { g = { label, options: [] }; groups.push(g); }
+      g.options.push(opt);
+    }
+    return groups;
+  })();
+
+  return (
+    <div className="beast-dropdown-wrap" ref={wrapRef}>
+      <div
+        className="beast-filter-input"
+        onClick={() => inputRef.current?.focus()}
+      >
+        {onSearchChange && (
+          <input
+            ref={inputRef}
+            type="text"
+            className="beast-filter-text"
+            placeholder={searchPlaceholder}
+            value={searchValue ?? ''}
+            onChange={(e) => onSearchChange(e.target.value)}
+          />
+        )}
+
+        {activeFilters.map((filter) => (
+          <span key={filter.key} className="beast-chip">
+            <span className="beast-chip-key">{filter.columnLabel}</span>
+            <span>{t('common.is', 'is')}</span>
+            <span className="beast-chip-value">{filter.label}</span>
+            <button
+              className="beast-chip-remove"
+              onClick={(e) => { e.stopPropagation(); onRemove(filter.key); }}
+              title={t('common.remove', 'Remove')}
+            >
+              &times;
+            </button>
+          </span>
+        ))}
+
+        {availableColumns.length > 0 && (
+          <button className="beast-filter-add" onClick={handleAddClick}>
+            + {t('common.addFilter', 'Add filter')}
+          </button>
+        )}
+      </div>
+
+      {/* Column picker dropdown */}
+      {showColumnPicker && (
+        <div className="beast-filter-dropdown">
+          <div className="beast-filter-dropdown-header">
+            {t('common.filterByColumn', 'Filter by column')}
+          </div>
+          {availableColumns.map((col) => (
+            <button
+              key={col.key}
+              className="beast-filter-dropdown-item"
+              onClick={() => handleColumnPick(col)}
+            >
+              {col.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Single-select value picker */}
+      {selectedColumn && !isRange && !isMulti && (
+        <div className="beast-filter-dropdown">
+          <div className="beast-filter-dropdown-header">
+            {selectedColumn.label}
+          </div>
+          {showSearch && (
+            <input
+              type="text"
+              className="beast-filter-dropdown-search"
+              placeholder={t('common.search', 'Search…')}
+              value={valueSearch}
+              onChange={(e) => setValueSearch(e.target.value)}
+              autoFocus
+            />
+          )}
+          <div className="beast-filter-dropdown-list">
+            {filteredOptions.map((opt) => (
+              <button
+                key={opt.value}
+                className="beast-filter-dropdown-item"
+                onClick={() => handleValuePick(opt.value)}
+              >
+                {opt.icon}
+                {opt.label}
+              </button>
+            ))}
+            {filteredOptions.length === 0 && (
+              <div className="beast-filter-dropdown-empty">
+                {t('common.noResults', 'No matches')}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Multi-select value picker */}
+      {selectedColumn && !isRange && isMulti && (
+        <div className="beast-filter-dropdown">
+          <div className="beast-filter-dropdown-header">
+            {selectedColumn.label}
+          </div>
+          {showSearch && (
+            <input
+              type="text"
+              className="beast-filter-dropdown-search"
+              placeholder={t('common.search', 'Search…')}
+              value={valueSearch}
+              onChange={(e) => setValueSearch(e.target.value)}
+              autoFocus
+            />
+          )}
+          <div className="beast-filter-dropdown-list">
+          {multiGroups
+            ? multiGroups.map((g) => {
+                const values = g.options.map((o) => o.value);
+                const allSelected = values.every((v) => multiSelected.has(v));
+                const someSelected = values.some((v) => multiSelected.has(v));
+                return (
+                  <div key={g.label}>
+                    <label className="beast-filter-dropdown-group">
+                      <input
+                        type="checkbox"
+                        className="beast-checkbox"
+                        checked={allSelected}
+                        ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                        onChange={() => handleGroupToggle(values)}
+                        aria-label={g.label}
+                      />
+                      {g.label}
+                    </label>
+                    {g.options.map((opt) => (
+                      <label key={opt.value} className="beast-filter-dropdown-check beast-filter-dropdown-check--sub">
+                        <input
+                          type="checkbox"
+                          className="beast-checkbox"
+                          checked={multiSelected.has(opt.value)}
+                          onChange={() => handleMultiToggle(opt.value)}
+                        />
+                        {opt.icon}
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+                );
+              })
+            : multiFlatOptions.map((opt) => (
+                <label key={opt.value} className="beast-filter-dropdown-check">
+                  <input
+                    type="checkbox"
+                    className="beast-checkbox"
+                    checked={multiSelected.has(opt.value)}
+                    onChange={() => handleMultiToggle(opt.value)}
+                  />
+                  {opt.icon}
+                  {opt.label}
+                </label>
+              ))}
+          {((multiGroups && multiGroups.length === 0) || (!multiGroups && multiFlatOptions.length === 0)) && (
+            <div className="beast-filter-dropdown-empty">
+              {t('common.noResults', 'No matches')}
+            </div>
+          )}
+          </div>
+          <div className="beast-filter-range-actions">
+            <button
+              className="beast-btn beast-btn-primary beast-btn-sm"
+              disabled={multiSelected.size === 0}
+              onClick={handleMultiApply}
+            >
+              {t('common.apply', 'Apply')}
+              {multiSelected.size > 0 && ` (${multiSelected.size})`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Range picker dropdown */}
+      {selectedColumn && isRange && (
+        <div className="beast-filter-dropdown">
+          <div className="beast-filter-dropdown-header">
+            {selectedColumn.label}
+          </div>
+          <div className="beast-filter-range">
+            <input
+              type="number"
+              className="beast-input beast-input-sm"
+              placeholder={selectedColumn.minPlaceholder ?? t('common.min', 'Min')}
+              value={rangeMin}
+              onChange={(e) => setRangeMin(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleRangeApply()}
+              autoFocus
+            />
+            <span className="beast-filter-range-sep">&mdash;</span>
+            <input
+              type="number"
+              className="beast-input beast-input-sm"
+              placeholder={selectedColumn.maxPlaceholder ?? t('common.max', 'Max')}
+              value={rangeMax}
+              onChange={(e) => setRangeMax(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleRangeApply()}
+            />
+          </div>
+          <div className="beast-filter-range-actions">
+            <button
+              className="beast-btn beast-btn-primary beast-btn-sm"
+              disabled={!rangeMin && !rangeMax}
+              onClick={handleRangeApply}
+            >
+              {t('common.apply', 'Apply')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

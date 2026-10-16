@@ -1,0 +1,20 @@
+{
+  "createdAt": "2026-05-12T19:16:00Z",
+  "workspaceId": 16,
+  "scanDepth": 100,
+  "scanType": "full",
+  "scans": [
+    { "scanId": "5524663e-eb57-444d-8f4d-08cd5bb6b9d7", "repoId": 151, "repoName": "cosmetic_bot" },
+    { "scanId": "a0d0bb7b-cd55-40cc-8e9b-2f4651d48134", "repoId": 152, "repoName": "samokatbot" },
+    { "scanId": "c32da9a8-61f5-4a4a-8fbb-c5b76722cbba", "repoId": 153, "repoName": "rltrader" },
+    { "scanId": "09d44587-ef3b-415c-bddf-f14703744784", "repoId": 154, "repoName": "sigap-planner" },
+    { "scanId": "c8ab5d3b-5ac6-4eb7-bddf-ee64c1b235fc", "repoId": 156, "repoName": "deimos" }
+  ],
+  "baselineScans": [
+    { "scanId": "c1059120-2e36-4f53-a740-d8fc8507b885", "repoId": 151, "repoName": "cosmetic_bot", "completedAt": "2026-05-06" },
+    { "scanId": "19da0d39-7e3c-4d64-8cb7-65da7abb639c", "repoId": 152, "repoName": "samokatbot", "completedAt": "2026-05-06" },
+    { "scanId": "0de34b92-4c93-4d5e-8c0d-8654430dfe4e", "repoId": 153, "repoName": "rltrader", "completedAt": "2026-05-06" },
+    { "scanId": "c76f3713-a1bf-4287-927e-29e00358132c", "repoId": 154, "repoName": "sigap-planner", "completedAt": "2026-05-07" },
+    { "scanId": "0f420879-4a6a-4d85-bb3d-e07a60638322", "repoId": 156, "repoName": "deimos", "completedAt": "2026-05-07" }
+  ]
+}

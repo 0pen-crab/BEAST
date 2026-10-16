@@ -1,0 +1,1318 @@
+import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { z } from 'zod';
+import { eq, and, desc, asc, ne, sql, inArray, getTableColumns, type SQL } from 'drizzle-orm';
+import { db } from '../db/index.ts';
+import { teams, repositories, scans, tests, findings, findingNotes, scanFiles, contributors } from '../db/schema.ts';
+import type { NewTeam, NewRepository } from '../db/schema.ts';
+import { authorize, ForbiddenError } from '../lib/authorize.ts';
+import { listBranches } from '../orchestrator/repo-branches.ts';
+
+/** Mask a secret value, showing only the first 4 and last 2 characters. */
+function maskSecret(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= 8) return '*'.repeat(value.length);
+  return value.slice(0, 4) + '*'.repeat(value.length - 6) + value.slice(-2);
+}
+
+/** RFC 4180 CSV field escape: quote when it contains comma/quote/newline. */
+export function csvEscape(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  const s = typeof v === 'string' ? v : String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+/** Serialise rows of `unknown` to CSV using the column order in `columns`.
+ *  Each column maps the row to its string value via `extract`. */
+export function rowsToCsv<T>(
+  columns: { header: string; extract: (row: T) => unknown }[],
+  rows: T[],
+): string {
+  const lines: string[] = [];
+  lines.push(columns.map((c) => csvEscape(c.header)).join(','));
+  for (const r of rows) {
+    lines.push(columns.map((c) => csvEscape(c.extract(r))).join(','));
+  }
+  return lines.join('\n') + '\n';
+}
+
+export const workspaceDataRoutes: FastifyPluginAsyncZod = async (app) => {
+  // ═══════════════════════════════════════════════════════════════
+  // TEAMS
+  // ═══════════════════════════════════════════════════════════════
+
+  const teamSelectFields = {
+    id: teams.id,
+    workspaceId: teams.workspaceId,
+    name: teams.name,
+    description: teams.description,
+    createdAt: teams.createdAt,
+    repoCount: sql<number>`(select count(*) from repositories r where r.team_id = "teams"."id")::int`,
+    contributorCount: sql<number>`(select count(*) from contributors c where c.team_id = "teams"."id")::int`,
+    findingsCount: sql<number>`(select count(*) from findings f where f.repository_id in (select r.id from repositories r where r.team_id = "teams"."id") and f.status = 'open')::int`,
+    avgRiskScore: sql<number>`(select coalesce(avg(sub.risk), 0) from (select least(10, round((coalesce(sum(
+      (case when f2.severity = 'Critical' then 10 when f2.severity = 'High' then 5 when f2.severity = 'Medium' then 2 when f2.severity = 'Low' then 0.5 else 0 end)
+    ), 0) / 5.0)::numeric, 1)) as risk from repositories r2 left join findings f2 on f2.repository_id = r2.id and f2.status = 'open' where r2.team_id = "teams"."id" group by r2.id) sub)::float`,
+  };
+
+  // GET /api/teams?workspace_id=X
+  app.get(
+    '/teams',
+    {
+      schema: {
+        querystring: z.object({
+          workspace_id: z.coerce.number().positive().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const { workspace_id } = request.query;
+
+      if (!workspace_id) {
+        if (request.user?.role !== 'super_admin') {
+          throw new ForbiddenError('workspace_id is required');
+        }
+        return db.select(teamSelectFields).from(teams).orderBy(asc(teams.createdAt));
+      }
+
+      await authorize(request, workspace_id, 'member');
+
+      return db.select(teamSelectFields).from(teams)
+        .where(eq(teams.workspaceId, workspace_id))
+        .orderBy(asc(teams.createdAt));
+    },
+  );
+
+  // GET /api/teams/:id
+  app.get(
+    '/teams/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const rows = await db.select(teamSelectFields).from(teams).where(eq(teams.id, id));
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Team not found' });
+
+      const team = rows[0];
+      await authorize(request, team.workspaceId, 'member');
+
+      return team;
+    },
+  );
+
+  // POST /api/teams
+  app.post(
+    '/teams',
+    {
+      schema: {
+        body: z.object({
+          workspace_id: z.number(),
+          name: z.string().min(1).max(256),
+          description: z.string().optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { workspace_id, name, description } = request.body;
+
+      await authorize(request, workspace_id, 'workspace_admin');
+
+      const [row] = await db.insert(teams).values({
+        workspaceId: workspace_id,
+        name,
+        description: description ?? null,
+      }).returning();
+      return reply.status(201).send(row);
+    },
+  );
+
+  // PUT /api/teams/:id
+  app.put(
+    '/teams/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+        body: z.object({
+          name: z.string().min(1).max(256).optional(),
+          description: z.string().optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { name, description } = request.body;
+
+      const existing = await db.select().from(teams).where(eq(teams.id, id));
+      if (existing.length === 0)
+        return reply.status(404).send({ error: 'Team not found' });
+
+      await authorize(request, existing[0].workspaceId, 'workspace_admin');
+
+      const updates: Partial<NewTeam> = {};
+      if (name !== undefined) updates.name = name;
+      if (description !== undefined) updates.description = description;
+
+      const rows = await db.update(teams)
+        .set(updates)
+        .where(eq(teams.id, id))
+        .returning();
+      return rows[0];
+    },
+  );
+
+  // DELETE /api/teams/:id
+  app.delete(
+    '/teams/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const existing = await db.select().from(teams).where(eq(teams.id, id));
+      if (existing.length === 0)
+        return reply.status(404).send({ error: 'Team not found' });
+
+      await authorize(request, existing[0].workspaceId, 'workspace_admin');
+
+      await db.delete(teams).where(eq(teams.id, id));
+      return { deleted: true };
+    },
+  );
+
+  // GET /api/teams/:id/contributors
+  app.get(
+    '/teams/:id/contributors',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const teamRows = await db.select().from(teams).where(eq(teams.id, id));
+      if (teamRows.length === 0)
+        return reply.status(404).send({ error: 'Team not found' });
+      await authorize(request, teamRows[0].workspaceId, 'member');
+
+      const rows = await db
+        .select()
+        .from(contributors)
+        .where(eq(contributors.teamId, id))
+        .orderBy(sql`${contributors.scoreOverall} DESC NULLS LAST`);
+      return rows;
+    },
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // REPOSITORIES
+  // ═══════════════════════════════════════════════════════════════
+
+  // GET /api/repositories?workspace_id=X or ?team_id=X
+  app.get(
+    '/repositories',
+    {
+      schema: {
+        querystring: z.object({
+          workspace_id: z.coerce.number().positive().optional(),
+          team_id: z.coerce.number().positive().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const { workspace_id, team_id } = request.query;
+
+      if (workspace_id) {
+        await authorize(request, workspace_id, 'member');
+      } else if (team_id) {
+        const teamRows = await db.select({ workspaceId: teams.workspaceId }).from(teams).where(eq(teams.id, team_id)).limit(1);
+        if (teamRows.length === 0) throw new ForbiddenError('Team not found');
+        await authorize(request, teamRows[0].workspaceId, 'member');
+      } else {
+        if (request.user?.role !== 'super_admin') {
+          throw new ForbiddenError('workspace_id or team_id is required');
+        }
+      }
+
+      const conditions: SQL[] = [];
+
+      if (team_id) {
+        conditions.push(eq(repositories.teamId, team_id));
+      }
+      if (workspace_id) {
+        conditions.push(eq(teams.workspaceId, workspace_id));
+      }
+
+      return db.select({
+        ...getTableColumns(repositories),
+        teamName: teams.name,
+        workspaceId: teams.workspaceId,
+        findingsCount: sql<number>`(select count(*) from findings f where f.repository_id = ${repositories.id} and f.status = 'open')::int`,
+        riskScore: sql<number>`(select least(10, round((coalesce(sum(
+          (case when f.severity = 'Critical' then 10 when f.severity = 'High' then 5 when f.severity = 'Medium' then 2 when f.severity = 'Low' then 0.5 else 0 end)
+          * (case when f.tool in ('gitleaks','trufflehog','gitguardian','trivy-secrets') then 1.2 when f.tool = 'beast' then 1.0 else 0.8 end)
+        ), 0) / 5.0)::numeric, 1)) from findings f where f.repository_id = ${repositories.id} and f.status = 'open')::float`,
+        // Completed scans only — a queued/running scan must not populate "last scanned".
+        lastScannedAt: sql<string | null>`(select max(s.completed_at) from scans s where s.repository_id = ${repositories.id} and s.status = 'completed')`,
+      }).from(repositories)
+        .innerJoin(teams, eq(teams.id, repositories.teamId))
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(desc(repositories.createdAt));
+    },
+  );
+
+  // PATCH /api/repositories/bulk — bulk update repos (assign team, change status)
+  app.patch(
+    '/repositories/bulk',
+    {
+      schema: {
+        body: z.object({
+          ids: z.array(z.number()).min(1),
+          team_id: z.number().positive().optional(),
+          status: z.enum(['pending', 'ignored']).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { ids, team_id, status } = request.body;
+
+      // Fetch first repo to resolve workspace
+      const wsRows = await db.select({ wsId: teams.workspaceId })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(eq(repositories.id, ids[0]))
+        .limit(1);
+      if (wsRows.length === 0) throw new ForbiddenError('Repository not found');
+      const wsId = wsRows[0].wsId;
+      await authorize(request, wsId, 'workspace_admin');
+
+      // Target team must live in the SAME workspace — otherwise a workspace admin
+      // could move repos into a foreign workspace's team.
+      if (team_id) {
+        const teamRows = await db.select({ workspaceId: teams.workspaceId })
+          .from(teams)
+          .where(eq(teams.id, team_id))
+          .limit(1);
+        if (teamRows.length === 0 || teamRows[0].workspaceId !== wsId) {
+          return reply.status(400).send({ error: 'team_id does not belong to this workspace' });
+        }
+      }
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (team_id) updates.teamId = team_id;
+      if (status) updates.status = status;
+      if (Object.keys(updates).length === 1) {
+        return { updated: 0 };
+      }
+
+      // Constrain the UPDATE to repos of the AUTHORIZED workspace only.
+      // Authorization was resolved from ids[0]; without this subquery any
+      // foreign-workspace ids smuggled into the list would be updated too.
+      const allowedRepoIds = db.select({ id: repositories.id })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(and(inArray(repositories.id, ids), eq(teams.workspaceId, wsId)));
+
+      const updatedRows = await db.update(repositories)
+        .set(updates)
+        .where(inArray(repositories.id, allowedRepoIds))
+        .returning({ id: repositories.id });
+
+      return { updated: updatedRows.length };
+    },
+  );
+
+  // GET /api/repositories/:id
+  app.get(
+    '/repositories/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const rows = await db.select({
+        ...getTableColumns(repositories),
+        teamName: teams.name,
+        workspaceId: teams.workspaceId,
+        findingsCount: sql<number>`(select count(*) from findings f where f.repository_id = ${repositories.id} and f.status = 'open')::int`,
+        riskScore: sql<number>`(select least(10, round((coalesce(sum(
+          (case when f.severity = 'Critical' then 10 when f.severity = 'High' then 5 when f.severity = 'Medium' then 2 when f.severity = 'Low' then 0.5 else 0 end)
+          * (case when f.tool in ('gitleaks','trufflehog','gitguardian','trivy-secrets') then 1.2 when f.tool = 'beast' then 1.0 else 0.8 end)
+        ), 0) / 5.0)::numeric, 1)) from findings f where f.repository_id = ${repositories.id} and f.status = 'open')::float`,
+        // Completed scans only — a queued/running scan must not populate "last scanned".
+        lastScannedAt: sql<string | null>`(select max(s.completed_at) from scans s where s.repository_id = ${repositories.id} and s.status = 'completed')`,
+      }).from(repositories)
+        .innerJoin(teams, eq(teams.id, repositories.teamId))
+        .where(eq(repositories.id, id));
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+
+      await authorize(request, rows[0].workspaceId, 'member');
+
+      return rows[0];
+    },
+  );
+
+  // PUT /api/repositories/:id
+  app.put(
+    '/repositories/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+        body: z.object({
+          name: z.string().min(1).max(256).optional(),
+          description: z.string().optional(),
+          lifecycle: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+          // Which branch scans of this repo target. Empty string clears it,
+          // putting the repo back on "whatever the remote calls default".
+          default_branch: z.string().max(256).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { name, description, lifecycle, tags, default_branch: defaultBranch } = request.body;
+
+      // Resolve workspace via team
+      const wsRows = await db.select({ wsId: teams.workspaceId })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(eq(repositories.id, id))
+        .limit(1);
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+
+      await authorize(request, wsRows[0].wsId, 'workspace_admin');
+
+      const updates: Partial<NewRepository> & { updatedAt: Date } = { updatedAt: new Date() };
+      if (name !== undefined) updates.name = name;
+      if (description !== undefined) updates.description = description;
+      if (lifecycle !== undefined) updates.lifecycle = lifecycle;
+      if (tags !== undefined) updates.tags = tags;
+      if (defaultBranch !== undefined) updates.defaultBranch = defaultBranch.trim() || null;
+
+      const rows = await db.update(repositories)
+        .set(updates)
+        .where(eq(repositories.id, id))
+        .returning();
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+      return rows[0];
+    },
+  );
+
+  // GET /api/repositories/:id/branches — branch list for the default-branch picker
+  //
+  // Ranked by commit count so the branch people actually work on sits at the
+  // top. Counts come from the scanner's clone; provider APIs do not report them
+  // (see repo-branches.ts).
+  app.get(
+    '/repositories/:id/branches',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const rows = await db.select({
+        wsId: teams.workspaceId,
+        name: repositories.name,
+        sourceId: repositories.sourceId,
+      })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(eq(repositories.id, id))
+        .limit(1);
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+
+      await authorize(request, rows[0].wsId, 'member');
+
+      try {
+        return await listBranches({ id, name: rows[0].name, sourceId: rows[0].sourceId });
+      } catch (err) {
+        // A broken clone must not read as "this repo has no branches" — that is
+        // how the stale-default-branch bug stayed invisible for months.
+        const message = err instanceof Error ? err.message : String(err);
+        request.log.error({ err, repositoryId: id }, 'Failed to list repository branches');
+        return reply.status(502).send({ error: message });
+      }
+    },
+  );
+
+  // GET /api/repositories/:id/reports — profile + audit from latest completed scan
+  app.get(
+    '/repositories/:id/reports',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      // Resolve workspace via team
+      const wsRows = await db.select({ wsId: teams.workspaceId })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(eq(repositories.id, id))
+        .limit(1);
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+
+      await authorize(request, wsRows[0].wsId, 'member');
+
+      const rows = await db.select({
+        fileType: scanFiles.fileType,
+        content: scanFiles.content,
+        createdAt: scanFiles.createdAt,
+      }).from(scanFiles)
+        .innerJoin(scans, eq(scans.id, scanFiles.scanId))
+        .where(and(
+          eq(scans.repositoryId, id),
+          eq(scans.status, 'completed'),
+          inArray(scanFiles.fileType, ['profile', 'audit']),
+        ))
+        .orderBy(desc(scans.completedAt), desc(scanFiles.createdAt));
+
+      const reports: Record<string, { content: string; updated_at: string }> = {};
+      for (const row of rows) {
+        if (!reports[row.fileType!]) {
+          reports[row.fileType!] = { content: row.content || '', updated_at: row.createdAt as unknown as string };
+        }
+      }
+
+      return reports;
+    },
+  );
+
+  // GET /api/repositories/:id/ai-traces — raw stream-json traces for every
+  // Claude invocation of the most recent scan. Used by the dashboard's
+  // "AI Trace" tab to visualise what the agents actually did.
+  app.get(
+    '/repositories/:id/ai-traces',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const wsRows = await db.select({ wsId: teams.workspaceId })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(eq(repositories.id, id))
+        .limit(1);
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+
+      await authorize(request, wsRows[0].wsId, 'member');
+
+      // Latest scan of any type.
+      const scanRows = await db.select({
+        id: scans.id,
+        scanType: scans.scanType,
+        status: scans.status,
+        startedAt: scans.startedAt,
+        completedAt: scans.completedAt,
+        createdAt: scans.createdAt,
+        error: scans.error,
+      })
+        .from(scans)
+        .where(eq(scans.repositoryId, id))
+        .orderBy(desc(scans.createdAt))
+        .limit(1);
+
+      if (scanRows.length === 0) {
+        return { scan: null, traces: [] };
+      }
+
+      const scan = scanRows[0];
+
+      const rows = await db.select({
+        fileName: scanFiles.fileName,
+        content: scanFiles.content,
+        createdAt: scanFiles.createdAt,
+      }).from(scanFiles)
+        .where(and(
+          eq(scanFiles.scanId, scan.id),
+          eq(scanFiles.fileType, 'ai-trace'),
+        ))
+        .orderBy(asc(scanFiles.createdAt));
+
+      return {
+        scan: {
+          id: scan.id,
+          scan_type: scan.scanType,
+          status: scan.status,
+          started_at: scan.startedAt as unknown as string | null,
+          completed_at: scan.completedAt as unknown as string | null,
+          created_at: scan.createdAt as unknown as string,
+          error: scan.error,
+        },
+        traces: rows.map(r => ({
+          wave: (r.fileName || '').replace(/\.jsonl$/, ''),
+          file_name: r.fileName,
+          content: r.content || '',
+          created_at: r.createdAt as unknown as string,
+        })),
+      };
+    },
+  );
+
+  // DELETE /api/repositories/:id
+  app.delete(
+    '/repositories/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      // Resolve workspace via team
+      const wsRows = await db.select({ wsId: teams.workspaceId })
+        .from(repositories)
+        .innerJoin(teams, eq(repositories.teamId, teams.id))
+        .where(eq(repositories.id, id))
+        .limit(1);
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Repository not found' });
+
+      await authorize(request, wsRows[0].wsId, 'workspace_admin');
+
+      await db.delete(repositories).where(eq(repositories.id, id));
+      return { deleted: true };
+    },
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TESTS
+  // ═══════════════════════════════════════════════════════════════
+
+  // GET /api/tests?scan_id=X or ?repository_id=X
+  app.get(
+    '/tests',
+    {
+      schema: {
+        querystring: z.object({
+          scan_id: z.string().uuid().optional(),
+          repository_id: z.coerce.number().positive().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const { scan_id, repository_id } = request.query;
+
+      if (scan_id) {
+        // Resolve workspace from scan
+        const scanRows = await db.select({ workspaceId: scans.workspaceId }).from(scans).where(eq(scans.id, scan_id)).limit(1);
+        if (scanRows.length > 0 && scanRows[0].workspaceId) {
+          await authorize(request, scanRows[0].workspaceId, 'member');
+        } else if (request.user?.role !== 'super_admin') {
+          throw new ForbiddenError('Cannot resolve workspace for scan');
+        }
+
+        return db.select().from(tests)
+          .where(eq(tests.scanId, scan_id))
+          .orderBy(asc(tests.createdAt));
+      }
+
+      if (repository_id) {
+        // Resolve workspace from repo via team
+        const wsRows = await db.select({ wsId: teams.workspaceId })
+          .from(repositories)
+          .innerJoin(teams, eq(repositories.teamId, teams.id))
+          .where(eq(repositories.id, repository_id))
+          .limit(1);
+        if (wsRows.length > 0) {
+          await authorize(request, wsRows[0].wsId, 'member');
+        } else if (request.user?.role !== 'super_admin') {
+          throw new ForbiddenError('Cannot resolve workspace for repository');
+        }
+
+        // Tests for a repository: join through scans
+        return db.select({
+          ...getTableColumns(tests),
+        }).from(tests)
+          .innerJoin(scans, eq(scans.id, tests.scanId))
+          .where(eq(scans.repositoryId, repository_id))
+          .orderBy(desc(tests.createdAt));
+      }
+
+      // No filter — only super_admin
+      if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('workspace_id, scan_id, or repository_id is required');
+      }
+
+      return db.select().from(tests)
+        .orderBy(desc(tests.createdAt))
+        .limit(100);
+    },
+  );
+
+  // GET /api/tests/:id
+  app.get(
+    '/tests/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const rows = await db.select({
+        ...getTableColumns(tests),
+        workspaceId: scans.workspaceId,
+      }).from(tests)
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .where(eq(tests.id, id));
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Test not found' });
+
+      const test = rows[0];
+      if (test.workspaceId) {
+        await authorize(request, test.workspaceId, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('Cannot resolve workspace for test');
+      }
+
+      return test;
+    },
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // FINDINGS
+  // ═══════════════════════════════════════════════════════════════
+
+  // GET /api/findings?workspace_id=X with filters
+  app.get(
+    '/findings',
+    {
+      schema: {
+        querystring: z.object({
+          workspace_id: z.coerce.number().positive().optional(),
+          severity: z.string().optional(),
+          status: z.string().optional(),
+          tool: z.string().optional(),
+          repository_id: z.coerce.number().positive().optional(),
+          source_id: z.coerce.number().positive().optional(),
+          test_id: z.coerce.number().positive().optional(),
+          search: z.string().optional(),
+          // String enum, NOT z.coerce.boolean() — Boolean('false') is true,
+          // which would silently invert the filter's meaning.
+          duplicate: z.enum(['true', 'false']).optional(),
+          limit: z.coerce.number().min(1).max(500).default(50),
+          offset: z.coerce.number().min(0).default(0),
+          sort: z.enum(['priority', 'severity', 'created_at', 'updated_at', 'title', 'tool', 'status', 'cvss_score', 'repository', 'contributor', 'file_path']).default('priority'),
+          dir: z.enum(['asc', 'desc']).default('desc'),
+          include_secrets: z.coerce.boolean().default(false),
+        }),
+      },
+    },
+    async (request) => {
+      const { workspace_id, severity, status, tool, repository_id, source_id, test_id, search, duplicate, limit, offset, sort, dir, include_secrets } = request.query;
+
+      if (workspace_id) {
+        await authorize(request, workspace_id, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('workspace_id is required');
+      }
+
+      const conditions: SQL[] = [];
+
+      // Workspace filter: findings → tests → scans → workspace_id
+      if (workspace_id) {
+        const workspaceTestIds = db.select({ id: tests.id }).from(tests)
+          .innerJoin(scans, eq(tests.scanId, scans.id))
+          .where(eq(scans.workspaceId, workspace_id));
+        conditions.push(inArray(findings.testId, workspaceTestIds));
+      }
+
+      if (severity) {
+        const vals = severity.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.severity, vals[0]) : inArray(findings.severity, vals));
+      }
+      if (status) {
+        const vals = status.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.status, vals[0]) : inArray(findings.status, vals));
+      }
+      if (tool) {
+        const vals = tool.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.tool, vals[0]) : inArray(findings.tool, vals));
+      }
+      if (repository_id) {
+        conditions.push(eq(findings.repositoryId, repository_id));
+      }
+      if (source_id) {
+        // findings → repository → source
+        const sourceRepoIds = db.select({ id: repositories.id }).from(repositories)
+          .where(eq(repositories.sourceId, source_id));
+        conditions.push(inArray(findings.repositoryId, sourceRepoIds));
+      }
+      if (test_id) {
+        conditions.push(eq(findings.testId, test_id));
+      }
+      if (search) {
+        const pattern = `%${search}%`;
+        conditions.push(
+          sql`(${findings.title} ILIKE ${pattern} OR ${findings.filePath} ILIKE ${pattern})`,
+        );
+      }
+      // duplicate=false → hide duplicate-status findings (used by "Top findings"
+      // on the repo page); duplicate=true → only duplicates.
+      if (duplicate === 'false') {
+        conditions.push(ne(findings.status, 'duplicate'));
+      } else if (duplicate === 'true') {
+        conditions.push(eq(findings.status, 'duplicate'));
+      }
+
+      const whereClause = conditions.length ? and(...conditions) : undefined;
+
+      // Sorting. For severity we order by a logical rank (Critical>High>Med>Low>Info)
+      // instead of alphabetical, so desc = Critical→Info and asc = Info→Critical.
+      const severityRank = sql`CASE LOWER(${findings.severity})
+        WHEN 'critical' THEN 5
+        WHEN 'high' THEN 4
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 2
+        WHEN 'info' THEN 1
+        ELSE 0
+      END`;
+      const sortColumns: Record<string, any> = {
+        severity: severityRank,
+        created_at: findings.createdAt,
+        updated_at: findings.updatedAt,
+        title: findings.title,
+        tool: findings.tool,
+        status: findings.status,
+        cvss_score: findings.cvssScore,
+        repository: sql`(SELECT ${repositories.name} FROM ${repositories} WHERE ${repositories.id} = ${findings.repositoryId})`,
+        contributor: sql`(SELECT ${contributors.displayName} FROM ${contributors} WHERE ${contributors.id} = ${findings.contributorId})`,
+        file_path: findings.filePath,
+      };
+
+      // Default "priority" sort: open status first, then highest severity, then newest.
+      // Used when no explicit sort is requested. Direction is ignored.
+      const orderByClauses = sort === 'priority'
+        ? [
+            sql`(${findings.status} = 'open') DESC`,
+            desc(severityRank),
+            desc(findings.createdAt),
+          ]
+        : [(dir === 'asc' ? asc(sortColumns[sort]) : desc(sortColumns[sort]))];
+
+      // Count
+      const [countRow] = await db.select({
+        count: sql<number>`count(*)`,
+      }).from(findings).where(whereClause);
+
+      // Data — include contributor name + repository name + scanId via JOINs.
+      // duplicateCount = how many CROSS-TOOL findings reference this one as their survivor.
+      // Same-tool dupes (e.g. BEAST re-scan of same vuln) are excluded — they don't add
+      // cross-tool validation, so the badge only counts independent confirmations.
+      const rows = await db.select({
+        ...getTableColumns(findings),
+        contributorName: contributors.displayName,
+        repositoryName: repositories.name,
+        scanId: scans.id,
+        duplicateCount: sql<number>`(SELECT COUNT(*) FROM findings f2 WHERE f2.duplicate_of = ${findings.id} AND f2.tool <> ${findings.tool})::int`,
+      }).from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .leftJoin(contributors, eq(contributors.id, findings.contributorId))
+        .leftJoin(repositories, eq(repositories.id, findings.repositoryId))
+        .where(whereClause)
+        .orderBy(...orderByClauses)
+        .limit(limit)
+        .offset(offset);
+
+      return {
+        count: Number(countRow.count),
+        results: include_secrets ? rows : rows.map(r => ({ ...r, secretValue: maskSecret(r.secretValue) })),
+      };
+    },
+  );
+
+  // GET /api/findings/export.csv — same filters as /findings, no pagination, CSV out.
+  // Honours `columns=` (comma-separated keys) to restrict the output to the columns
+  // the user currently sees on the findings page.
+  app.get(
+    '/findings/export.csv',
+    {
+      schema: {
+        querystring: z.object({
+          workspace_id: z.coerce.number().positive().optional(),
+          severity: z.string().optional(),
+          status: z.string().optional(),
+          tool: z.string().optional(),
+          repository_id: z.coerce.number().positive().optional(),
+          source_id: z.coerce.number().positive().optional(),
+          test_id: z.coerce.number().positive().optional(),
+          sort: z.enum(['priority', 'severity', 'created_at', 'updated_at', 'title', 'tool', 'status', 'cvss_score', 'repository', 'contributor', 'file_path']).default('priority'),
+          dir: z.enum(['asc', 'desc']).default('desc'),
+          columns: z.string().optional(),
+          include_secrets: z.coerce.boolean().default(false),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { workspace_id, severity, status, tool, repository_id, source_id, test_id, sort, dir, columns: columnsParam, include_secrets } = request.query;
+
+      if (workspace_id) {
+        await authorize(request, workspace_id, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('workspace_id is required');
+      }
+
+      const conditions: SQL[] = [];
+      if (workspace_id) {
+        const workspaceTestIds = db.select({ id: tests.id }).from(tests)
+          .innerJoin(scans, eq(tests.scanId, scans.id))
+          .where(eq(scans.workspaceId, workspace_id));
+        conditions.push(inArray(findings.testId, workspaceTestIds));
+      }
+      if (severity) {
+        const vals = severity.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.severity, vals[0]) : inArray(findings.severity, vals));
+      }
+      if (status) {
+        const vals = status.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.status, vals[0]) : inArray(findings.status, vals));
+      }
+      if (tool) {
+        const vals = tool.split(',');
+        conditions.push(vals.length === 1 ? eq(findings.tool, vals[0]) : inArray(findings.tool, vals));
+      }
+      if (repository_id) conditions.push(eq(findings.repositoryId, repository_id));
+      if (source_id) {
+        // findings → repository → source (same filter as GET /findings)
+        const sourceRepoIds = db.select({ id: repositories.id }).from(repositories)
+          .where(eq(repositories.sourceId, source_id));
+        conditions.push(inArray(findings.repositoryId, sourceRepoIds));
+      }
+      if (test_id) conditions.push(eq(findings.testId, test_id));
+
+      const whereClause = conditions.length ? and(...conditions) : undefined;
+
+      const severityRank = sql`CASE LOWER(${findings.severity})
+        WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3
+        WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END`;
+      const sortColumns: Record<string, any> = {
+        severity: severityRank,
+        created_at: findings.createdAt,
+        updated_at: findings.updatedAt,
+        title: findings.title,
+        tool: findings.tool,
+        status: findings.status,
+        cvss_score: findings.cvssScore,
+        repository: sql`(SELECT ${repositories.name} FROM ${repositories} WHERE ${repositories.id} = ${findings.repositoryId})`,
+        contributor: sql`(SELECT ${contributors.displayName} FROM ${contributors} WHERE ${contributors.id} = ${findings.contributorId})`,
+        file_path: findings.filePath,
+      };
+      const orderByClauses = sort === 'priority'
+        ? [sql`(${findings.status} = 'open') DESC`, desc(severityRank), desc(findings.createdAt)]
+        : [(dir === 'asc' ? asc(sortColumns[sort]) : desc(sortColumns[sort]))];
+
+      const rows = await db.select({
+        ...getTableColumns(findings),
+        contributorName: contributors.displayName,
+        repositoryName: repositories.name,
+      }).from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .leftJoin(contributors, eq(contributors.id, findings.contributorId))
+        .leftJoin(repositories, eq(repositories.id, findings.repositoryId))
+        .where(whereClause)
+        .orderBy(...orderByClauses);
+
+      type Row = (typeof rows)[number];
+      const allColumns: { key: string; header: string; extract: (r: Row) => unknown }[] = [
+        { key: 'severity',    header: 'Severity',    extract: (r) => r.severity },
+        { key: 'tool',        header: 'Tool',        extract: (r) => r.tool },
+        { key: 'location',    header: 'Location',    extract: (r) => r.line != null ? `${r.filePath ?? ''}:${r.line}` : (r.filePath ?? '') },
+        { key: 'repository',  header: 'Repository',  extract: (r) => r.repositoryName ?? '' },
+        { key: 'contributor', header: 'Contributor', extract: (r) => r.contributorName ?? '' },
+        { key: 'cvss',        header: 'CVSS',        extract: (r) => r.cvssScore ?? '' },
+        { key: 'status',      header: 'Status',      extract: (r) => r.status ?? '' },
+        { key: 'date',        header: 'Date',        extract: (r) => r.createdAt ? new Date(r.createdAt as any).toISOString() : '' },
+        { key: 'title',       header: 'Title',       extract: (r) => r.title ?? '' },
+        { key: 'description', header: 'Description', extract: (r) => r.description ?? '' },
+        { key: 'secret',      header: 'Secret',      extract: (r) => include_secrets ? (r.secretValue ?? '') : (maskSecret(r.secretValue) ?? '') },
+      ];
+
+      const wanted = columnsParam ? new Set(columnsParam.split(',').map((s) => s.trim()).filter(Boolean)) : null;
+      const selected = wanted ? allColumns.filter((c) => wanted.has(c.key)) : allColumns;
+      // Empty/invalid columns param → fall back to full set so user always gets something
+      const finalColumns = selected.length > 0 ? selected : allColumns;
+
+      const csv = rowsToCsv(finalColumns, rows);
+      const date = new Date().toISOString().slice(0, 10);
+      reply.header('Content-Type', 'text/csv; charset=utf-8');
+      reply.header('Content-Disposition', `attachment; filename="findings_${date}.csv"`);
+      return csv;
+    },
+  );
+
+  // GET /api/findings/counts?workspace_id=X
+  app.get(
+    '/findings/counts',
+    {
+      schema: {
+        querystring: z.object({
+          workspace_id: z.coerce.number().positive().optional(),
+          repository_id: z.coerce.number().positive().optional(),
+          source_id: z.coerce.number().positive().optional(),
+          test_id: z.coerce.number().positive().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const { workspace_id, repository_id, source_id, test_id } = request.query;
+
+      if (workspace_id) {
+        await authorize(request, workspace_id, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('workspace_id is required');
+      }
+
+      const conditions: SQL[] = [];
+
+      if (workspace_id) {
+        const workspaceTestIds = db.select({ id: tests.id }).from(tests)
+          .innerJoin(scans, eq(tests.scanId, scans.id))
+          .where(eq(scans.workspaceId, workspace_id));
+        conditions.push(inArray(findings.testId, workspaceTestIds));
+      }
+      if (repository_id) {
+        conditions.push(eq(findings.repositoryId, repository_id));
+      }
+      if (source_id) {
+        // findings → repository → source
+        const sourceRepoIds = db.select({ id: repositories.id }).from(repositories)
+          .where(eq(repositories.sourceId, source_id));
+        conditions.push(inArray(findings.repositoryId, sourceRepoIds));
+      }
+      if (test_id) {
+        conditions.push(eq(findings.testId, test_id));
+      }
+
+      const whereClause = conditions.length ? and(...conditions) : undefined;
+
+      const [row] = await db.select({
+        Critical: sql<number>`count(*) filter (where ${findings.status} = 'open' and ${findings.severity} = 'Critical')::int`,
+        High: sql<number>`count(*) filter (where ${findings.status} = 'open' and ${findings.severity} = 'High')::int`,
+        Medium: sql<number>`count(*) filter (where ${findings.status} = 'open' and ${findings.severity} = 'Medium')::int`,
+        Low: sql<number>`count(*) filter (where ${findings.status} = 'open' and ${findings.severity} = 'Low')::int`,
+        Info: sql<number>`count(*) filter (where ${findings.status} = 'open' and ${findings.severity} = 'Info')::int`,
+        total: sql<number>`count(*) filter (where ${findings.status} = 'open')::int`,
+        riskAccepted: sql<number>`count(*) filter (where ${findings.status} = 'risk_accepted')::int`,
+      }).from(findings).where(whereClause);
+
+      return row;
+    },
+  );
+
+  // GET /api/findings/counts-by-tool?workspace_id=X&repository_ids=1,2,3
+  app.get(
+    '/findings/counts-by-tool',
+    {
+      schema: {
+        querystring: z.object({
+          workspace_id: z.coerce.number().positive().optional(),
+          repository_ids: z.string().optional(),
+        }),
+      },
+    },
+    async (request) => {
+      const { workspace_id, repository_ids } = request.query;
+
+      if (workspace_id) {
+        await authorize(request, workspace_id, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('workspace_id is required');
+      }
+
+      const conditions: SQL[] = [];
+      if (workspace_id) {
+        const workspaceScans = db.select({ id: tests.id })
+          .from(tests)
+          .innerJoin(scans, eq(scans.id, tests.scanId))
+          .where(eq(scans.workspaceId, workspace_id));
+        conditions.push(inArray(findings.testId, workspaceScans));
+      }
+      if (repository_ids) {
+        const repoIds = repository_ids.split(',').map(Number).filter((n) => n > 0);
+        if (repoIds.length > 0) {
+          conditions.push(inArray(findings.repositoryId, repoIds));
+        }
+      }
+      const whereClause = conditions.length ? and(...conditions) : undefined;
+
+      const rows = await db.select({
+        tool: findings.tool,
+        active: sql<number>`count(*) filter (where ${findings.status} = 'open')::int`,
+        dismissed: sql<number>`count(*) filter (where ${findings.status} in ('false_positive', 'risk_accepted', 'duplicate'))::int`,
+      }).from(findings).where(whereClause).groupBy(findings.tool).orderBy(asc(findings.tool));
+
+      return rows;
+    },
+  );
+
+  // GET /api/findings/:id
+  app.get(
+    '/findings/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      // Fetch finding and resolve workspace via test → scan, include contributor name
+      const rows = await db.select({
+        ...getTableColumns(findings),
+        workspaceId: scans.workspaceId,
+        contributorName: contributors.displayName,
+        repositoryName: repositories.name,
+        scanId: scans.id,
+      }).from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .leftJoin(contributors, eq(contributors.id, findings.contributorId))
+        .leftJoin(repositories, eq(repositories.id, findings.repositoryId))
+        .where(eq(findings.id, id));
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Finding not found' });
+
+      const finding = rows[0];
+      if (finding.workspaceId) {
+        await authorize(request, finding.workspaceId, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('Cannot resolve workspace for finding');
+      }
+
+      // If this finding is a duplicate, fetch survivor details for the banner
+      let duplicateOfFinding: {
+        id: number; title: string; tool: string;
+        filePath: string | null; line: number | null; severity: string;
+      } | undefined;
+      if (finding.duplicateOf) {
+        const survivor = await db.select({
+          id: findings.id,
+          title: findings.title,
+          tool: findings.tool,
+          filePath: findings.filePath,
+          line: findings.line,
+          severity: findings.severity,
+        }).from(findings)
+          .where(eq(findings.id, finding.duplicateOf))
+          .limit(1);
+        if (survivor[0]) duplicateOfFinding = survivor[0];
+      }
+
+      // Detail page shows the raw secret intentionally — list and duplicates
+      // endpoints keep maskSecret(). All authorized members can see it.
+      return {
+        ...finding,
+        ...(duplicateOfFinding ? { duplicateOfFinding } : {}),
+      };
+    },
+  );
+
+  // PATCH /api/findings/:id
+  app.patch(
+    '/findings/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+        body: z.object({
+          // Must mirror chk_findings_status in the DB — anything else would
+          // bounce off the CHECK constraint as an opaque 500.
+          status: z.enum(['open', 'false_positive', 'fixed', 'risk_accepted', 'duplicate']).optional(),
+          risk_accepted_reason: z.string().optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const { status, risk_accepted_reason } = request.body;
+
+      // Resolve workspace via test → scan
+      const wsRows = await db.select({ workspaceId: scans.workspaceId })
+        .from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .where(eq(findings.id, id));
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Finding not found' });
+
+      if (wsRows[0].workspaceId) {
+        await authorize(request, wsRows[0].workspaceId, 'workspace_admin');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('Cannot resolve workspace for finding');
+      }
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (status !== undefined) updates.status = status;
+      if (risk_accepted_reason !== undefined) updates.riskAcceptedReason = risk_accepted_reason;
+
+      // Only updatedAt was added — no real fields to update
+      if (Object.keys(updates).length === 1) {
+        return reply.status(400).send({ error: 'No fields to update' });
+      }
+
+      const rows = await db.update(findings)
+        .set(updates)
+        .where(eq(findings.id, id))
+        .returning();
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Finding not found' });
+      return rows[0];
+    },
+  );
+
+  // GET /api/findings/:id/notes
+  app.get(
+    '/findings/:id/notes',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      // Resolve workspace via finding → test → scan
+      const wsRows = await db.select({ workspaceId: scans.workspaceId })
+        .from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .where(eq(findings.id, id));
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Finding not found' });
+
+      if (wsRows[0].workspaceId) {
+        await authorize(request, wsRows[0].workspaceId, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('Cannot resolve workspace for finding');
+      }
+
+      return db.select().from(findingNotes)
+        .where(eq(findingNotes.findingId, id))
+        .orderBy(asc(findingNotes.createdAt));
+    },
+  );
+
+  // GET /api/findings/:id/duplicates
+  app.get(
+    '/findings/:id/duplicates',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      // Resolve workspace + survivor's tool via finding → test → scan (also existence check).
+      // Survivor tool is needed to filter out same-tool duplicates from the response —
+      // "Also detected by" only surfaces cross-tool validation.
+      const wsRows = await db.select({ workspaceId: scans.workspaceId, tool: findings.tool })
+        .from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .where(eq(findings.id, id));
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Finding not found' });
+
+      if (wsRows[0].workspaceId) {
+        await authorize(request, wsRows[0].workspaceId, 'member');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('Cannot resolve workspace for finding');
+      }
+
+      const survivorTool = wsRows[0].tool;
+      const rows = await db.select({
+        id: findings.id,
+        tool: findings.tool,
+        title: findings.title,
+        severity: findings.severity,
+        filePath: findings.filePath,
+        line: findings.line,
+        codeSnippet: findings.codeSnippet,
+        secretValue: findings.secretValue,
+        category: findings.category,
+        vulnIdFromTool: findings.vulnIdFromTool,
+        status: findings.status,
+      }).from(findings)
+        .where(and(eq(findings.duplicateOf, id), ne(findings.tool, survivorTool)))
+        .orderBy(asc(findings.id));
+
+      return rows.map(r => ({ ...r, secretValue: maskSecret(r.secretValue) }));
+    },
+  );
+
+  // POST /api/findings/:id/notes
+  app.post(
+    '/findings/:id/notes',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+        body: z.object({
+          content: z.string().optional(),
+          entry: z.string().optional(),
+          author: z.string().optional(),
+          note_type: z.string().optional(),
+        }).refine(
+          (data) => data.content || data.entry,
+          { message: 'Either content or entry is required' },
+        ),
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const body = request.body;
+      const content = body.content || body.entry || '';
+      const author = body.author || 'user';
+      const noteType = body.note_type || 'comment';
+
+      // Resolve workspace via finding → test → scan
+      const wsRows = await db.select({ workspaceId: scans.workspaceId })
+        .from(findings)
+        .innerJoin(tests, eq(tests.id, findings.testId))
+        .innerJoin(scans, eq(scans.id, tests.scanId))
+        .where(eq(findings.id, id));
+      if (wsRows.length === 0)
+        return reply.status(404).send({ error: 'Finding not found' });
+
+      if (wsRows[0].workspaceId) {
+        await authorize(request, wsRows[0].workspaceId, 'workspace_admin');
+      } else if (request.user?.role !== 'super_admin') {
+        throw new ForbiddenError('Cannot resolve workspace for finding');
+      }
+
+      const [row] = await db.insert(findingNotes).values({
+        findingId: id,
+        author,
+        noteType,
+        content,
+      }).returning();
+      return reply.status(201).send(row);
+    },
+  );
+};

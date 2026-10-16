@@ -1,0 +1,13 @@
+# Refresh Trivy's databases overnight so no scan ever pays for the download.
+# The vulnerability DB is ~1.4 GB and trivy's own 24h TTL used to trigger the
+# refresh inside whichever scan happened to run first that day (23 minutes of a
+# 39-minute scan). Scans now run with --skip-*-update; this is what keeps the
+# cache fresh for them.
+#
+# cron's default PATH is /usr/bin:/bin and trivy lives in /usr/local/bin.
+# TRIVY_CACHE_DIR is set explicitly because cron does not run a login shell.
+# Output goes to PID 1's stdout so it lands in `docker logs security-tools`.
+PATH=/usr/local/bin:/usr/bin:/bin
+TRIVY_CACHE_DIR=/home/scanner/.cache/trivy
+
+30 2 * * * scanner /scripts/trivy-db.sh update > /proc/1/fd/1 2>&1

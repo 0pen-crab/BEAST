@@ -1,0 +1,3 @@
+-- The default 'beast' database is created by POSTGRES_DB env var.
+-- This script runs once on first container start via docker-entrypoint-initdb.d.
+-- (Currently no additional databases needed.)

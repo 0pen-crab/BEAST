@@ -1,0 +1,876 @@
+{
+  "generatedAt": "2026-05-13T11:01:31.646Z",
+  "scans": [
+    {
+      "scanId": "c1059120-2e36-4f53-a740-d8fc8507b885",
+      "repoName": "cosmetic_bot",
+      "repoId": 151,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-06T22:12:27.207Z",
+      "scanCompletedAt": "2026-05-06T22:20:17.957Z",
+      "scanDurationMs": 470742,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 667,
+          "outputTokens": 1067,
+          "cacheReadInputTokens": 67169,
+          "cacheCreationInputTokens": 8467,
+          "totalContextTokens": 10200,
+          "costUSD": 0.0685,
+          "durationMs": 19600,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:all",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 683,
+          "outputTokens": 3984,
+          "cacheReadInputTokens": 93025,
+          "cacheCreationInputTokens": 12263,
+          "totalContextTokens": 16900,
+          "costUSD": 0.2231,
+          "durationMs": 93300,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 765,
+          "outputTokens": 10399,
+          "cacheReadInputTokens": 535506,
+          "cacheCreationInputTokens": 26506,
+          "totalContextTokens": 37670,
+          "costUSD": 0.41669930000000005,
+          "durationMs": 197772,
+          "numTurns": 28,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 815,
+          "outputTokens": 7059,
+          "cacheReadInputTokens": 275248,
+          "cacheCreationInputTokens": 38228,
+          "totalContextTokens": 46102,
+          "costUSD": 0.553555,
+          "durationMs": 147392,
+          "numTurns": 19,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 2930,
+        "outputTokens": 22509,
+        "cacheReadInputTokens": 970948,
+        "cacheCreationInputTokens": 85464,
+        "contextTokens": 110872,
+        "costUSD": 1.2618543,
+        "durationMs": 458064,
+        "numTurns": 47,
+        "agentInvocations": 4,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "19da0d39-7e3c-4d64-8cb7-65da7abb639c",
+      "repoName": "samokatbot",
+      "repoId": 152,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-06T22:22:10.332Z",
+      "scanCompletedAt": "2026-05-06T22:34:58.678Z",
+      "scanDurationMs": 768341,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 676,
+          "outputTokens": 2140,
+          "cacheReadInputTokens": 69570,
+          "cacheCreationInputTokens": 10964,
+          "totalContextTokens": 13800,
+          "costUSD": 0.0945,
+          "durationMs": 34700,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:all",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 955,
+          "outputTokens": 12033,
+          "cacheReadInputTokens": 115015,
+          "cacheCreationInputTokens": 46716,
+          "totalContextTokens": 59700,
+          "costUSD": 0.6507,
+          "durationMs": 211800,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 784,
+          "outputTokens": 14222,
+          "cacheReadInputTokens": 1166811,
+          "cacheCreationInputTokens": 39463,
+          "totalContextTokens": 54469,
+          "costUSD": 0.7120635499999999,
+          "durationMs": 262786,
+          "numTurns": 49,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 830,
+          "outputTokens": 13509,
+          "cacheReadInputTokens": 278509,
+          "cacheCreationInputTokens": 103517,
+          "totalContextTokens": 117856,
+          "costUSD": 1.1245067499999999,
+          "durationMs": 249675,
+          "numTurns": 34,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 3245,
+        "outputTokens": 41904,
+        "cacheReadInputTokens": 1629905,
+        "cacheCreationInputTokens": 200660,
+        "contextTokens": 245825,
+        "costUSD": 2.5817702999999996,
+        "durationMs": 758961,
+        "numTurns": 83,
+        "agentInvocations": 4,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "0de34b92-4c93-4d5e-8c0d-8654430dfe4e",
+      "repoName": "rltrader",
+      "repoId": 153,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-06T22:35:00.799Z",
+      "scanCompletedAt": "2026-05-06T23:06:36.379Z",
+      "scanDurationMs": 1895576,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 679,
+          "outputTokens": 3169,
+          "cacheReadInputTokens": 71878,
+          "cacheCreationInputTokens": 12496,
+          "totalContextTokens": 16300,
+          "costUSD": 0.1165,
+          "durationMs": 439700,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:all",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1643,
+          "outputTokens": 10639,
+          "cacheReadInputTokens": 858824,
+          "cacheCreationInputTokens": 130034,
+          "totalContextTokens": 142300,
+          "costUSD": 1.5094,
+          "durationMs": 187300,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 2187,
+          "outputTokens": 37157,
+          "cacheReadInputTokens": 1741163,
+          "cacheCreationInputTokens": 81627,
+          "totalContextTokens": 120971,
+          "costUSD": 1.3906821500000002,
+          "durationMs": 696067,
+          "numTurns": 55,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 843,
+          "outputTokens": 35512,
+          "cacheReadInputTokens": 949292,
+          "cacheCreationInputTokens": 95800,
+          "totalContextTokens": 132155,
+          "costUSD": 1.961787,
+          "durationMs": 555126,
+          "numTurns": 39,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 5352,
+        "outputTokens": 86477,
+        "cacheReadInputTokens": 3621157,
+        "cacheCreationInputTokens": 319957,
+        "contextTokens": 411726,
+        "costUSD": 4.978369150000001,
+        "durationMs": 1878193,
+        "numTurns": 94,
+        "agentInvocations": 4,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "c76f3713-a1bf-4287-927e-29e00358132c",
+      "repoName": "sigap-planner",
+      "repoId": 154,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-08T02:29:32.826Z",
+      "scanCompletedAt": "2026-05-08T03:00:54.598Z",
+      "scanDurationMs": 1881770,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 668,
+          "outputTokens": 11231,
+          "cacheReadInputTokens": 112681,
+          "cacheCreationInputTokens": 27222,
+          "totalContextTokens": 39100,
+          "costUSD": 0.3048,
+          "durationMs": 142000,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:root",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 735,
+          "outputTokens": 6418,
+          "cacheReadInputTokens": 59097,
+          "cacheCreationInputTokens": 31224,
+          "totalContextTokens": 38400,
+          "costUSD": 0.3855,
+          "durationMs": 135300,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:backend_migration",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1745,
+          "outputTokens": 10313,
+          "cacheReadInputTokens": 183675,
+          "cacheCreationInputTokens": 107428,
+          "totalContextTokens": 119500,
+          "costUSD": 1.0223,
+          "durationMs": 203400,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:backend_scripts",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2854,
+          "outputTokens": 12575,
+          "cacheReadInputTokens": 867180,
+          "cacheCreationInputTokens": 145961,
+          "totalContextTokens": 161400,
+          "costUSD": 1.6626,
+          "durationMs": 238500,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:mobile_macos_runner_configs",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 15387,
+          "outputTokens": 10365,
+          "cacheReadInputTokens": 262695,
+          "cacheCreationInputTokens": 387245,
+          "totalContextTokens": 413000,
+          "costUSD": 2.8807,
+          "durationMs": 187100,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 2584,
+          "outputTokens": 24980,
+          "cacheReadInputTokens": 1124698,
+          "cacheCreationInputTokens": 108045,
+          "totalContextTokens": 135609,
+          "costUSD": 0.75106185,
+          "durationMs": 381821,
+          "numTurns": 25,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 881,
+          "outputTokens": 55883,
+          "cacheReadInputTokens": 4287632,
+          "cacheCreationInputTokens": 328423,
+          "totalContextTokens": 385187,
+          "costUSD": 5.59438775,
+          "durationMs": 568490,
+          "numTurns": 22,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 24854,
+        "outputTokens": 131765,
+        "cacheReadInputTokens": 6897658,
+        "cacheCreationInputTokens": 1135548,
+        "contextTokens": 1292196,
+        "costUSD": 12.6013496,
+        "durationMs": 1856611,
+        "numTurns": 47,
+        "agentInvocations": 7,
+        "errors": 0
+      }
+    },
+    {
+      "scanId": "0f420879-4a6a-4d85-bb3d-e07a60638322",
+      "repoName": "deimos",
+      "repoId": 156,
+      "workspaceId": 16,
+      "scanType": "full",
+      "status": "completed",
+      "scanStartedAt": "2026-05-08T00:08:36.644Z",
+      "scanCompletedAt": "2026-05-08T02:29:30.178Z",
+      "scanDurationMs": 8453516,
+      "scanDepth": 100,
+      "agents": [
+        {
+          "agent": "scout-unclear:0",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 673,
+          "outputTokens": 5982,
+          "cacheReadInputTokens": 297611,
+          "cacheCreationInputTokens": 17483,
+          "totalContextTokens": 24100,
+          "costUSD": 0.2451,
+          "durationMs": 101000,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "scout-unclear:1",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 675,
+          "outputTokens": 4409,
+          "cacheReadInputTokens": 335047,
+          "cacheCreationInputTokens": 15789,
+          "totalContextTokens": 20900,
+          "costUSD": 0.2264,
+          "durationMs": 73900,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "scout-unclear:2",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 679,
+          "outputTokens": 59045,
+          "cacheReadInputTokens": 1062423,
+          "cacheCreationInputTokens": 106791,
+          "totalContextTokens": 166500,
+          "costUSD": 1.6054,
+          "durationMs": 687000,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_sec_part2",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2134,
+          "outputTokens": 16715,
+          "cacheReadInputTokens": 697940,
+          "cacheCreationInputTokens": 107263,
+          "totalContextTokens": 126100,
+          "costUSD": 1.439,
+          "durationMs": 367900,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_sp_part1",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2624,
+          "outputTokens": 11028,
+          "cacheReadInputTokens": 1108450,
+          "cacheCreationInputTokens": 150654,
+          "totalContextTokens": 164300,
+          "costUSD": 1.7738,
+          "durationMs": 255400,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_sp_part2",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2610,
+          "outputTokens": 19470,
+          "cacheReadInputTokens": 1777478,
+          "cacheCreationInputTokens": 197885,
+          "totalContextTokens": 220000,
+          "costUSD": 2.6146,
+          "durationMs": 423200,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_sp_part3",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2576,
+          "outputTokens": 18936,
+          "cacheReadInputTokens": 1430303,
+          "cacheCreationInputTokens": 201385,
+          "totalContextTokens": 222900,
+          "costUSD": 2.4495,
+          "durationMs": 374800,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_sp_part4",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2085,
+          "outputTokens": 14897,
+          "cacheReadInputTokens": 1358236,
+          "cacheCreationInputTokens": 186126,
+          "totalContextTokens": 203100,
+          "costUSD": 2.2167,
+          "durationMs": 274700,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_sp_gg",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 975,
+          "outputTokens": 9679,
+          "cacheReadInputTokens": 97878,
+          "cacheCreationInputTokens": 36104,
+          "totalContextTokens": 46800,
+          "costUSD": 0.5171,
+          "durationMs": 185000,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_scripts",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1918,
+          "outputTokens": 15879,
+          "cacheReadInputTokens": 494015,
+          "cacheCreationInputTokens": 348894,
+          "totalContextTokens": 366700,
+          "costUSD": 2.8262,
+          "durationMs": 309400,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_scripts_foss",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1128,
+          "outputTokens": 11639,
+          "cacheReadInputTokens": 203612,
+          "cacheCreationInputTokens": 50220,
+          "totalContextTokens": 63000,
+          "costUSD": 0.7074,
+          "durationMs": 214200,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_trg_part1",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 3102,
+          "outputTokens": 22720,
+          "cacheReadInputTokens": 340925,
+          "cacheCreationInputTokens": 555448,
+          "totalContextTokens": 581300,
+          "costUSD": 4.2125,
+          "durationMs": 404100,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_trg_part2",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 3114,
+          "outputTokens": 16260,
+          "cacheReadInputTokens": 1899334,
+          "cacheCreationInputTokens": 124259,
+          "totalContextTokens": 143600,
+          "costUSD": 2.1354,
+          "durationMs": 343400,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_trg_part3",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 3092,
+          "outputTokens": 14155,
+          "cacheReadInputTokens": 2505198,
+          "cacheCreationInputTokens": 161277,
+          "totalContextTokens": 178500,
+          "costUSD": 2.617,
+          "durationMs": 313900,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_trg_part4",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 3086,
+          "outputTokens": 19711,
+          "cacheReadInputTokens": 544429,
+          "cacheCreationInputTokens": 511308,
+          "totalContextTokens": 534100,
+          "costUSD": 3.9635,
+          "durationMs": 335900,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_trg_part5",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2724,
+          "outputTokens": 16573,
+          "cacheReadInputTokens": 426420,
+          "cacheCreationInputTokens": 364959,
+          "totalContextTokens": 384300,
+          "costUSD": 2.9107,
+          "durationMs": 283500,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_type",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1146,
+          "outputTokens": 11892,
+          "cacheReadInputTokens": 323588,
+          "cacheCreationInputTokens": 95490,
+          "totalContextTokens": 108500,
+          "costUSD": 1.0567,
+          "durationMs": 247600,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_view_part1",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2336,
+          "outputTokens": 12572,
+          "cacheReadInputTokens": 458702,
+          "cacheCreationInputTokens": 117759,
+          "totalContextTokens": 132700,
+          "costUSD": 1.2814,
+          "durationMs": 295000,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_view_part2",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2376,
+          "outputTokens": 18303,
+          "cacheReadInputTokens": 378908,
+          "cacheCreationInputTokens": 378613,
+          "totalContextTokens": 399300,
+          "costUSD": 3.0151,
+          "durationMs": 312600,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_view_part3",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1834,
+          "outputTokens": 15720,
+          "cacheReadInputTokens": 332086,
+          "cacheCreationInputTokens": 214233,
+          "totalContextTokens": 231800,
+          "costUSD": 1.8993,
+          "durationMs": 277100,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_job",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 2982,
+          "outputTokens": 18491,
+          "cacheReadInputTokens": 2277115,
+          "cacheCreationInputTokens": 244913,
+          "totalContextTokens": 266400,
+          "costUSD": 3.1342,
+          "durationMs": 356200,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "sniper:dblogic_sqlload",
+          "fileType": "log-ai-research",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 4979,
+          "outputTokens": 12141,
+          "cacheReadInputTokens": 752619,
+          "cacheCreationInputTokens": 96690,
+          "totalContextTokens": 113800,
+          "costUSD": 1.2988,
+          "durationMs": 231100,
+          "numTurns": 0,
+          "isError": false,
+          "models": [
+            "claude-opus-4-6[1m]"
+          ]
+        },
+        {
+          "agent": "analyzer",
+          "fileType": "log-analysis",
+          "primaryModel": "claude-sonnet-4-6",
+          "inputTokens": 812,
+          "outputTokens": 28765,
+          "cacheReadInputTokens": 2929335,
+          "cacheCreationInputTokens": 89170,
+          "totalContextTokens": 118747,
+          "costUSD": 1.6454250000000004,
+          "durationMs": 565736,
+          "numTurns": 71,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-6"
+          ]
+        },
+        {
+          "agent": "triage",
+          "fileType": "log-triage",
+          "primaryModel": "claude-opus-4-6[1m]",
+          "inputTokens": 1140,
+          "outputTokens": 113046,
+          "cacheReadInputTokens": 8428073,
+          "cacheCreationInputTokens": 552781,
+          "totalContextTokens": 666967,
+          "costUSD": 10.497123750000004,
+          "durationMs": 1717260,
+          "numTurns": 45,
+          "isError": false,
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6[1m]"
+          ]
+        }
+      ],
+      "totals": {
+        "inputTokens": 50800,
+        "outputTokens": 508028,
+        "cacheReadInputTokens": 30459725,
+        "cacheCreationInputTokens": 4925494,
+        "contextTokens": 5484414,
+        "costUSD": 56.28834875,
+        "durationMs": 8949896,
+        "numTurns": 116,
+        "agentInvocations": 24,
+        "errors": 0
+      }
+    }
+  ]
+}

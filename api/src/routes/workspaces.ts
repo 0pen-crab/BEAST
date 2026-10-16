@@ -1,0 +1,153 @@
+import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { z } from 'zod';
+import { eq, asc } from 'drizzle-orm';
+import { db } from '../db/index.ts';
+import { workspaces, workspaceMembers, type NewWorkspace } from '../db/schema.ts';
+import { authorizeSuperAdmin } from '../lib/authorize.ts';
+import { initDefaultTools } from '../orchestrator/entities.ts';
+import { AI_MODEL_KEYS } from '../orchestrator/ai-models.ts';
+import { SCAN_DEPTH_VALUES, DEFAULT_SCAN_DEPTH } from '../orchestrator/scan-depth.ts';
+
+export const workspaceRoutes: FastifyPluginAsyncZod = async (app) => {
+  // GET /api/workspaces - list all workspaces (filtered by membership for non-super_admin)
+  app.get('/workspaces', async (request) => {
+    const user = request.user!;
+    // Any authenticated user can list their workspaces
+    request.authorized = true;
+    if (user.role === 'super_admin') {
+      return db.select().from(workspaces).orderBy(asc(workspaces.createdAt));
+    }
+    // Non-super_admin: only workspaces they're members of
+    return db.select({
+      id: workspaces.id,
+      name: workspaces.name,
+      description: workspaces.description,
+      defaultLanguage: workspaces.defaultLanguage,
+      aiAnalysisEnabled: workspaces.aiAnalysisEnabled,
+      aiScanningEnabled: workspaces.aiScanningEnabled,
+      aiTriageEnabled: workspaces.aiTriageEnabled,
+      aiModelAnalyzer: workspaces.aiModelAnalyzer,
+      aiModelScanner: workspaces.aiModelScanner,
+      aiModelTriage: workspaces.aiModelTriage,
+      scanDepth: workspaces.scanDepth,
+      createdAt: workspaces.createdAt,
+    }).from(workspaces)
+      .innerJoin(workspaceMembers, eq(workspaces.id, workspaceMembers.workspaceId))
+      .where(eq(workspaceMembers.userId, user.id))
+      .orderBy(asc(workspaces.createdAt));
+  });
+
+  // POST /api/workspaces - create workspace
+  app.post(
+    '/workspaces',
+    {
+      schema: {
+        body: z.object({
+          name: z.string().min(1).max(256),
+          description: z.string().optional(),
+          default_language: z.string().max(10).optional(),
+          ai_analysis_enabled: z.boolean().optional(),
+          ai_scanning_enabled: z.boolean().optional(),
+          ai_triage_enabled: z.boolean().optional(),
+          ai_model_analyzer: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_scanner: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_triage: z.enum(AI_MODEL_KEYS).optional(),
+          scan_depth: z.union([z.literal(SCAN_DEPTH_VALUES[0]), z.literal(SCAN_DEPTH_VALUES[1]), z.literal(SCAN_DEPTH_VALUES[2])]).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      authorizeSuperAdmin(request);
+      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled, ai_model_analyzer, ai_model_scanner, ai_model_triage, scan_depth } = request.body;
+      try {
+        const [row] = await db.insert(workspaces).values({
+          name,
+          description: description ?? null,
+          defaultLanguage: default_language ?? 'en',
+          aiAnalysisEnabled: ai_analysis_enabled ?? true,
+          aiScanningEnabled: ai_scanning_enabled ?? true,
+          aiTriageEnabled: ai_triage_enabled ?? true,
+          aiModelAnalyzer: ai_model_analyzer ?? 'sonnet',
+          aiModelScanner: ai_model_scanner ?? 'opus',
+          aiModelTriage: ai_model_triage ?? 'opus',
+          scanDepth: scan_depth ?? DEFAULT_SCAN_DEPTH,
+        }).returning();
+        await initDefaultTools(row.id);
+        return reply.status(201).send(row);
+      } catch (err: any) {
+        const pgCode = err.code ?? err.cause?.code;
+        if (pgCode === '23505') {
+          return reply.status(409).send({ error: `Workspace "${name}" already exists` });
+        }
+        throw err;
+      }
+    },
+  );
+
+  // PUT /api/workspaces/:id - update workspace
+  app.put(
+    '/workspaces/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+        body: z.object({
+          name: z.string().min(1).max(256).optional(),
+          description: z.string().optional(),
+          default_language: z.string().max(10).optional(),
+          ai_analysis_enabled: z.boolean().optional(),
+          ai_scanning_enabled: z.boolean().optional(),
+          ai_triage_enabled: z.boolean().optional(),
+          ai_model_analyzer: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_scanner: z.enum(AI_MODEL_KEYS).optional(),
+          ai_model_triage: z.enum(AI_MODEL_KEYS).optional(),
+          scan_depth: z.union([z.literal(SCAN_DEPTH_VALUES[0]), z.literal(SCAN_DEPTH_VALUES[1]), z.literal(SCAN_DEPTH_VALUES[2])]).optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      authorizeSuperAdmin(request);
+      const { id } = request.params;
+      const { name, description, default_language, ai_analysis_enabled, ai_scanning_enabled, ai_triage_enabled, ai_model_analyzer, ai_model_scanner, ai_model_triage, scan_depth } = request.body;
+
+      const updates: Partial<NewWorkspace> = {};
+      if (name !== undefined) updates.name = name;
+      if (description !== undefined) updates.description = description;
+      if (default_language !== undefined) updates.defaultLanguage = default_language;
+      if (ai_analysis_enabled !== undefined) updates.aiAnalysisEnabled = ai_analysis_enabled;
+      if (ai_scanning_enabled !== undefined) updates.aiScanningEnabled = ai_scanning_enabled;
+      if (ai_triage_enabled !== undefined) updates.aiTriageEnabled = ai_triage_enabled;
+      if (ai_model_analyzer !== undefined) updates.aiModelAnalyzer = ai_model_analyzer;
+      if (ai_model_scanner !== undefined) updates.aiModelScanner = ai_model_scanner;
+      if (ai_model_triage !== undefined) updates.aiModelTriage = ai_model_triage;
+      if (scan_depth !== undefined) updates.scanDepth = scan_depth;
+
+      const rows = await db.update(workspaces)
+        .set(updates)
+        .where(eq(workspaces.id, id))
+        .returning();
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Not found' });
+      return rows[0];
+    },
+  );
+
+  // DELETE /api/workspaces/:id - delete workspace (cascades)
+  app.delete(
+    '/workspaces/:id',
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number() }),
+      },
+    },
+    async (request, reply) => {
+      authorizeSuperAdmin(request);
+      const { id } = request.params;
+      const rows = await db.delete(workspaces)
+        .where(eq(workspaces.id, id))
+        .returning({ id: workspaces.id });
+      if (rows.length === 0)
+        return reply.status(404).send({ error: 'Not found' });
+      return { deleted: true };
+    },
+  );
+};

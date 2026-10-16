@@ -1,0 +1,30 @@
+{
+  "createdAt": "2026-05-14T11:00:00Z",
+  "workspaceId": 16,
+  "scanDepth": 100,
+  "purpose": "Confirmation re-run of 4 small repos to verify ToB skills A/B result is reproducible (not noise)",
+  "skillsEnabled": true,
+  "scans": [
+    { "scanId": "7c465319-4215-4010-9332-ab363f1c7bea", "repoId": 151, "repoName": "cosmetic_bot" },
+    { "scanId": "ec560057-e843-4147-8b88-fa176acc0bff", "repoId": 152, "repoName": "samokatbot" },
+    { "scanId": "8c4052c3-587d-4847-81b9-5c9341788246", "repoId": 153, "repoName": "rltrader" },
+    { "scanId": "5d58e2e3-09ca-4cda-b597-e9cf32a12ecc", "repoId": 154, "repoName": "sigap-planner" }
+  ],
+  "comparedAgainst": {
+    "baseline": [
+      { "scanId": "c1059120-2e36-4f53-a740-d8fc8507b885", "repoName": "cosmetic_bot", "date": "2026-05-06" },
+      { "scanId": "19da0d39-7e3c-4d64-8cb7-65da7abb639c", "repoName": "samokatbot", "date": "2026-05-06" },
+      { "scanId": "0de34b92-4c93-4d5e-8c0d-8654430dfe4e", "repoName": "rltrader", "date": "2026-05-06" },
+      { "scanId": "c76f3713-a1bf-4287-927e-29e00358132c", "repoName": "sigap-planner", "date": "2026-05-07" }
+    ],
+    "firstSkillsRun": [
+      { "scanId": "5524663e-eb57-444d-8f4d-08cd5bb6b9d7", "repoName": "cosmetic_bot", "date": "2026-05-12" },
+      { "scanId": "a0d0bb7b-cd55-40cc-8e9b-2f4651d48134", "repoName": "samokatbot", "date": "2026-05-12" },
+      { "scanId": "c32da9a8-61f5-4a4a-8fbb-c5b76722cbba", "repoName": "rltrader", "date": "2026-05-12" },
+      { "scanId": "09d44587-ef3b-415c-bddf-f14703744784", "repoName": "sigap-planner", "date": "2026-05-12" }
+    ],
+    "abNoSkills": [
+      { "scanId": "e3b52558-4678-4ffb-ac2b-a5c69330fbd0", "repoName": "sigap-planner", "date": "2026-05-14" }
+    ]
+  }
+}
